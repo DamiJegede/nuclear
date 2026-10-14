@@ -1,0 +1,10 @@
+{
+  "name": "nuclear",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "api:dev": "npm run dev -w @nuclear/api",
+    "api:deploy": "npm run deploy -w @nuclear/api",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

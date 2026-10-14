@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nuclear-api",
+  "account_id": "2e328fde1db62ab22f16e8f464562d3c",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["0 4 * * *", "0 5 * * *"] },
+  "vars": {
+    // Sandbox only. Remove (or set to "false") before any live-money deployment.
+    "SANDBOX_FUNDING": "true"
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "6e47c72ff9934571ab4d21c0f2c40621"
+    }
+  ]
+}
