@@ -291,6 +291,79 @@ terminalSelf.post("/lookup", async (c) => {
   return c.json({ account: result.account });
 });
 
+// ---- Catalogue on the terminal ----------------------------------------------------------------
+
+type ProductRow = {
+  id: string; category_id: string | null; name: string; currency: string; price: bigint; photo: string | null;
+  stock: number | null; active: boolean; status: string; total_sold: bigint; sold_today: number; discount: bigint;
+};
+const productJson = (p: ProductRow) => ({
+  id: p.id,
+  category_id: p.category_id,
+  name: p.name,
+  currency: p.currency,
+  price: Number(p.price),
+  discount: Number(p.discount),
+  effective_price: Number(p.price - p.discount),
+  photo: p.photo,
+  stock: p.stock,
+  active: p.active,
+  status: p.status,
+  total_sold: Number(p.total_sold),
+  sold_today: p.sold_today,
+});
+const PRODUCT_COLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, sold_today, discount`;
+
+// The merchant's active products for the POS (sold-out ones included, so they can be restocked).
+terminalSelf.get("/products", async (c) => {
+  const sql = c.get("sql");
+  const category = z.string().uuid().safeParse(c.req.query("category_id"));
+  const rows = await sql<ProductRow[]>`
+    select ${sql.unsafe(PRODUCT_COLS)} from products
+     where account_id = ${c.get("terminal").accountId} and active
+       ${category.success ? sql`and category_id = ${category.data}` : sql``}
+     order by name, id`;
+  return c.json({ products: rows.map(productJson) });
+});
+
+// Restock: add units to a tracked product. Increments (not "set to") so concurrent sales are never
+// overwritten; a sold-out product becomes available again. expected_stock is an optional guard: the
+// restock is refused (409) if the stock is no longer what the POS saw, which also makes a blind
+// retry after a lost response safe.
+const restockBody = z.object({
+  quantity: z.number().int().min(1).max(1_000_000),
+  expected_stock: z.number().int().min(0).optional(),
+});
+
+terminalSelf.post("/products/:id/restock", async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param("id"));
+  const body = restockBody.safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const sql = c.get("sql");
+  const { accountId } = c.get("terminal");
+
+  type R = { error: string; status: 404 | 409 | 422 } | { product: ProductRow };
+  const result = (await sql.begin(async (tx): Promise<R> => {
+    const [p] = await tx<ProductRow[]>`
+      select ${tx.unsafe(PRODUCT_COLS)} from products
+       where id = ${id.data} and account_id = ${accountId} for no key update`;
+    if (!p || !p.active) return { error: "not_found", status: 404 };
+    if (p.stock === null) return { error: "stock_not_tracked", status: 422 };
+    if (body.data.expected_stock !== undefined && body.data.expected_stock !== p.stock) {
+      return { error: "stock_changed", status: 409 };
+    }
+    if (p.stock + body.data.quantity > 2_147_483_647) return { error: "stock_too_large", status: 422 };
+    const [u] = await tx<ProductRow[]>`
+      update products set stock = stock + ${body.data.quantity}
+       where id = ${id.data} returning ${tx.unsafe(PRODUCT_COLS)}`;
+    return { product: u! };
+  })) as R;
+
+  if ("error" in result) return c.json({ error: result.error }, result.status);
+  return c.json({ product: productJson(result.product) });
+});
+
 // ---- Orb inventory for the owning merchant: /v1/orbs ----------------------------------------
 
 export const orbs = new Hono<AppContext>();

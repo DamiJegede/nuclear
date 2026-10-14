@@ -6,10 +6,18 @@ import { amount, n } from "../lib/money";
 import { decryptTagUrl } from "../lib/tagproof";
 import { consumeCounter, isFresh, loadTag } from "../lib/tap";
 import { findPay, payCore, PAY_COLS, type PayOutcome, type PayRow } from "../lib/pay";
+import { commitCart, quoteCart, reserveCart, type Cart } from "../lib/catalog";
 import { requireSession, requireTerminal } from "../session";
 
 const uuid = z.string().uuid();
 const reference = z.string().trim().min(1).max(64).optional();
+
+// Catalogue items. With items the total comes from the merchant's live prices (price - discount);
+// an explicit amount, if also sent, must equal it.
+const items = z
+  .array(z.object({ product_id: z.string().uuid(), quantity: z.number().int().min(1).max(1000) }))
+  .min(1)
+  .max(50);
 
 export const credentialSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tag"), url: z.string().min(1).max(512) }),
@@ -57,12 +65,15 @@ async function merchantName(sql: Sql, accountId: string): Promise<string> {
 export const payments = new Hono<AppContext>();
 payments.use("*", requireSession);
 
-const confirmBody = z.object({
-  amount,
-  reference,
-  terminal_id: uuid,
-  from_wallet_id: uuid.optional(),
-});
+const confirmBody = z
+  .object({
+    amount: amount.optional(),
+    items: items.optional(),
+    reference,
+    terminal_id: uuid,
+    from_wallet_id: uuid.optional(),
+  })
+  .refine((b) => b.amount !== undefined || b.items !== undefined, { message: "amount_or_items_required" });
 
 payments.post("/", async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
@@ -91,19 +102,36 @@ payments.post("/", async (c) => {
   if (!t) return c.json({ error: "terminal_not_found" }, 404);
   if (t.account_id === accountId) return c.json({ error: "self_payment" }, 422);
 
-  const out = await sql.begin((tx) =>
-    payCore(tx, {
+  let cart: Cart | null = null;
+  const recordedCustomer = await sql<{ amount: bigint }[]>`
+    select amount from transactions
+     where type = 'pay' and to_account_id = ${t.account_id} and idempotency_key = ${`c:${accountId}:${key}`}`;
+  let total = b.amount ?? recordedCustomer[0]?.amount!;
+  if (b.items && !recordedCustomer[0]) {
+    const q = await quoteCart(sql, t.account_id, b.items);
+    if ("error" in q) return c.json({ error: q.error }, q.status);
+    if (b.amount !== undefined && b.amount !== q.cart.total) return c.json({ error: "amount_mismatch" }, 400);
+    cart = q.cart;
+    total = q.cart.total;
+  }
+
+  const out = await sql.begin(async (tx) => {
+    const decline = cart ? await reserveCart(tx, t.account_id, cart) : null;
+    const r = await payCore(tx, {
       payerWalletId: wallet.id,
       payerAccountId: accountId,
       merchantAccountId: t.account_id,
       terminalId: t.id,
       tagId: null,
       tagLimit: null,
-      amount: b.amount,
+      amount: total,
       idempotencyKey: `c:${accountId}:${key}`, // customer keys are namespaced per payer
       reference: b.reference ?? null,
-    }),
-  );
+      forceDecline: decline,
+    });
+    if (cart && r.kind === "ok" && !r.replayed) await commitCart(tx, cart);
+    return r;
+  });
   return respond(c, out as PayOutcome, {
     merchant: { account_id: t.account_id, display_name: await merchantName(sql, t.account_id) },
   });
@@ -129,7 +157,9 @@ payments.get("/:id", async (c) => {
 export const terminalPayments = new Hono<AppContext>();
 terminalPayments.use("*", requireTerminal);
 
-const terminalBody = z.object({ amount, reference, credential: credentialSchema });
+const terminalBody = z
+  .object({ amount: amount.optional(), items: items.optional(), reference, credential: credentialSchema })
+  .refine((b) => b.amount !== undefined || b.items !== undefined, { message: "amount_or_items_required" });
 
 type TagResult = { error: string; status: 404 | 409 | 422 } | { out: PayOutcome };
 
@@ -153,6 +183,24 @@ terminalPayments.post("/", async (c) => {
   const proof = await decryptTagUrl(c.env, b.credential.url);
   if (!proof) return c.json({ error: "invalid_tag" }, 400);
 
+  // Price the cart before the tap is consumed: a catalogue mistake must not burn the customer's tap.
+  // A retry of an attempt that is already recorded returns that result untouched (stock may have
+  // moved on since), so it is not priced again.
+  let cart: Cart | null = null;
+  const attemptKey0 = `t:${key}`;
+  const recorded = await sql<{ amount: bigint }[]>`
+    select amount from transactions
+     where type = 'pay' and to_account_id = ${accountId} and idempotency_key = ${attemptKey0}`;
+  // An explicit amount is always compared to the recorded attempt (mismatch => 409).
+  let total = b.amount ?? recorded[0]?.amount!;
+  if (b.items && !recorded[0]) {
+    const q = await quoteCart(sql, accountId, b.items);
+    if ("error" in q) return c.json({ error: q.error }, q.status);
+    if (b.amount !== undefined && b.amount !== q.cart.total) return c.json({ error: "amount_mismatch" }, 400);
+    cart = q.cart;
+    total = q.cart.total;
+  }
+
   const attemptKey = `t:${key}`;
   const result = (await sql.begin(async (tx): Promise<TagResult> => {
     const tag = await loadTag(tx, proof.uid, true);
@@ -161,7 +209,7 @@ terminalPayments.post("/", async (c) => {
     // Same attempt retried (lost response): return the recorded result, no counter test, no debit.
     const prev = await findPay(tx, accountId, attemptKey);
     if (prev) {
-      if (prev.tag_id !== tag.id || prev.amount !== b.amount) return { out: { kind: "conflict" } };
+      if (prev.tag_id !== tag.id || prev.amount !== total) return { out: { kind: "conflict" } };
       return { out: { kind: prev.status === "completed" ? "ok" : "declined", row: prev, replayed: true } };
     }
 
@@ -174,6 +222,8 @@ terminalPayments.post("/", async (c) => {
     if (tag.locked) return { error: "tag_locked", status: 422 };
     if (tag.account_id === accountId) return { error: "self_payment", status: 422 };
 
+    // Out of stock at this instant: the attempt is recorded as declined (the tap stays burned).
+    const decline = cart ? await reserveCart(tx, accountId, cart) : null;
     const out = await payCore(tx, {
       payerWalletId: tag.wallet_id,
       payerAccountId: tag.account_id,
@@ -181,10 +231,12 @@ terminalPayments.post("/", async (c) => {
       terminalId,
       tagId: tag.id,
       tagLimit: tag.transaction_limit,
-      amount: b.amount,
+      amount: total,
       idempotencyKey: attemptKey,
       reference: b.reference ?? null,
+      forceDecline: decline,
     });
+    if (cart && out.kind === "ok" && !out.replayed) await commitCart(tx, cart);
     return { out };
   })) as TagResult;
 

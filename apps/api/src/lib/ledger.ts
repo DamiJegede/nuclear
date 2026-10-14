@@ -274,7 +274,9 @@ export function easternHour(d: Date): number {
   return Number(h);
 }
 
-export async function resetDailySpend(sql: Sql): Promise<number> {
-  const rows = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
-  return rows.length;
+/** Cron at 00:00 Eastern: reset wallets.spent_today and products.sold_today. */
+export async function resetDailyCounters(sql: Sql): Promise<{ wallets: number; products: number }> {
+  const w = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
+  const p = await sql`update products set sold_today = 0 where sold_today <> 0 returning id`;
+  return { wallets: w.length, products: p.length };
 }

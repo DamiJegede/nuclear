@@ -33,6 +33,8 @@ export type PayInput = {
   /** Already namespaced; unique per merchant. */
   idempotencyKey: string;
   reference: string | null;
+  /** When set, record the attempt as failed with this code without moving money (e.g. out_of_stock). */
+  forceDecline?: string | null;
 };
 
 export type PayOutcome =
@@ -76,6 +78,13 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
     return { kind: prev.status === "completed" ? "ok" : "declined", row: prev, replayed: true };
   }
   const txId = ins[0].id;
+
+  if (i.forceDecline) {
+    const [r] = await tx<PayRow[]>`
+      update transactions set status = 'failed', status_code = ${i.forceDecline}
+       where id = ${txId} returning ${tx.unsafe(PAY_COLS)}`;
+    return { kind: "declined", row: r!, replayed: false };
+  }
 
   const bal = await tx<{ account_id: string; balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
     select account_id, balance, credit_limit, credit_spent from balances

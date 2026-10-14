@@ -4,7 +4,7 @@ Updated October 13, 2026. Working schema consolidation; not an applied database 
 
 ## Current decisions
 
-The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, for fifteen in total (migrations 0001 to 0003). Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
+The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, and the merchant catalogue adds two, categories and products, for seventeen in total (migrations 0001 to 0004). Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
 
 Confirmed refinements: accounts.handle after type (nullable, set or changed later only by the primary account's own session; 4-12 alphanumeric, unique index); password_hash; owner-issued five-minute wallet magic links and devices, with no member_account_id; businesses.account_id primary key; bank_accounts.last4 and provider_account_id without verified_at; separate account-wide balance plus approved credit; sends use funded balance only, merchant payments may also use approved credit; no pending-funding availability; spent_today counts successful sends/payments and resets at midnight Eastern; nullable tags.transaction_limit; inline business address; refund/adjustment types; transactions.status_code; explicit endpoint foreign keys; failed funding attempts remain in fundings.
 
@@ -153,6 +153,45 @@ Staff of a business. A staff member is a consumer account with their own wallet 
 | updated_at | Last update timestamp. |
 
 One staff record per (account_id, staff_account_id). A trigger enforces the account types. The tapped credential resolves to the staff member's account through its wallet; no credential is pinned to the staff record.
+
+## categories
+
+Merchant product categories. Owned by a business (type B) account.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key identifying the category. |
+| account_id | Foreign key to the owning type-B accounts.id. |
+| name | Category name (1-120 characters). |
+| active | Boolean, default true. Inactive categories are hidden rather than deleted. |
+| created_at | Creation timestamp. |
+| updated_at | Last update timestamp. |
+
+A trigger enforces the business account type. `(id, account_id)` is unique so products can reference a category together with its owner. A category in use cannot be deleted; deactivate it instead.
+
+## products
+
+Merchant catalogue items. Owned by a business (type B) account.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key identifying the product. |
+| account_id | Foreign key to the owning type-B accounts.id. |
+| category_id | Nullable foreign key to categories.id; NULL means uncategorised. Enforced with a composite foreign key on (category_id, account_id) so a product can only use its own business's categories. |
+| name | Product name (1-120 characters). |
+| currency | Currency code, default USD. Only USD products can be sold today. |
+| price | Non-negative bigint price in integer minor units. |
+| photo | Nullable image reference, not image binary data. |
+| stock | Nullable integer, never negative. NULL means stock is not tracked (unlimited). |
+| active | Boolean, default true. false hides the product from sale and from the terminal. |
+| status | available or sold_out. With tracked stock it is derived: sold_out exactly when stock is 0, available when stock is above 0 (a trigger keeps it in sync and a check enforces it). Untracked products keep a manually set status. |
+| total_sold | Units sold, all time. |
+| sold_today | Units sold since 00:00 Eastern; reset every program day by the daily job. |
+| discount | Non-negative bigint discount in integer minor units off price, default 0, never more than price. The effective unit price is price minus discount. |
+| created_at | Creation timestamp. |
+| updated_at | Last update timestamp. |
+
+A trigger enforces the business account type. Selling decrements stock in the same transaction as the payment: a sale of tracked stock fails rather than going below 0, and reaching 0 flags the product sold_out. Restocking is an increment (never a "set to" value) so a concurrent sale is not overwritten, and returns a sold-out product to available. Sold line items are not stored per payment, so refunds do not restock. Percentage discounts, variants and per-location pricing are outside this initial shape.
 
 ## bank_accounts
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppContext, Env } from "./env";
 import { connect } from "./db";
-import { easternHour, resetDailySpend } from "./lib/ledger";
+import { easternHour, resetDailyCounters } from "./lib/ledger";
 import { withDb } from "./session";
 import { account } from "./routes/account";
 import { activity } from "./routes/activity";
@@ -63,6 +63,6 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     if (easternHour(new Date(event.scheduledTime)) !== 0) return;
     const sql = connect(env);
-    ctx.waitUntil(resetDailySpend(sql).finally(() => sql.end()));
+    ctx.waitUntil(resetDailyCounters(sql).finally(() => sql.end()));
   },
 } satisfies ExportedHandler<Env>;
