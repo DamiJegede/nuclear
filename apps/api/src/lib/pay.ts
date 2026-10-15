@@ -12,6 +12,7 @@ export type PayRow = {
   from_wallet_id: string;
   tag_id: string | null;
   terminal_id: string | null;
+  checkout_id: string | null;
   reference: string | null;
   idempotency_key: string;
   timestamp: Date;
@@ -19,13 +20,14 @@ export type PayRow = {
 };
 
 export const PAY_COLS = `id, status, status_code, amount, from_account_id, to_account_id,
-  from_wallet_id, tag_id, terminal_id, reference, idempotency_key, "timestamp", completed_at`;
+  from_wallet_id, tag_id, terminal_id, checkout_id, reference, idempotency_key, "timestamp", completed_at`;
 
 export type PayInput = {
   payerWalletId: string;
   payerAccountId: string;
   merchantAccountId: string;
   terminalId: string | null;
+  checkoutId: string | null;
   tagId: string | null;
   /** Per-payment ceiling from tags.transaction_limit (tag path only). */
   tagLimit: bigint | null;
@@ -59,9 +61,10 @@ const pos = (v: bigint) => (v > 0n ? v : 0n);
 export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
   const ins = await tx<{ id: string }[]>`
     insert into transactions (type, from_account_id, to_account_id, from_wallet_id, tag_id, terminal_id,
-                              amount, reference, status, idempotency_key)
+                              checkout_id, amount, reference, status, idempotency_key)
     values ('pay', ${i.payerAccountId}, ${i.merchantAccountId}, ${i.payerWalletId}, ${i.tagId},
-            ${i.terminalId}, ${i.amount.toString()}, ${i.reference}, 'pending', ${i.idempotencyKey})
+            ${i.terminalId}, ${i.checkoutId}, ${i.amount.toString()}, ${i.reference}, 'pending',
+            ${i.idempotencyKey})
     on conflict do nothing
     returning id`;
 

@@ -4,7 +4,7 @@ Updated October 13, 2026. Working schema consolidation; not an applied database 
 
 ## Current decisions
 
-The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, and the merchant catalogue adds two, categories and products, for seventeen in total (migrations 0001 to 0004). Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
+The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, for nineteen in total (migrations 0001 to 0005). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
 
 Confirmed refinements: accounts.handle after type (nullable, set or changed later only by the primary account's own session; 4-12 alphanumeric, unique index); password_hash; owner-issued five-minute wallet magic links and devices, with no member_account_id; businesses.account_id primary key; bank_accounts.last4 and provider_account_id without verified_at; separate account-wide balance plus approved credit; sends use funded balance only, merchant payments may also use approved credit; no pending-funding availability; spent_today counts successful sends/payments and resets at midnight Eastern; nullable tags.transaction_limit; inline business address; refund/adjustment types; transactions.status_code; explicit endpoint foreign keys; failed funding attempts remain in fundings.
 
@@ -191,7 +191,45 @@ Merchant catalogue items. Owned by a business (type B) account.
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
-A trigger enforces the business account type. Selling decrements stock in the same transaction as the payment: a sale of tracked stock fails rather than going below 0, and reaching 0 flags the product sold_out. Restocking is an increment (never a "set to" value) so a concurrent sale is not overwritten, and returns a sold-out product to available. Sold line items are not stored per payment, so refunds do not restock. Percentage discounts, variants and per-location pricing are outside this initial shape.
+A trigger enforces the business account type. Selling decrements stock in the same transaction as the payment: a sale of tracked stock fails rather than going below 0, and reaching 0 flags the product sold_out. Restocking is an increment (never a "set to" value) so a concurrent sale is not overwritten, and returns a sold-out product to available. Sold line items are recorded on the order's checkout_items, and an item refund can restock them. Percentage discounts, variants and per-location pricing are outside this initial shape.
+
+## checkouts
+
+An order a merchant creates and a customer pays. Owned by a business (type B) account. Stock is taken when the order is paid, not when it is created.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key identifying the checkout. It is shown to the customer (for example as a QR code), so it is an unguessable UUID. |
+| account_id | Foreign key to the merchant's type-B accounts.id. |
+| terminal_id | Nullable foreign key to terminals.id (same account via composite foreign key); NULL when not created on a terminal. |
+| reference | Nullable merchant order reference (1-64 characters). |
+| currency | Currency code, default USD. |
+| total | Positive bigint total in integer minor units, fixed at creation from the item snapshots (or the keyed amount). |
+| status | open, paid, canceled, or expired. An open checkout past expires_at is treated as expired and marked so when a payment is attempted. |
+| expires_at | Nullable expiry; NULL means it never expires. |
+| created_at | Creation timestamp. |
+| updated_at | Last update timestamp. |
+
+A trigger enforces the business account type. A checkout is settled by at most one completed pay transaction (unique index on transactions.checkout_id for completed payments); failed attempts remain against it, and it stays open for another try. A one-step payment (amount or items sent with the tap) creates its checkout in the same transaction and cancels it if the payment is declined.
+
+## checkout_items
+
+Order lines. A checkout may have none (a keyed-in amount).
+
+| Field | Description |
+| --- | --- |
+| id | Primary key identifying the line. |
+| checkout_id | Foreign key to checkouts.id. |
+| product_id | Nullable foreign key to products.id; NULL for an ad-hoc line. Must belong to the checkout's merchant (trigger). |
+| name | Product name snapshot (1-120 characters). |
+| unit_price | Price snapshot in integer minor units. |
+| discount | Per-unit discount snapshot in integer minor units, never more than unit_price. |
+| quantity | Positive integer quantity. |
+| refunded_quantity | Units returned by completed item refunds, default 0. |
+| refund_pending_quantity | Units reserved by pending item refunds, default 0. refunded_quantity plus refund_pending_quantity never exceeds quantity. |
+| created_at | Creation timestamp. |
+
+The line total is (unit_price - discount) x quantity. The refund counters are the per-line refund state: a pending refund adds to refund_pending_quantity, completing it moves the units to refunded_quantity, rejecting it releases them. They change only under the original payment's row lock. Names and prices are snapshotted so history survives catalogue edits.
 
 ## bank_accounts
 
@@ -254,6 +292,8 @@ Sends, purchases, settlements, refunds and adjustments are recorded here, includ
 | terminal_id | Nullable foreign key to terminals.id for a pay or refund taken on a terminal. A trigger requires the terminal to belong to the merchant (to_account_id for pay, from_account_id for refund). |
 | reference | Nullable merchant order reference (1-64 characters); pay only. |
 | approved_by_account_id | Nullable foreign key to the approving staff member's accounts.id; refund only, set when a staff tap approved it. |
+| checkout_id | Nullable foreign key to checkouts.id; pay and refund only. A trigger requires the order to belong to the merchant (to_account_id for a pay, from_account_id for a refund). A refund carries the checkout of the payment it refunds. At most one completed payment per checkout. |
+| items | Nullable JSON array for an item refund: `[{checkout_item_id, quantity, restock}]`; refund only. It is that refund's own record of the lines it covers (needed to approve, reject or audit it); the per-line totals live on checkout_items. restock (default false) returns tracked stock when the refund completes. There is no refund-items table. |
 | tag_id | Nullable foreign key to tags.id for a physical-tag payment. |
 | pass_id | Nullable foreign key to passes.id for an Apple/Google pass payment. |
 | status | Operation state, including pending, completed, failed, or returned; full state model to be finalized. |

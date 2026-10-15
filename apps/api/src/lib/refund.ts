@@ -13,13 +13,14 @@ export type RefundRow = {
   related_transaction_id: string;
   terminal_id: string | null;
   approved_by_account_id: string | null;
+  items: { checkout_item_id: string; quantity: number; restock: boolean }[] | null;
   idempotency_key: string;
   timestamp: Date;
   completed_at: Date | null;
 };
 
 export const R_COLS = `id, status, status_code, amount, from_account_id, to_account_id, to_wallet_id,
-  related_transaction_id, terminal_id, approved_by_account_id, idempotency_key, "timestamp", completed_at`;
+  related_transaction_id, terminal_id, approved_by_account_id, items, idempotency_key, "timestamp", completed_at`;
 
 export type OriginalRef = { paymentId: string } | { attempt: string };
 
@@ -27,9 +28,14 @@ export type RefundInput = {
   merchantAccountId: string;
   terminalId: string;
   original: OriginalRef;
-  mode: "full" | "partial";
+  /** full/partial move an amount; items refunds specific units of the paid order. */
+  mode: "full" | "partial" | "items";
   /** Required for partial. */
   amount: bigint | null;
+  /** Required for items. */
+  items?: { checkoutItemId: string; quantity: number }[];
+  /** Items mode: put the units back on the shelf when the refund completes. Default false. */
+  restock?: boolean;
   idempotencyKey: string;
   /**
    * execute: refund now (direct, or already approved by tap/owner).
@@ -44,7 +50,9 @@ export type RefundOutcome =
   | { kind: "ok" | "declined" | "pending"; row: RefundRow; replayed: boolean; remaining: bigint }
   | { kind: "error"; status: 404 | 409 | 422; error: string };
 
-type OriginalPay = { id: string; status: string; amount: bigint; from_account_id: string; from_wallet_id: string };
+type OriginalPay = {
+  id: string; status: string; amount: bigint; from_account_id: string; from_wallet_id: string; checkout_id: string | null;
+};
 
 export async function findRefund(tx: Tx, merchantAccountId: string, key: string): Promise<RefundRow | undefined> {
   const [r] = await tx<RefundRow[]>`
@@ -56,11 +64,11 @@ export async function findRefund(tx: Tx, merchantAccountId: string, key: string)
 async function lockOriginal(tx: Tx, merchantAccountId: string, ref: OriginalRef): Promise<OriginalPay | undefined> {
   const [o] = "paymentId" in ref
     ? await tx<OriginalPay[]>`
-        select id, status, amount, from_account_id, from_wallet_id from transactions
+        select id, status, amount, from_account_id, from_wallet_id, checkout_id from transactions
          where id = ${ref.paymentId} and type = 'pay' and to_account_id = ${merchantAccountId}
          for no key update`
     : await tx<OriginalPay[]>`
-        select id, status, amount, from_account_id, from_wallet_id from transactions
+        select id, status, amount, from_account_id, from_wallet_id, checkout_id from transactions
          where type = 'pay' and to_account_id = ${merchantAccountId}
            and idempotency_key = ${`t:${ref.attempt}`}
          for no key update`;
@@ -93,6 +101,31 @@ async function settle(
   amount: bigint,
   approver: string | null,
 ): Promise<RefundRow> {
+  // Restock first: products are locked before balances everywhere (payments do the same), so a
+  // refund and a sale of the same product cannot deadlock.
+  const [self] = await tx<{ items: RefundRow["items"] }[]>`select items from transactions where id = ${refundId}`;
+  const back = (self?.items ?? []).filter((x) => x.restock);
+  if (back.length > 0) {
+    const rows = await tx<{ product_id: string; q: number }[]>`
+      select ci.product_id, sum(x.quantity)::int as q
+        from jsonb_to_recordset(${tx.json(back as never)}) as x(checkout_item_id uuid, quantity int)
+        join checkout_items ci on ci.id = x.checkout_item_id
+       where ci.product_id is not null
+       group by ci.product_id order by ci.product_id`;
+    for (const r of rows) {
+      await tx`update products set stock = stock + ${r.q} where id = ${r.product_id} and stock is not null`;
+    }
+  }
+
+  // Item refunds: the reserved units become refunded units on the order's lines.
+  for (const it of self?.items ?? []) {
+    await tx`
+      update checkout_items
+         set refund_pending_quantity = refund_pending_quantity - ${it.quantity},
+             refunded_quantity = refunded_quantity + ${it.quantity}
+       where id = ${it.checkout_item_id}`;
+  }
+
   const bal = await tx<{ account_id: string; credit_spent: bigint }[]>`
     select account_id, credit_spent from balances
      where account_id in (${merchantAccountId}, ${orig.from_account_id})
@@ -172,11 +205,35 @@ export async function refundCore(tx: Tx, i: RefundInput): Promise<RefundOutcome>
   const remaining = orig.amount - s.completed - s.pending;
 
   let amount: bigint;
+  let itemsJson: { checkout_item_id: string; quantity: number; restock: boolean }[] | null = null;
   if (i.mode === "full") {
     if (remaining <= 0n) {
       return { kind: "error", status: 422, error: s.pending > 0n ? "refund_pending" : "already_refunded" };
     }
     amount = remaining;
+  } else if (i.mode === "items") {
+    const [pay] = await tx<{ checkout_id: string | null }[]>`select checkout_id from transactions where id = ${orig.id}`;
+    if (!pay?.checkout_id) return { kind: "error", status: 422, error: "payment_has_no_items" };
+    const want = new Map<string, number>();
+    for (const it of i.items ?? []) want.set(it.checkoutItemId, (want.get(it.checkoutItemId) ?? 0) + it.quantity);
+    if (want.size === 0) return { kind: "error", status: 422, error: "invalid_items" };
+
+    // Free units per line = quantity - refunded - reserved by pending refunds.
+    const lines = await tx<{ id: string; unit_price: bigint; discount: bigint; free: number }[]>`
+      select id, unit_price, discount, (quantity - refunded_quantity - refund_pending_quantity) as free
+        from checkout_items where checkout_id = ${pay.checkout_id}`;
+    if (lines.length === 0) return { kind: "error", status: 422, error: "payment_has_no_items" };
+    const byId = new Map(lines.map((l) => [l.id, l]));
+    amount = 0n;
+    itemsJson = [];
+    for (const [itemId, qty] of want) {
+      const l = byId.get(itemId);
+      if (!l) return { kind: "error", status: 404, error: "item_not_found" };
+      if (qty > l.free) return { kind: "error", status: 422, error: "item_quantity_exceeded" };
+      amount += (l.unit_price - l.discount) * BigInt(qty);
+      itemsJson.push({ checkout_item_id: itemId, quantity: qty, restock: i.restock ?? false });
+    }
+    if (amount <= 0n) return { kind: "error", status: 422, error: "invalid_amount" };
   } else {
     if (i.amount === null || i.amount <= 0n) return { kind: "error", status: 422, error: "invalid_amount" };
     amount = i.amount;
@@ -185,10 +242,10 @@ export async function refundCore(tx: Tx, i: RefundInput): Promise<RefundOutcome>
   const queue = i.disposition === "queue";
   const ins = await tx<{ id: string }[]>`
     insert into transactions (type, from_account_id, to_account_id, to_wallet_id, related_transaction_id,
-                              terminal_id, amount, status, status_code, idempotency_key)
+                              terminal_id, checkout_id, items, amount, status, status_code, idempotency_key)
     values ('refund', ${i.merchantAccountId}, ${orig.from_account_id}, ${orig.from_wallet_id}, ${orig.id},
-            ${i.terminalId}, ${amount.toString()}, 'pending', ${queue ? "awaiting_approval" : null},
-            ${i.idempotencyKey})
+            ${i.terminalId}, ${orig.checkout_id}, ${itemsJson === null ? null : tx.json(itemsJson as never)},
+            ${amount.toString()}, 'pending', ${queue ? "awaiting_approval" : null}, ${i.idempotencyKey})
     on conflict (type, from_account_id, idempotency_key) where from_account_id is not null and type <> 'pay'
     do nothing
     returning id`;
@@ -200,6 +257,13 @@ export async function refundCore(tx: Tx, i: RefundInput): Promise<RefundOutcome>
       update transactions set status = 'failed', status_code = 'exceeds_refundable'
        where id = ${refundId} returning ${tx.unsafe(R_COLS)}`;
     return { kind: "declined", row: r!, replayed: false, remaining };
+  }
+
+  // Accepted: reserve the units on the order's lines (settle() moves them to refunded).
+  for (const it of itemsJson ?? []) {
+    await tx`
+      update checkout_items set refund_pending_quantity = refund_pending_quantity + ${it.quantity}
+       where id = ${it.checkout_item_id}`;
   }
 
   if (queue) {
@@ -256,6 +320,11 @@ export async function rejectPending(tx: Tx, merchantAccountId: string, refundId:
   const [row] = await tx<RefundRow[]>`
     update transactions set status = 'failed', status_code = 'rejected'
      where id = ${refundId} returning ${tx.unsafe(R_COLS)}`;
+  for (const it of row!.items ?? []) {
+    await tx`
+      update checkout_items set refund_pending_quantity = refund_pending_quantity - ${it.quantity}
+       where id = ${it.checkout_item_id}`;
+  }
   const s = await sums(tx, orig.id);
   return { kind: "declined", row: row!, replayed: false, remaining: orig.amount - s.completed - s.pending };
 }

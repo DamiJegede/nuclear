@@ -5,24 +5,35 @@ import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
 import { decryptTagUrl } from "../lib/tagproof";
 import { consumeCounter, isFresh, loadTag } from "../lib/tap";
-import { findPay, payCore, PAY_COLS, type PayOutcome, type PayRow } from "../lib/pay";
-import { commitCart, quoteCart, reserveCart, type Cart } from "../lib/catalog";
+import { findPay, PAY_COLS, type PayOutcome, type PayRow } from "../lib/pay";
+import { checkStock, quoteCart, type CartLine } from "../lib/catalog";
+import { getCheckout, getItems, itemJson, payCheckout } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
 
 const uuid = z.string().uuid();
 const reference = z.string().trim().min(1).max(64).optional();
 
-// Catalogue items. With items the total comes from the merchant's live prices (price - discount);
-// an explicit amount, if also sent, must equal it.
-const items = z
-  .array(z.object({ product_id: z.string().uuid(), quantity: z.number().int().min(1).max(1000) }))
-  .min(1)
-  .max(50);
-
 export const credentialSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tag"), url: z.string().min(1).max(512) }),
   z.object({ type: z.literal("pass"), id: z.string().max(128).optional(), proof: z.string().max(4096).optional() }),
 ]);
+
+// Catalogue items. With items the total comes from the merchant's live prices (price - discount);
+// an explicit amount, if also sent, must equal it.
+const items = z
+  .array(z.object({ product_id: uuid, quantity: z.number().int().min(1).max(1000) }))
+  .min(1)
+  .max(50);
+
+// Pay an existing checkout, or describe one to be created and paid in one step.
+const what = {
+  checkout_id: uuid.optional(),
+  amount: amount.optional(),
+  items: items.optional(),
+  reference,
+};
+const oneOf = (b: { checkout_id?: string; amount?: bigint; items?: unknown }) =>
+  (b.checkout_id !== undefined) !== (b.amount !== undefined || b.items !== undefined);
 
 function paymentJson(
   r: PayRow,
@@ -34,6 +45,7 @@ function paymentJson(
     status_code: r.status_code,
     amount: n(r.amount),
     reference: r.reference,
+    checkout_id: r.checkout_id,
     terminal_id: r.terminal_id,
     wallet_id: r.from_wallet_id,
     via: r.tag_id ? "tag" : "wallet",
@@ -58,22 +70,52 @@ async function merchantName(sql: Sql, accountId: string): Promise<string> {
   return m?.name ?? "";
 }
 
+type Plan =
+  | { error: string; status: 400 | 404 | 409 | 422 }
+  | { checkoutId: string | null; create: { lines: CartLine[]; total: bigint; reference: string | null } | null; total: bigint };
+
+/**
+ * Read-only planning before anything is consumed (a tap, a key): resolve the checkout or price the
+ * one-step cart, and refuse unsellable carts early so a catalogue mistake never burns a tap.
+ */
+async function plan(
+  sql: Sql,
+  merchantId: string,
+  b: { checkout_id?: string; amount?: bigint; items?: { product_id: string; quantity: number }[]; reference?: string },
+): Promise<Plan> {
+  if (b.checkout_id) {
+    const co = await getCheckout(sql, merchantId, b.checkout_id);
+    if (!co) return { error: "checkout_not_found", status: 404 };
+    if (co.status !== "open") return { error: co.status === "paid" ? "checkout_paid" : "checkout_not_open", status: 409 };
+    if (co.expires_at && co.expires_at.getTime() <= Date.now()) return { error: "checkout_expired", status: 409 };
+    const its = await getItems(sql, co.id);
+    const bad = await checkStock(
+      sql, merchantId,
+      its.filter((x) => x.product_id).map((x) => ({ productId: x.product_id!, quantity: x.quantity })),
+    );
+    if (bad) return { error: bad, status: 422 };
+    return { checkoutId: co.id, create: null, total: co.total };
+  }
+  if (b.items) {
+    const q = await quoteCart(sql, merchantId, b.items);
+    if ("error" in q) return { error: q.error, status: q.status };
+    if (b.amount !== undefined && b.amount !== q.cart.total) return { error: "amount_mismatch", status: 400 };
+    return { checkoutId: null, create: { lines: q.cart.lines, total: q.cart.total, reference: b.reference ?? null }, total: q.cart.total };
+  }
+  return { checkoutId: null, create: { lines: [], total: b.amount!, reference: b.reference ?? null }, total: b.amount! };
+}
+
 // ---- Customer-confirmed payment: /v1/payments -------------------------------------------------
-// The customer's own authenticated call is the confirmation (no tap protocol needed). This is the
-// path for in-app payments and for phone passes until reader verification is certified.
+// The customer's own authenticated call is the confirmation (no tap protocol needed). Pay a checkout
+// the POS created (checkout_id), or name a terminal and an amount/items to pay in one step.
 
 export const payments = new Hono<AppContext>();
 payments.use("*", requireSession);
 
 const confirmBody = z
-  .object({
-    amount: amount.optional(),
-    items: items.optional(),
-    reference,
-    terminal_id: uuid,
-    from_wallet_id: uuid.optional(),
-  })
-  .refine((b) => b.amount !== undefined || b.items !== undefined, { message: "amount_or_items_required" });
+  .object({ ...what, terminal_id: uuid.optional(), from_wallet_id: uuid.optional() })
+  .refine((b) => oneOf(b), { message: "checkout_id_or_amount_or_items" })
+  .refine((b) => b.checkout_id !== undefined || b.terminal_id !== undefined, { message: "terminal_id_required" });
 
 payments.post("/", async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
@@ -94,46 +136,49 @@ payments.post("/", async (c) => {
     : await sql<{ id: string }[]>`select id from wallets where account_id = ${accountId} and type = 'default'`;
   if (!wallet) return c.json({ error: "wallet_not_found" }, 404);
 
-  // The terminal identifies the merchant and attributes the payment.
-  const [t] = await sql<{ id: string; account_id: string }[]>`
-    select t.id, t.account_id from terminals t
-      join accounts a on a.id = t.account_id and a.type = 'B' and a.status = 'active'
-     where t.id = ${b.terminal_id}`;
-  if (!t) return c.json({ error: "terminal_not_found" }, 404);
-  if (t.account_id === accountId) return c.json({ error: "self_payment" }, 422);
+  // Merchant: the checkout's owner, or the terminal's.
+  let merchantId: string | null = null;
+  let terminalId: string | null = null;
+  if (b.checkout_id) {
+    const co = await getCheckout(sql, null, b.checkout_id);
+    if (!co) return c.json({ error: "checkout_not_found" }, 404);
+    merchantId = co.account_id;
+    terminalId = co.terminal_id;
+  } else {
+    const [t] = await sql<{ id: string; account_id: string }[]>`
+      select t.id, t.account_id from terminals t where t.id = ${b.terminal_id!}`;
+    if (!t) return c.json({ error: "terminal_not_found" }, 404);
+    merchantId = t.account_id;
+    terminalId = t.id;
+  }
+  const [m] = await sql<{ type: string; status: string }[]>`select type, status from accounts where id = ${merchantId}`;
+  if (!m || m.type !== "B" || m.status !== "active") return c.json({ error: "merchant_unavailable" }, 404);
+  if (merchantId === accountId) return c.json({ error: "self_payment" }, 422);
 
-  let cart: Cart | null = null;
-  const recordedCustomer = await sql<{ amount: bigint }[]>`
-    select amount from transactions
-     where type = 'pay' and to_account_id = ${t.account_id} and idempotency_key = ${`c:${accountId}:${key}`}`;
-  let total = b.amount ?? recordedCustomer[0]?.amount!;
-  if (b.items && !recordedCustomer[0]) {
-    const q = await quoteCart(sql, t.account_id, b.items);
-    if ("error" in q) return c.json({ error: q.error }, q.status);
-    if (b.amount !== undefined && b.amount !== q.cart.total) return c.json({ error: "amount_mismatch" }, 400);
-    cart = q.cart;
-    total = q.cart.total;
+  const idemKey = `c:${accountId}:${key}`; // customer keys are namespaced per payer
+  const recorded = await findPay(sql as never, merchantId, idemKey);
+  let p: Plan = { checkoutId: b.checkout_id ?? null, create: null, total: recorded?.amount ?? 0n };
+  if (!recorded) {
+    p = await plan(sql, merchantId, b);
+    if ("error" in p) return c.json({ error: p.error }, p.status);
   }
 
-  const out = await sql.begin(async (tx) => {
-    const decline = cart ? await reserveCart(tx, t.account_id, cart) : null;
-    const r = await payCore(tx, {
+  const out = await sql.begin((tx) =>
+    payCheckout(tx, {
       payerWalletId: wallet.id,
       payerAccountId: accountId,
-      merchantAccountId: t.account_id,
-      terminalId: t.id,
+      merchantAccountId: merchantId!,
+      terminalId,
       tagId: null,
       tagLimit: null,
-      amount: total,
-      idempotencyKey: `c:${accountId}:${key}`, // customer keys are namespaced per payer
-      reference: b.reference ?? null,
-      forceDecline: decline,
-    });
-    if (cart && r.kind === "ok" && !r.replayed) await commitCart(tx, cart);
-    return r;
-  });
+      idempotencyKey: idemKey,
+      checkoutId: p.checkoutId,
+      create: p.create,
+      expectAmount: b.amount ?? undefined,
+    }),
+  );
   return respond(c, out as PayOutcome, {
-    merchant: { account_id: t.account_id, display_name: await merchantName(sql, t.account_id) },
+    merchant: { account_id: merchantId, display_name: await merchantName(sql, merchantId) },
   });
 });
 
@@ -147,8 +192,10 @@ payments.get("/:id", async (c) => {
      where id = ${id.data} and type = 'pay' and from_account_id = ${accountId}
        ${walletId ? sql`and from_wallet_id = ${walletId}` : sql``}`;
   if (!r) return c.json({ error: "not_found" }, 404);
+  const its = r.checkout_id ? await getItems(sql, r.checkout_id) : [];
   return c.json({
     payment: paymentJson(r, { merchant: { account_id: r.to_account_id, display_name: await merchantName(sql, r.to_account_id) } }),
+    items: its.map((it) => ({ name: it.name, quantity: it.quantity, net_price: Number(it.unit_price - it.discount) })),
   });
 });
 
@@ -158,8 +205,8 @@ export const terminalPayments = new Hono<AppContext>();
 terminalPayments.use("*", requireTerminal);
 
 const terminalBody = z
-  .object({ amount: amount.optional(), items: items.optional(), reference, credential: credentialSchema })
-  .refine((b) => b.amount !== undefined || b.items !== undefined, { message: "amount_or_items_required" });
+  .object({ ...what, credential: credentialSchema })
+  .refine((b) => oneOf(b), { message: "checkout_id_or_amount_or_items" });
 
 type TagResult = { error: string; status: 404 | 409 | 422 } | { out: PayOutcome };
 
@@ -175,41 +222,29 @@ terminalPayments.post("/", async (c) => {
   const sql = c.get("sql");
 
   if (b.credential.type === "pass") {
-    // Reader-verified Apple/Google pass taps need certified reader protocols; use the
-    // customer-confirmed path (POST /v1/payments) until then.
+    // Reader-verified Apple/Google pass taps need certified reader protocols; the customer pays the
+    // checkout from their own app (POST /v1/payments) until then.
     return c.json({ error: "pass_verification_unavailable" }, 501);
   }
-
   const proof = await decryptTagUrl(c.env, b.credential.url);
   if (!proof) return c.json({ error: "invalid_tag" }, 400);
 
-  // Price the cart before the tap is consumed: a catalogue mistake must not burn the customer's tap.
-  // A retry of an attempt that is already recorded returns that result untouched (stock may have
-  // moved on since), so it is not priced again.
-  let cart: Cart | null = null;
-  const attemptKey0 = `t:${key}`;
-  const recorded = await sql<{ amount: bigint }[]>`
-    select amount from transactions
-     where type = 'pay' and to_account_id = ${accountId} and idempotency_key = ${attemptKey0}`;
-  // An explicit amount is always compared to the recorded attempt (mismatch => 409).
-  let total = b.amount ?? recorded[0]?.amount!;
-  if (b.items && !recorded[0]) {
-    const q = await quoteCart(sql, accountId, b.items);
-    if ("error" in q) return c.json({ error: q.error }, q.status);
-    if (b.amount !== undefined && b.amount !== q.cart.total) return c.json({ error: "amount_mismatch" }, 400);
-    cart = q.cart;
-    total = q.cart.total;
+  // Plan before the tap is consumed. A retry of a recorded attempt returns that result untouched.
+  const attemptKey = `t:${key}`;
+  const recorded = await findPay(sql as never, accountId, attemptKey);
+  let p: Plan = { checkoutId: b.checkout_id ?? null, create: null, total: recorded?.amount ?? 0n };
+  if (!recorded) {
+    p = await plan(sql, accountId, b);
+    if ("error" in p) return c.json({ error: p.error }, p.status);
   }
 
-  const attemptKey = `t:${key}`;
   const result = (await sql.begin(async (tx): Promise<TagResult> => {
     const tag = await loadTag(tx, proof.uid, true);
     if (!tag) return { error: "tag_not_found", status: 404 };
 
-    // Same attempt retried (lost response): return the recorded result, no counter test, no debit.
     const prev = await findPay(tx, accountId, attemptKey);
     if (prev) {
-      if (prev.tag_id !== tag.id || prev.amount !== total) return { out: { kind: "conflict" } };
+      if (prev.tag_id !== tag.id || (b.amount !== undefined && prev.amount !== b.amount)) return { out: { kind: "conflict" } };
       return { out: { kind: prev.status === "completed" ? "ok" : "declined", row: prev, replayed: true } };
     }
 
@@ -222,21 +257,18 @@ terminalPayments.post("/", async (c) => {
     if (tag.locked) return { error: "tag_locked", status: 422 };
     if (tag.account_id === accountId) return { error: "self_payment", status: 422 };
 
-    // Out of stock at this instant: the attempt is recorded as declined (the tap stays burned).
-    const decline = cart ? await reserveCart(tx, accountId, cart) : null;
-    const out = await payCore(tx, {
+    const out = await payCheckout(tx, {
       payerWalletId: tag.wallet_id,
       payerAccountId: tag.account_id,
       merchantAccountId: accountId,
       terminalId,
       tagId: tag.id,
       tagLimit: tag.transaction_limit,
-      amount: total,
       idempotencyKey: attemptKey,
-      reference: b.reference ?? null,
-      forceDecline: decline,
+      checkoutId: p.checkoutId,
+      create: p.create,
+      expectAmount: b.amount ?? undefined,
     });
-    if (cart && out.kind === "ok" && !out.replayed) await commitCart(tx, cart);
     return { out };
   })) as TagResult;
 
@@ -251,7 +283,8 @@ async function payerView(sql: Sql, out: PayOutcome) {
   return w ?? null;
 }
 
-// Recover an outcome after a lost response or BLE drop, using the original attempt id.
+// Recover an outcome after a lost response or BLE drop, using the original attempt id. Includes the
+// order's items with how many units are still refundable, so the POS can build an item refund.
 terminalPayments.get("/:attempt", async (c) => {
   const attempt = c.req.param("attempt");
   if (!attempt || attempt.length > 128) return c.json({ error: "not_found" }, 404);
@@ -263,5 +296,6 @@ terminalPayments.get("/:attempt", async (c) => {
   if (!r) return c.json({ error: "not_found" }, 404);
   // Staff see who paid (member attribution) but never wallet balances.
   const payer = await payerView(sql, { kind: "ok", row: r, replayed: true });
-  return c.json({ payment: paymentJson(r, { payer }) });
+  const its = r.checkout_id ? await getItems(sql, r.checkout_id) : [];
+  return c.json({ payment: paymentJson(r, { payer }), items: its.map(itemJson) });
 });

@@ -30,6 +30,7 @@ function refundJson(r: RefundRow, remaining: bigint | null) {
     terminal_id: r.terminal_id,
     /** The approving staff/owner account id; null for a direct refund or while pending. */
     approver_account_id: r.approved_by_account_id,
+    items: r.items,
     remaining_refundable: remaining === null ? null : n(remaining),
     timestamp: r.timestamp,
     completed_at: r.completed_at,
@@ -81,7 +82,13 @@ const rowSelect = (sql: Sql) => sql`
   select r.id, r.status, r.status_code, r.amount, r.terminal_id, r.timestamp, r.completed_at,
          r.approved_by_account_id, r.related_transaction_id,
          p.amount as payment_amount, p.reference, p.idempotency_key as payment_key,
-         w.display_name as payer_name
+         w.display_name as payer_name,
+         (select json_agg(json_build_object('checkout_item_id', e.value ->> 'checkout_item_id',
+                                            'name', ci.name,
+                                            'quantity', (e.value ->> 'quantity')::int,
+                                            'restock', (e.value ->> 'restock')::boolean))
+            from jsonb_array_elements(r.items) e
+            join checkout_items ci on ci.id = (e.value ->> 'checkout_item_id')::uuid) as items
     from transactions r
     join transactions p on p.id = r.related_transaction_id
     left join wallets w on w.id = p.from_wallet_id`;
@@ -90,7 +97,7 @@ type ListRow = {
   id: string; status: string; status_code: string | null; amount: bigint; terminal_id: string | null;
   timestamp: Date; completed_at: Date | null; approved_by_account_id: string | null;
   related_transaction_id: string; payment_amount: bigint; reference: string | null;
-  payment_key: string; payer_name: string | null;
+  payment_key: string; payer_name: string | null; items: unknown[] | null;
 };
 
 const listJson = (r: ListRow) => ({
@@ -103,6 +110,7 @@ const listJson = (r: ListRow) => ({
   attempt: r.payment_key.startsWith("t:") ? r.payment_key.slice(2) : null,
   reference: r.reference,
   payer: r.payer_name ? { display_name: r.payer_name } : null,
+  items: r.items,
   requested_on_terminal_id: r.terminal_id,
   approver_account_id: r.approved_by_account_id,
   timestamp: r.timestamp,
@@ -120,12 +128,20 @@ const createBody = z
   .object({
     payment_id: uuid.optional(),
     attempt: z.string().min(1).max(128).optional(),
-    mode: z.enum(["full", "partial"]),
+    mode: z.enum(["full", "partial", "items"]),
     amount: amount.optional(),
+    items: z
+      .array(z.object({ checkout_item_id: uuid, quantity: z.number().int().min(1).max(1000) }))
+      .min(1)
+      .max(50)
+      .optional(),
+    restock: z.boolean().optional(),
     approval: approval.optional(),
   })
   .refine((b) => (b.payment_id === undefined) !== (b.attempt === undefined), { message: "exactly_one_of_payment_id_or_attempt" })
-  .refine((b) => (b.mode === "partial") === (b.amount !== undefined), { message: "amount_only_for_partial" });
+  .refine((b) => (b.mode === "partial") === (b.amount !== undefined), { message: "amount_only_for_partial" })
+  .refine((b) => (b.mode === "items") === (b.items !== undefined), { message: "items_only_for_items_mode" })
+  .refine((b) => b.restock === undefined || b.mode === "items", { message: "restock_only_for_items_mode" });
 
 type CreateResult = { error: string; status: 404 | 409 | 422 } | { out: RefundOutcome };
 
@@ -145,7 +161,8 @@ terminalRefunds.post("/", async (c) => {
   const core = (tx: TransactionSql<{ bigint: bigint }>, disposition: "execute" | "queue", approver: string | null) =>
     refundCore(tx, {
       merchantAccountId: accountId, terminalId, original, mode: b.mode, amount: b.amount ?? null,
-      idempotencyKey: key, disposition, approvedByAccountId: approver,
+      items: b.items?.map((x) => ({ checkoutItemId: x.checkout_item_id, quantity: x.quantity })),
+      restock: b.restock, idempotencyKey: key, disposition, approvedByAccountId: approver,
     });
 
   if (!b.approval) {
