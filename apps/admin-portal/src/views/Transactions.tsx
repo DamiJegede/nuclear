@@ -88,7 +88,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
       <div className="head"><h1>Transactions</h1></div>
 
       <div className="period-bar">
-        <label className="period-field">Period
+        <label className="period-field"><span className="sr-only">Period</span>
           <select value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
             {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
           </select>

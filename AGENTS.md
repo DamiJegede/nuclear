@@ -16,7 +16,7 @@ migrations/   shared plain-SQL migrations
 apps/api/     backend Worker (src/, wrangler.jsonc, .dev.vars)
 apps/mcp/       MCP server Worker `nuclear-mcp` for AI agents (stateless; calls the API through a service binding; `npm run mcp:deploy`; https://nuclear-mcp.a-space.workers.dev/mcp, version `da12a0e8`)
 apps/merchant-portal/   placeholder (merchant web portal)
-apps/admin-portal/      admin portal (Vite + React): system overview, tags (model cards), admins, security; navigation Overview, Merchants, Users, Tags, Admins, with the admin's name (opens Security: two-step verification and recovery codes) and Transactions on the right; each page has its own URL (/merchants, /users, /tags, /tags/<id>, /admins, /transactions, /security); the UI says "tag" where the database says model; `npm run admin:dev|test|build`; hosted at https://nuclear-admin.a-space.workers.dev (Worker `nuclear-admin`, static assets, version `40c8656f`; `npm run deploy -w @nuclear/admin-portal`)
+apps/admin-portal/      admin portal (Vite + React): system overview, tags (model cards), admins, security; navigation Overview, Merchants, Users, Tags, Admins, with the admin's name (opens Security: two-step verification and recovery codes) and Transactions on the right; each page has its own URL (/merchants, /users, /tags, /tags/<id>, /admins, /transactions, /security); the UI says "tag" where the database says model; `npm run admin:dev|test|build`; hosted at https://nuclear-admin.a-space.workers.dev (Worker `nuclear-admin`, static assets, version `6ad55b11`; `npm run deploy -w @nuclear/admin-portal`)
 ```
 
 Specs, in authoritative order: `docs/TABLES.md`, `docs/BALANCE-POLICY.md`,
