@@ -71,6 +71,10 @@ No spend_date or member_account_id field. A wallet is a spending identity/permis
 
 Audit trail of earmark changes (migration 0011): id, wallet_id and account_id (composite foreign key, so the wallet must belong to the account), amount (signed, never 0: positive = set aside, negative = returned to the shared funds), balance_after (NULL = released), device_id (the owner session that made the change, nullable) and created_at.
 
+## daily_reset
+
+One row (migration 0015): `id` (always true) and `last_day`, the program date (America/New_York) on which wallets.spent_today and products.sold_today were last reset. The first cron run or money request on a new program day updates it and zeroes the counters in one transaction, so a missed cron cannot leave yesterday's counters in force.
+
 ## throttles
 
 Rate-limit counters (migration 0014): key (primary key, for example `login:ada@example.com`, `ip:...`, `agent:<wallet id>`), count and window_start (the window starts at the key's first hit and a hit after it ends starts a new one). The daily job deletes rows older than a day. Not exposed through any endpoint.

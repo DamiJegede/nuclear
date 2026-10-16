@@ -1,7 +1,8 @@
 import { ROOT, applyMigration, migrate, psql, resetSchema } from "./db.ts";
 import { readFileSync } from "node:fs";
 import app from "../src/index.ts";
-import { resetDailyCounters, easternHour } from "../src/lib/ledger.ts";
+import { resetDailyCounters } from "../src/lib/ledger.ts";
+import { easternDate } from "../src/lib/dailyReset.ts";
 import { connect } from "../src/db.ts";
 
 import postgres from "postgres";
@@ -154,8 +155,8 @@ await call("PATCH", `/v1/wallets/${kid}`, { token: A, body: { allow_send: true }
 const sqlc = connect(env);
 eq("reset clears spent_today", (await resetDailyCounters(sqlc)).wallets >= 1, true);
 eq("limit usable again", (await call("POST", "/v1/transfers", { token: K, key: "k4", body: { to_wallet_id: bobDefault, amount: 600 } })).json.transaction.status, "completed");
-eq("easternHour sane", easternHour(new Date("2026-01-15T05:00:00Z")), 0);
-eq("easternHour DST", easternHour(new Date("2026-07-15T04:00:00Z")), 0);
+eq("program date: 05:00 UTC in winter is the start of that New York day", easternDate(new Date("2026-01-15T05:00:00Z")), "2026-01-15");
+eq("program date: 04:00 UTC in summer is the start of that New York day", easternDate(new Date("2026-07-15T04:00:00Z")), "2026-07-15");
 await sqlc.end();
 
 // --- recipient daily-value headroom (cap 5000.00 => 500000c)

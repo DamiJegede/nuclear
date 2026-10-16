@@ -270,15 +270,7 @@ export async function sandboxFund(
   }) as Promise<FundingOutcome>;
 }
 
-/** Cron: reset combined send/payment counters at 00:00 Eastern. */
-export function easternHour(d: Date): number {
-  const h = new Intl.DateTimeFormat("en-US", { timeZone: PROGRAM_TZ, hour: "2-digit", hourCycle: "h23" })
-    .formatToParts(d)
-    .find((p) => p.type === "hour")!.value;
-  return Number(h);
-}
-
-/** Cron at 00:00 Eastern: reset wallets.spent_today and products.sold_today. */
+/** Zeroes wallets.spent_today and products.sold_today. Prefer ensureDay (lib/dailyReset.ts), which does this once per program day. */
 export async function resetDailyCounters(sql: Sql): Promise<{ wallets: number; products: number }> {
   const w = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
   const p = await sql`update products set sold_today = 0 where sold_today <> 0 returning id`;
