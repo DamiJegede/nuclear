@@ -317,7 +317,7 @@ Sends, purchases, settlements, refunds and adjustments are recorded here, includ
 | Field | Description |
 | --- | --- |
 | id | Primary key identifying the operation. |
-| type | fund, send, pay, settle, refund, or adjustment. |
+| type | fund, send, pay, settle, refund, adjustment, or purchase. A purchase is a store purchase of bands/cards: from the buyer's account and wallet to the platform (no to_account); the posting debits the buyer's funded_balance and credits platform_clearing (migration 0010). |
 | from_account_id | Nullable foreign key to accounts.id; source owner. Required for fund/send/pay/settle/refund; NULL reserved for defined system adjustments. |
 | to_account_id | Nullable foreign key to accounts.id; destination owner. Required for fund/send/pay/settle/refund; NULL reserved for defined system adjustments. |
 | from_wallet_id | Nullable foreign key to wallets.id; populated for send/pay. |
@@ -404,7 +404,29 @@ Claiming and managing: a tag is claimed by tapping it with a phone and sending t
 | created_at | Creation timestamp. |
 | updated_at | Last model update timestamp; updates to sold alone do not change this timestamp. |
 
-Preorders are final: no cancellations or returns. Inventory reservation and the event that increments sold remain to be specified; do not invent an order table in this compact plan.
+Preorders are final: no cancellations or returns. `sold` goes up when a store purchase completes (`POST /v1/shop/orders`), never beyond quantity; a tag is attached to the order at shipping and the customer then claims it by tapping.
+
+## tag_orders
+
+One row per completed store purchase of bands/cards (migration 0010). Created only on success; a declined attempt is a failed purchase transaction with no order.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key. |
+| account_id, wallet_id | The buyer and the wallet that paid (the wallet must belong to the account). |
+| model_id | tag_models.id. |
+| model_name, model_type | Snapshots at purchase. |
+| quantity | 1-20. |
+| unit_price, total | Cents, snapshotted; total = unit_price x quantity. |
+| currency | Default USD. |
+| shipping | JSON object: name, line1, line2?, city, region, postal_code, country (2 letters). |
+| status | paid (default), shipped or cancelled. |
+| transaction_id | Unique foreign key to the purchase transaction. |
+| created_at, updated_at | Timestamps. |
+
+## tag_model_photos
+
+An uploaded model photo (migration 0010): model_id (primary key, cascades), content_type (image/jpeg, image/png or image/webp), data (bytea, 1 byte to 256 KB; the admin portal resizes to 256 x 256 JPEG first) and updated_at. Served publicly at `/v1/shop/models/:id/photo?v=<updated_at epoch>`; tag_models.photo remains for an external URL and an upload takes precedence.
 
 ## passes
 

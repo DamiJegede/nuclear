@@ -6,7 +6,7 @@ import {
 import { Admins } from "./views/Admins";
 import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
-import { Models } from "./views/Models";
+import { Tags } from "./views/Tags";
 import { Overview } from "./views/Overview";
 
 const KEY = "nuclear.admin.session";
@@ -20,7 +20,14 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "models" | "admins" | "security";
+type View = "overview" | "tags" | "admins" | "security";
+
+// Each page has its own address, so the browser's back and forward buttons move between pages.
+const PATHS: Record<View, string> = { overview: "/", tags: "/tags", admins: "/admins", security: "/security" };
+const viewFromPath = (path: string): View => {
+  const clean = path.replace(/\/+$/, "") || "/";
+  return (Object.keys(PATHS) as View[]).find((v) => PATHS[v] === clean) ?? "overview";
+};
 
 export function App({
   makeApi = createApi,
@@ -33,7 +40,19 @@ export function App({
 }) {
   const [token, setToken] = useState<string | null>(readToken);
   const [me, setMe] = useState<AdminMe | null>(null);
-  const [view, setView] = useState<View>("overview");
+  const [view, setViewState] = useState<View>(() => viewFromPath(window.location.pathname));
+
+  const setView = useCallback((v: View, replace = false) => {
+    const path = PATHS[v];
+    if (window.location.pathname !== path) window.history[replace ? "replaceState" : "pushState"](null, "", path);
+    setViewState(v);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => setViewState(viewFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const [notice, setNotice] = useState<string | null>(null);
 
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
@@ -42,9 +61,9 @@ export function App({
     writeToken(null);
     setToken(null);
     setMe(null);
-    setView("overview");
+    setView("overview", true);
     setNotice(why ?? null);
-  }, []);
+  }, [setView]);
 
   // A 401 "unauthorized" means the session ended (expired, signed out elsewhere, account disabled).
   // Other 401s are not about the session: other 401s (e.g. invalid_credentials) must not sign the person out.
@@ -105,19 +124,21 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          <button className={view === "overview" ? "tab active" : "tab"} aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}>Overview</button>
-          <button className={view === "models" ? "tab active" : "tab"} aria-current={view === "models" ? "page" : undefined} onClick={() => setView("models")}>Tag models</button>
-          <button className={view === "admins" ? "tab active" : "tab"} aria-current={view === "admins" ? "page" : undefined} onClick={() => setView("admins")}>Admins</button>
+          {([["overview", "Overview"], ["tags", "Tags"], ["admins", "Admins"]] as const).map(([v, label]) => (
+            <a key={v} href={PATHS[v]} className={view === v ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
+              onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
+          ))}
         </nav>
         <div className="who">
           <span className="muted" title={me.access_id}>{me.name}</span>
-          <button className={view === "security" ? "tab active" : "tab"} onClick={() => setView("security")}>Security</button>
+          <a href={PATHS.security} className={view === "security" ? "tab active" : "tab"} aria-current={view === "security" ? "page" : undefined}
+            onClick={(e) => { e.preventDefault(); setView("security"); }}>Security</a>
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
       </header>
       <main>
         {view === "overview" && <Overview api={api} onError={onError} />}
-        {view === "models" && <Models api={api} onError={onError} />}
+        {view === "tags" && <Tags api={api} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
         {view === "admins" && <Admins api={api} onError={onError} />}
       </main>

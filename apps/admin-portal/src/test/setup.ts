@@ -5,4 +5,5 @@ import { afterEach } from "vitest";
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
 });

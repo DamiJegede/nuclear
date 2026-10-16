@@ -94,6 +94,19 @@ describe("api client", () => {
     expect(f.mock.calls[0]![1]!.method).toBe("POST");
   });
 
+  it("uploads a photo as the raw image with its own content type, and makes photo paths absolute", async () => {
+    const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const api = createApi("t", "https://api.test");
+    const blob = new Blob(["abc"], { type: "image/jpeg" });
+    await api.uploadModelPhoto("m1", blob);
+    expect(f.mock.calls[0]![0]).toBe("https://api.test/v1/admin/tag-models/m1/photo");
+    expect(f.mock.calls[0]![1]!.method).toBe("PUT");
+    expect((f.mock.calls[0]![1]!.headers as any)["content-type"]).toBe("image/jpeg");
+    expect(f.mock.calls[0]![1]!.body).toBe(blob);
+    f.mockResolvedValue(reply(200, { models: [{ id: "m1", photo: "/v1/shop/models/m1/photo?v=1" }, { id: "m2", photo: null }] }));
+    expect((await api.models()).map((m) => m.photo)).toEqual(["https://api.test/v1/shop/models/m1/photo?v=1", null]);
+  });
+
   it("never puts the token in the URL", async () => {
     const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(reply(200, {}));
     await createApi("sekret-token", "https://api.test").stats();

@@ -63,7 +63,8 @@ activity.get("/", async (c) => {
            coalesce(cw.display_name,
                     case when (t.type = 'pay' and t.from_account_id = ${accountId})
                            or (t.type = 'refund' and t.to_account_id = ${accountId})
-                         then coalesce(mb.display_name, ma.name) end) as counter_name,
+                         then coalesce(mb.display_name, ma.name)
+                         when t.type = 'purchase' then 'Nuclear store' end) as counter_name,
            cw.photo as counter_photo
       from transactions t
       left join wallets cw on cw.id = case when t.from_account_id = ${accountId}

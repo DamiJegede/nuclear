@@ -100,14 +100,15 @@ export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefi
 
 async function send<T>(base: string, token: string | null, method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
+  const isBlob = typeof Blob !== "undefined" && body instanceof Blob;
   try {
     res = await fetch(base.replace(/\/$/, "") + path, {
       method,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(body === undefined ? {} : { "content-type": isBlob ? (body as Blob).type : "application/json" }),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isBlob ? (body as Blob) : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, "network_error");
@@ -139,13 +140,20 @@ export function createApi(token: string, base: string = API_URL) {
     /** The server generates the Access ID and Access Token and returns them once. */
     createAdmin: (name: string) =>
       request<{ admin: Pick<AdminRow, "id" | "access_id" | "name">; credentials: Credentials }>("POST", "/v1/admin/admins", { name }),
+    /** Rotates an admin's Access Token; the new one is returned once. */
+    rotateAccessToken: (id: string) =>
+      request<{ admin: Pick<AdminRow, "id" | "access_id" | "name">; credentials: Credentials }>("POST", `/v1/admin/admins/${encodeURIComponent(id)}/rotate-token`),
     mfaSetup: () => request<MfaSetup>("POST", "/v1/admin/mfa/setup"),
     mfaEnable: async (code: string) =>
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/enable", { code })).recovery_codes,
     newRecoveryCodes: async (code: string) =>
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/recovery-codes", { code })).recovery_codes,
     stats: () => request<Stats>("GET", "/v1/admin/stats"),
-    models: async () => (await request<{ models: TagModel[] }>("GET", "/v1/admin/tag-models")).models,
+    // Uploaded photos come back as API paths; make them absolute so the page can show them.
+    models: async () => (await request<{ models: TagModel[] }>("GET", "/v1/admin/tag-models")).models
+      .map((m) => ({ ...m, photo: m.photo && m.photo.startsWith("/") ? base.replace(/\/$/, "") + m.photo : m.photo })),
+    /** Uploads the (already resized) photo for a model. */
+    uploadModelPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/tag-models/${encodeURIComponent(id)}/photo`, photo),
     createModel: async (m: NewModel) => (await request<{ model: TagModel }>("POST", "/v1/admin/tag-models", m)).model,
   };
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, type AdminRow, type Api, type Credentials } from "../api";
 import { CredentialsPanel } from "./Credentials";
+import { Modal } from "./Modal";
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "Never");
 
@@ -8,6 +9,24 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
   const [rows, setRows] = useState<AdminRow[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [issued, setIssued] = useState<{ name: string; credentials: Credentials } | null>(null);
+  const [rotation, setRotation] = useState<{ admin: AdminRow; credentials?: Credentials } | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+
+  async function rotate(a: AdminRow) {
+    setRotating(true);
+    setRotateError(null);
+    try {
+      const r = await api.rotateAccessToken(a.id);
+      setRotation({ admin: a, credentials: r.credentials });
+      void load();
+    } catch (e) {
+      onError(e);
+      setRotateError("Couldn't rotate the Access Token. Try again.");
+    } finally {
+      setRotating(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -40,6 +59,7 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
                 <th scope="col">Two-step</th>
                 <th scope="col">Last sign-in</th>
                 <th scope="col">Added by</th>
+                <th scope="col"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -52,9 +72,12 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
                     {a.locked && <span className="pill pending"> locked</span>}
                     {!a.last_login_at && <span className="muted note">has not signed in yet</span>}
                   </td>
-                  <td>{a.mfa_enabled ? "On" : "Not set up"}</td>
+                  <td className="status-text">{a.mfa_enabled ? "On" : "Not set up"}</td>
                   <td>{when(a.last_login_at)}</td>
                   <td>{a.created_by ?? "Operator"}</td>
+                  <td className="actions">
+                    <button type="button" className="ghost" aria-label={`Rotate Access Token for ${a.name}`} onClick={() => { setRotateError(null); setRotation({ admin: a }); }}>Rotate Access Token</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -62,6 +85,26 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
         )}
       </div>
 
+      {rotation && (
+        <Modal title={rotation.credentials ? `New Access Token for ${rotation.admin.name}` : "Rotate Access Token"} locked={!!rotation.credentials || rotating} onClose={() => setRotation(null)}>
+          {rotation.credentials ? (
+            <CredentialsPanel
+              name={rotation.admin.name}
+              credentials={rotation.credentials}
+              onDone={() => { setRotation(null); void load(); }}
+            />
+          ) : (
+            <>
+              <p>Replace <strong>{rotation.admin.name}</strong>'s Access Token? The current one stops working straight away and any sessions they have are signed out. The new token is shown once.</p>
+              {rotateError && <p className="error" role="alert">{rotateError}</p>}
+              <div className="modal-actions">
+                <button type="button" className="ghost" disabled={rotating} onClick={() => setRotation(null)}>Cancel</button>
+                <button type="button" disabled={rotating} onClick={() => void rotate(rotation.admin)}>{rotating ? "Rotating…" : "Confirm rotate"}</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
       {issued ? (
         <div className="card form">
           <h2>New admin created</h2>

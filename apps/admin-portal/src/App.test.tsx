@@ -1,8 +1,10 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { ApiError, type AdminMe, type Api, type MfaChallenge, type SignedIn, type Stats, type TagModel } from "./api";
 import { groupSecret } from "./views/Mfa";
+
+vi.mock("./image", () => ({ PHOTO_SIZE: 256, resizePhoto: vi.fn(async () => new Blob(["jpeg-bytes"], { type: "image/jpeg" })) }));
 
 const v = (count: number, volume: number) => ({ count, volume });
 
@@ -40,6 +42,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     changeAccessToken: vi.fn().mockResolvedValue(null),
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
+    uploadModelPhoto: vi.fn().mockResolvedValue(null),
     mfaSetup: vi.fn().mockResolvedValue(SETUP),
     mfaEnable: vi.fn().mockResolvedValue(CODES),
     newRecoveryCodes: vi.fn().mockResolvedValue(CODES),
@@ -260,49 +263,85 @@ describe("overview", () => {
   });
 });
 
-describe("tag models", () => {
+describe("tags page", () => {
   async function openModels(api: Api) {
     const user = await signIn(api);
     await screen.findByRole("article", { name: "Scheme balance" });
-    await user.click(screen.getByRole("button", { name: "Tag models" }));
+    await user.click(screen.getByRole("link", { name: "Tags" }));
     return user;
   }
 
-  it("lists models with sold, UIDs loaded and unassigned counts", async () => {
+  it("shows each model as a card with name, sold / quantity and type", async () => {
     await openModels(fakeApi());
-    const row = await screen.findByRole("row", { name: /NEO Band Lite/ });
-    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["pending", "$29.99", "1,000", "12", "800", "790"]);
+    const card = (await screen.findByRole("heading", { name: "NEO Band Lite" })).closest("li")!;
+    expect(within(card).getByText("12")).toBeInTheDocument();
+    expect(card).toHaveTextContent("12 / 1,000 sold");
+    expect(within(card).getByText("BAND")).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Tag models" })).getByRole("button", { name: "Add model" })).toBeInTheDocument();
+  });
+
+  it("gives every page its own history entry, so back and forward work", async () => {
+    const user = await openModels(fakeApi());
+    expect(window.location.pathname).toBe("/tags");
+    expect(screen.getByRole("link", { name: "Tags" })).toHaveAttribute("aria-current", "page");
+    await user.click(screen.getByRole("link", { name: "Admins" }));
+    expect(window.location.pathname).toBe("/admins");
+    act(() => { window.history.back(); });
+    await screen.findByRole("heading", { name: "Tags" });
+    expect(window.location.pathname).toBe("/tags");
+    act(() => { window.history.back(); });
+    await screen.findByRole("article", { name: "Scheme balance" });
+    act(() => { window.history.forward(); });
+    await screen.findByRole("heading", { name: "Tags" });
   });
 
   it("starts new models as pending and sends the price in cents", async () => {
     const createModel = vi.fn().mockResolvedValue({ ...MODEL, name: "NEO Band Pro" });
     const user = await openModels(fakeApi({ createModel }));
-    await screen.findByRole("row", { name: /NEO Band Lite/ });
+    await user.click(await screen.findByRole("button", { name: "Add model" }));
     expect(screen.getByLabelText("Status")).toHaveValue("pending");
     await user.type(screen.getByLabelText("Name"), "NEO Band Pro");
     await user.type(screen.getByLabelText("Price (USD)"), "49.99");
     await user.type(screen.getByLabelText("Quantity"), "250");
     await user.click(screen.getByLabelText("Limited edition"));
-    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
     await waitFor(() => expect(createModel).toHaveBeenCalledTimes(1));
     expect(createModel).toHaveBeenCalledWith({ type: "band", name: "NEO Band Pro", price: 4999, quantity: 250, limited: true, status: "pending" });
-    expect(await screen.findByText("Added NEO Band Pro.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("takes the photo as an upload, resized, and sends it after the model is created", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:preview"); URL.revokeObjectURL = vi.fn();
+    const createModel = vi.fn().mockResolvedValue({ ...MODEL, id: "m-new", name: "NEO Band Pro" });
+    const uploadModelPhoto = vi.fn().mockResolvedValue(null);
+    const user = await openModels(fakeApi({ createModel, uploadModelPhoto }));
+    await user.click(await screen.findByRole("button", { name: "Add model" }));
+    expect(screen.queryByLabelText(/Photo URL/)).toBeNull();
+    await user.type(screen.getByLabelText("Name"), "NEO Band Pro");
+    await user.type(screen.getByLabelText("Price (USD)"), "49.99");
+    await user.type(screen.getByLabelText("Quantity"), "250");
+    await user.upload(screen.getByLabelText(/Photo \(optional/), new File(["x"], "band.png", { type: "image/png" }));
+    expect(await screen.findByAltText("Photo preview")).toBeInTheDocument();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
+    await waitFor(() => expect(uploadModelPhoto).toHaveBeenCalledWith("m-new", expect.any(Blob)));
+    expect(createModel).toHaveBeenCalledWith(expect.not.objectContaining({ photo: expect.anything() }));
   });
 
   it("validates before calling the API", async () => {
     const createModel = vi.fn();
     const user = await openModels(fakeApi({ createModel }));
-    await screen.findByRole("row", { name: /NEO Band Lite/ });
-    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.click(await screen.findByRole("button", { name: "Add model" }));
+    const dialog = screen.getByRole("dialog", { name: "Add a model" });
+    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Give the model a name.");
     await user.type(screen.getByLabelText("Name"), "X");
     await user.type(screen.getByLabelText("Price (USD)"), "29.999");
-    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter the price in dollars");
     await user.clear(screen.getByLabelText("Price (USD)"));
     await user.type(screen.getByLabelText("Price (USD)"), "10");
     await user.type(screen.getByLabelText("Quantity"), "-3");
-    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Quantity must be a whole number.");
     expect(createModel).not.toHaveBeenCalled();
   });
@@ -310,17 +349,18 @@ describe("tag models", () => {
   it("shows an error when the API refuses the model", async () => {
     const createModel = vi.fn().mockRejectedValue(new ApiError(400, "invalid_request"));
     const user = await openModels(fakeApi({ createModel }));
-    await screen.findByRole("row", { name: /NEO Band Lite/ });
+    await user.click(await screen.findByRole("button", { name: "Add model" }));
     await user.type(screen.getByLabelText("Name"), "X");
     await user.type(screen.getByLabelText("Price (USD)"), "1");
     await user.type(screen.getByLabelText("Quantity"), "1");
-    await user.click(screen.getByRole("button", { name: "Add model" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The API rejected those details");
   });
 
-  it("shows an empty state", async () => {
+  it("with no models, the Add Model card is all there is", async () => {
     await openModels(fakeApi({ models: vi.fn().mockResolvedValue([]) }));
-    expect(await screen.findByText(/No models yet/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add model" })).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
   });
 });
 
@@ -488,7 +528,7 @@ describe("security tab", () => {
   async function openSecurity(api: Api) {
     const user = await signIn(api);
     await screen.findByRole("article", { name: "Scheme balance" });
-    await user.click(screen.getByRole("button", { name: "Security" }));
+    await user.click(screen.getByRole("link", { name: "Security" }));
     return user;
   }
 
@@ -520,6 +560,71 @@ describe("security tab", () => {
   });
 });
 
+describe("rotating an Access Token", () => {
+  const ROWS = [
+    { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", status: "active", mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
+  ];
+  const NEW = { access_id: "NLINF8Q0KAZ4", access_token: "Rr7-mQ4.vT7+xR2_bN5=cH8-wL3.jF6+" };
+
+  async function open(api: Api) {
+    const user = await signIn(api);
+    await screen.findByRole("article", { name: "Scheme balance" });
+    await user.click(screen.getByRole("link", { name: "Admins" }));
+    return user;
+  }
+
+  it("asks first, then shows the new token masked with copy and download", async () => {
+    const rotateAccessToken = vi.fn().mockResolvedValue({ admin: { id: "a1", access_id: NEW.access_id, name: "Nuclear Admin" }, credentials: NEW });
+    const user = await open(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), rotateAccessToken }));
+    await user.click(await screen.findByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
+    expect(rotateAccessToken).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Rotate Access Token" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm rotate" }));
+    expect(rotateAccessToken).toHaveBeenCalledWith("a1");
+    expect(screen.getByRole("dialog", { name: "New Access Token for Nuclear Admin" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "New Access Token for Nuclear Admin" })).toBeInTheDocument();
+    expect(screen.getByTestId("access-token")).not.toHaveTextContent(NEW.access_token);
+    expect(screen.getByRole("button", { name: "Download credentials" })).toBeInTheDocument();
+    expect(screen.queryByText(NEW.access_token)).toBeNull();
+  });
+
+  it("can be cancelled without calling the API", async () => {
+    const rotateAccessToken = vi.fn();
+    const user = await open(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), rotateAccessToken }));
+    await user.click(await screen.findByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(rotateAccessToken).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(rotateAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("cannot be dismissed by Escape while the new token is on screen, and the copy note sits by its button", async () => {
+    const rotateAccessToken = vi.fn().mockResolvedValue({ admin: { id: "a1", access_id: NEW.access_id, name: "Nuclear Admin" }, credentials: NEW });
+    const user = await open(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), rotateAccessToken }));
+    await user.click(await screen.findByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
+    await user.click(screen.getByRole("button", { name: "Confirm rotate" }));
+    await screen.findByRole("dialog", { name: "New Access Token for Nuclear Admin" });
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Copy" })[1]!);
+    const note = await screen.findByText("Access Token copied.");
+    expect(note.previousElementSibling).toHaveTextContent("Copy");
+    await user.click(screen.getByLabelText("I have saved these credentials"));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("reports a failure", async () => {
+    const user = await open(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), rotateAccessToken: vi.fn().mockRejectedValue(new ApiError(500, "server_error")) }));
+    await user.click(await screen.findByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
+    await user.click(screen.getByRole("button", { name: "Confirm rotate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't rotate");
+  });
+});
+
 describe("admins page", () => {
   const ROWS = [
     { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", status: "active", mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
@@ -530,7 +635,7 @@ describe("admins page", () => {
   async function openAdmins(api: Api) {
     const user = await signIn(api);
     await screen.findByRole("article", { name: "Scheme balance" });
-    await user.click(screen.getByRole("button", { name: "Admins" }));
+    await user.click(screen.getByRole("link", { name: "Admins" }));
     return user;
   }
 
@@ -556,7 +661,7 @@ describe("admins page", () => {
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     expect(createAdmin).toHaveBeenCalledWith("New Person");
     expect(await screen.findByTestId("access-id")).toHaveTextContent("KQ7M2XW9TBDV");
-    expect(screen.getByTestId("access-token")).toHaveTextContent(CREDS.access_token);
+    expect(screen.getByTestId("access-token")).not.toHaveTextContent(CREDS.access_token);   // masked on screen
     expect(screen.getByText(/only time/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download credentials" })).toBeInTheDocument();
   });

@@ -18,38 +18,38 @@ export function CredentialsPanel({
   doneLabel?: string;
 }) {
   const [saved, setSaved] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ at: "id" | "token" | "download"; text: string } | null>(null);
 
-  async function copy(label: string, value: string) {
-    setNote((await copyText(value)) ? `${label} copied.` : `Couldn't copy the ${label.toLowerCase()}. Select it and copy by hand.`);
+  async function copy(at: "id" | "token", label: string, value: string) {
+    setNote({ at, text: (await copyText(value)) ? `${label} copied.` : `Couldn't copy the ${label.toLowerCase()}. Select it and copy by hand.` });
   }
   function download() {
     const ok = downloadText(
       `nuclear-admin-${credentials.access_id}.txt`,
       credentialsText(name, credentials.access_id, credentials.access_token, window.location.origin),
     );
-    setNote(ok ? "Downloaded. Keep the file private." : "Couldn't download. Copy the values instead.");
+    setNote({ at: "download", text: ok ? "Downloaded. Keep the file private." : "Couldn't download. Copy the values instead." });
   }
 
   return (
     <div className="creds" role="group" aria-label={`Credentials for ${name}`}>
       <p className="notice warn" role="status">
-        This is the <strong>only time</strong> the Access Token is shown. It can't be looked up later. Download it or copy it now.
+        This is the <strong>only time</strong> the Access Token is shown. It can't be looked up later. It is hidden here: download it or copy it now.
       </p>
       <dl className="cred-list">
         <div>
           <dt>Access ID</dt>
-          <dd><code data-testid="access-id">{credentials.access_id}</code> <button type="button" className="ghost small" onClick={() => void copy("Access ID", credentials.access_id)}>Copy</button></dd>
+          <dd><code data-testid="access-id">{credentials.access_id}</code> <button type="button" className="ghost small" onClick={() => void copy("id", "Access ID", credentials.access_id)}>Copy</button>{note?.at === "id" && <span className="muted note" role="status">{note.text}</span>}</dd>
         </div>
         <div>
           <dt>Access Token</dt>
-          <dd><code data-testid="access-token" className="token">{credentials.access_token}</code> <button type="button" className="ghost small" onClick={() => void copy("Access Token", credentials.access_token)}>Copy</button></dd>
+          <dd><code data-testid="access-token" className="token" aria-label="Access Token (hidden)">{"•".repeat(32)}</code> <button type="button" className="ghost small" onClick={() => void copy("token", "Access Token", credentials.access_token)}>Copy</button>{note?.at === "token" && <span className="muted note" role="status">{note.text}</span>}</dd>
         </div>
       </dl>
       <div className="row">
         <button type="button" onClick={download}>Download credentials</button>
+        {note?.at === "download" && <span className="muted note" role="status">{note.text}</span>}
       </div>
-      {note && <p className="muted" role="status">{note}</p>}
       <p className="hint">{name} signs in with it and sets up two-step verification the first time. Keep it safe: it cannot be shown again.</p>
       <label className="check"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I have saved these credentials</label>
       <button type="button" disabled={!saved} onClick={onDone}>{doneLabel}</button>

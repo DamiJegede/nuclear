@@ -12,6 +12,7 @@ import { handles } from "./routes/handles";
 import { checkouts, terminalCheckouts } from "./routes/checkouts";
 import { payments, terminalPayments } from "./routes/payments";
 import { refunds, terminalRefunds } from "./routes/refunds";
+import { shop } from "./routes/shop";
 import { staff } from "./routes/staff";
 import { tags } from "./routes/tags";
 import { orbs, terminalSelf, terminals } from "./routes/terminals";
@@ -23,7 +24,7 @@ const app = new Hono<AppContext>();
 app.use("*", async (c, next) => {
   await next();
   // Responses may carry session tokens or financial data: never cache.
-  c.header("Cache-Control", "no-store");
+  if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
 });
 
@@ -49,6 +50,7 @@ v1.route("/terminal/checkouts", terminalCheckouts);
 v1.route("/checkouts", checkouts);
 v1.route("/terminal/refunds", terminalRefunds);
 v1.route("/staff", staff);
+v1.route("/shop", shop);
 v1.route("/refunds", refunds);
 v1.route("/tags", tags);
 v1.route("/terminal", terminalSelf);

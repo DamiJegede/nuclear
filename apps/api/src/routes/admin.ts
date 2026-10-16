@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
+import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
@@ -29,7 +30,7 @@ admin.use(
       const allowed = (c.env.ADMIN_ORIGINS ?? "").split(",").map((o: string) => o.trim()).filter(Boolean);
       return allowed.includes(origin) ? origin : null;
     },
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
     allowHeaders: ["authorization", "content-type"],
     maxAge: 600,
   }),
@@ -274,6 +275,23 @@ admin.patch("/admins/:id", requireOperator, async (c) => {
   return c.json({ admin: a, ...(issued ? { credentials: { access_id: cur.access_id, access_token: issued } } : {}) });
 });
 
+// Rotate an admin's Access Token (any signed-in admin, or the operator): a fresh server-generated token is
+// saved (hashed) and returned once. The person's other sessions end; the caller's own session survives
+// when they rotate their own token. A lockout is cleared.
+admin.post("/admins/:id/rotate-token", requireStaff, async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const sql = c.get("sql");
+  const issued = generateAccessToken();
+  const [a] = await sql<{ id: string; access_id: string; name: string; status: string }[]>`
+    update admins set access_token_hash = ${await hashPassword(issued)}, failed_attempts = 0, locked_until = null
+     where id = ${id.data} returning id, access_id, name, status`;
+  if (!a) return c.json({ error: "not_found" }, 404);
+  const by = c.get("adminAuth");
+  await revokeSessions(sql, a.id, by.kind === "admin" && by.adminId === a.id ? by.sessionId : undefined);
+  return c.json({ admin: a, credentials: { access_id: a.access_id, access_token: issued } });
+});
+
 const uuid = z.string().uuid();
 
 // ---- System snapshot --------------------------------------------------------------------------
@@ -321,12 +339,36 @@ admin.post("/tag-models", async (c) => {
 admin.get("/tag-models", async (c) => {
   const sql = c.get("sql");
   const rows = await sql<(ModelRow & { tags: number; unassigned: number })[]>`
-    select ${sql.unsafe(M_COLS.split(", ").map((x) => "m." + x).join(", "))},
+    select ${sql.unsafe(M_COLS.split(", ").filter((x) => x !== "photo").map((x) => "m." + x).join(", "))}, ${sql.unsafe(PHOTO_SQL)},
            count(t.id)::int as tags,
            (count(t.id) filter (where t.wallet_id is null))::int as unassigned
       from tag_models m left join tags t on t.model_id = m.id
-     group by m.id order by m.created_at, m.id`;
+           left join tag_model_photos p on p.model_id = m.id
+     group by m.id, p.model_id, p.updated_at order by m.created_at, m.id`;
   return c.json({ models: rows.map((m) => modelJson(m, { tags: m.tags, unassigned: m.unassigned })) });
+});
+
+// Upload a model's photo: the raw image bytes (JPEG, PNG or WebP, 256 KB at most). The portal resizes
+// to 256 x 256 first. Stored as hex through decode() so the driver never handles binary parameters.
+const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_PHOTO_BYTES = 262_144;
+admin.put("/tag-models/:id/photo", async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (!PHOTO_TYPES.includes(type)) return c.json({ error: "unsupported_image_type" }, 415);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
+  if (bytes.length > MAX_PHOTO_BYTES) return c.json({ error: "image_too_large" }, 413);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const sql = c.get("sql");
+  const done = await sql`
+    insert into tag_model_photos (model_id, content_type, data)
+    select ${id.data}, ${type}, decode(${hex}, 'hex') where exists (select 1 from tag_models where id = ${id.data})
+    on conflict (model_id) do update set content_type = excluded.content_type, data = excluded.data, updated_at = now()
+    returning model_id`;
+  if (done.length === 0) return c.json({ error: "not_found" }, 404);
+  return c.body(null, 204);
 });
 
 // ---- Supplier import --------------------------------------------------------------------------
