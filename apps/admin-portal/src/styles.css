@@ -304,14 +304,15 @@ td.status-col, th.status-col { text-align: right; }
 @media (max-width: 900px) { .kind-grid.six { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 /* User page: five cards, the first is the person */
-.grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.grid.five { grid-template-columns: minmax(220px, 280px) repeat(2, minmax(0, 1fr)); }
+.grid.five .profile-card { grid-row: span 2; padding-top: 20px; padding-bottom: 20px; }
 .profile-card { display: grid; justify-items: center; align-content: center; gap: 6px; text-align: center; }
-.avatar { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line); background: var(--bg); display: block; }
-.avatar-initials { display: grid; place-items: center; font-size: 34px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; }
+.avatar { width: 128px; height: 128px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line); background: var(--bg); display: block; }
+.avatar-initials { display: grid; place-items: center; font-size: 44px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; }
 .profile-handle { margin: 4px 0 0; font-weight: 600; font-size: 16px; }
 .profile-plan { margin: 0; }
-@media (max-width: 1100px) { .grid.five { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .grid.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .grid.five { grid-template-columns: minmax(200px, 240px) repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .grid.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid.five .profile-card { grid-column: 1 / -1; grid-row: auto; } }
 
 /* Audit log filters, shop list thumbnails */
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }

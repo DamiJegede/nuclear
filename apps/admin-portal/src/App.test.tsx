@@ -1187,7 +1187,7 @@ describe("merchant support page", () => {
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Merchants" })).toHaveClass("active");
   });
 
-  it("five top cards; the first is the business: a 96 x 96 photo (initials when none) with the handle and plan stacked under it", async () => {
+  it("five top cards; the first is the business: a 128 x 128 photo (initials when none) with the handle and plan stacked under it", async () => {
     await open(api());
     expect(screen.getAllByRole("article")).toHaveLength(5);
     const profile = screen.getByRole("article", { name: "Profile" });
@@ -1199,7 +1199,7 @@ describe("merchant support page", () => {
     const p2 = screen.getByRole("article", { name: "Profile" });
     const img = within(p2).getByRole("img", { name: "Cafe Nero's photo" });
     expect(img).toHaveAttribute("src", "https://img.example/nero.png");
-    expect(img).toHaveAttribute("width", "96");
+    expect(img).toHaveAttribute("width", "128");
     expect(within(p2).getByText("No handle")).toBeInTheDocument();
   });
 
@@ -1428,7 +1428,7 @@ describe("user support page", () => {
     expect(screen.getAllByText("@ada01")).toHaveLength(2);
   });
 
-  it("five top cards; the first is the person: a 96 x 96 photo (initials when there is none) with the handle and plan stacked under it", async () => {
+  it("five top cards; the first is the person: a 128 x 128 photo (initials when there is none) with the handle and plan stacked under it", async () => {
     await open(api());
     expect(screen.getAllByRole("article")).toHaveLength(5);
     const profile = screen.getByRole("article", { name: "Profile" });
@@ -1443,7 +1443,7 @@ describe("user support page", () => {
     const p2 = screen.getByRole("article", { name: "Profile" });
     const img = within(p2).getByRole("img", { name: "Ada Lovelace's photo" });
     expect(img).toHaveAttribute("src", "https://img.example/ada.png");
-    expect(img).toHaveAttribute("width", "96"); expect(img).toHaveAttribute("height", "96");
+    expect(img).toHaveAttribute("width", "128"); expect(img).toHaveAttribute("height", "128");
     expect(within(p2).getByText("No handle")).toBeInTheDocument();
     expect(within(p2).getByText("plus")).toBeInTheDocument();
   });
