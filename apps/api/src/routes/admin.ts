@@ -8,7 +8,7 @@ import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
-  completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
+  ACCESS_TOKEN_LENGTH, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
   mfaNewRecoveryCodes, mfaSetup, revokeSessions, sameSecret, type Session,
 } from "../lib/adminAuth";
 
@@ -41,7 +41,7 @@ const bearer = (h: string | undefined) => (h ?? "").startsWith("Bearer ") ? (h a
 
 // ---- Sign-in (public) -------------------------------------------------------------------------
 
-const loginBody = z.object({ access_id: z.string().trim().min(1).max(64), access_token: z.string().min(1).max(256) });
+const loginBody = z.object({ access_id: z.string().trim().min(1).max(64), access_token: z.string().length(ACCESS_TOKEN_LENGTH) });
 
 const sessionJson = (r: Session) => ({
   session_token: r.token,

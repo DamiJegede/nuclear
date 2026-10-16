@@ -28,9 +28,9 @@ const MODEL: TagModel = {
 
 const SIGNED: SignedIn = {
   session_token: "session-abc", expires_at: new Date(Date.now() + 8 * 3600_000).toISOString(),
-  admin: { access_id: "JANE.DOE", name: "Jane Doe" }, mfa_enabled: true,
+  admin: { access_id: "JANEDOE00001", name: "Jane Doe" }, mfa_enabled: true,
 };
-const ME: AdminMe = { access_id: "JANE.DOE", name: "Jane Doe", mfa_enabled: true };
+const ME: AdminMe = { access_id: "JANEDOE00001", name: "Jane Doe", mfa_enabled: true };
 const CHALLENGE: MfaChallenge = { mfa_required: true, mfa_token: "challenge-token-0123456789", expires_in: 300 };
 const SETUP = { secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", otpauth_uri: "otpauth://totp/Nuclear%20Admin:JANE.DOE?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Nuclear%20Admin&algorithm=SHA1&digits=6&period=30" };
 const CODES = Array.from({ length: 10 }, (_, i) => `AAAA${i}-BBBB${i}`);
@@ -59,31 +59,46 @@ function fakeApi(over: Partial<Api> = {}): Api {
   } as Api;
 }
 
+const T32 = "Tk7-mQ4.vT7+xR2_bN5=cH8-wL3.jF6+";   // a 32-character Access Token
 const TOKEN_KEY = "nuclear.admin.session";
 
 async function signIn(api: Api, signInFn = vi.fn().mockResolvedValue(SIGNED), completeMfa = vi.fn()) {
   const user = userEvent.setup();
   render(<App makeApi={() => api} signIn={signInFn} completeMfa={completeMfa} />);
-  await user.type(screen.getByLabelText("Access ID"), "JANE.DOE");
-  await user.type(screen.getByLabelText("Access Token"), "correct horse battery");
+  await user.type(screen.getByLabelText("Access ID"), "JANEDOE00001");
+  await user.type(screen.getByLabelText("Access Token"), T32);
   await user.click(screen.getByRole("button", { name: "Continue" }));
   return user;
 }
 
 describe("sign-in", () => {
-  it("asks for an Access ID and an Access Token, and enables the button only when both are filled", async () => {
+  it("asks for an Access ID and an Access Token, and shows Continue only once both are complete", async () => {
     const user = userEvent.setup();
     render(<App makeApi={() => fakeApi()} signIn={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     expect(screen.getByLabelText("Access Token")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("Access ID")).toHaveAttribute("autocomplete", "username");
     expect(screen.getByLabelText("Access Token")).toHaveAttribute("autocomplete", "current-password");
-    const btn = screen.getByRole("button", { name: "Continue" });
-    expect(btn).toBeDisabled();
-    await user.type(screen.getByLabelText("Access ID"), "JANE.DOE");
-    expect(btn).toBeDisabled();
-    await user.type(screen.getByLabelText("Access Token"), "x");
-    expect(btn).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    await user.type(screen.getByLabelText("Access ID"), "JANEDOE00001");
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();            // the token is still missing
+    await user.type(screen.getByLabelText("Access Token"), T32.slice(0, 31));
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();            // 31 of 32
+    await user.type(screen.getByLabelText("Access Token"), T32.slice(31));
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await user.type(screen.getByLabelText("Access ID"), "{Backspace}");
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();            // 11 of 12
+  });
+
+  it("limits the length of both fields: 12 characters and 32", async () => {
+    const user = userEvent.setup();
+    render(<App makeApi={() => fakeApi()} signIn={vi.fn()} />);
+    expect(screen.getByLabelText("Access ID")).toHaveAttribute("maxlength", "12");
+    expect(screen.getByLabelText("Access Token")).toHaveAttribute("maxlength", "32");
+    await user.type(screen.getByLabelText("Access ID"), "ABCDEFGHJKMNPQRST");
+    await user.type(screen.getByLabelText("Access Token"), T32 + "EXTRA-CHARACTERS");
+    expect(screen.getByLabelText("Access ID")).toHaveValue("ABCDEFGHJKMN");
+    expect(screen.getByLabelText("Access Token")).toHaveValue(T32);
   });
 
   it("does not offer an operator-token sign-in any more", () => {
@@ -92,25 +107,25 @@ describe("sign-in", () => {
     expect(screen.getByLabelText("Access Token")).toBeInTheDocument();
   });
 
-  it("sends the Access ID trimmed and in uppercase, and the Access Token exactly as typed", async () => {
+  it("sends the Access ID in uppercase, and the Access Token exactly as typed", async () => {
     const signInFn = vi.fn().mockResolvedValue(SIGNED);
     const user = userEvent.setup();
     render(<App makeApi={() => fakeApi()} signIn={signInFn} />);
-    await user.type(screen.getByLabelText("Access ID"), "  Jane.Doe ");
-    await user.type(screen.getByLabelText("Access Token"), " pass word ");
+    await user.type(screen.getByLabelText("Access ID"), "janedoe00001");
+    await user.type(screen.getByLabelText("Access Token"), T32);
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(signInFn).toHaveBeenCalledWith("JANE.DOE", " pass word ");
+    expect(signInFn).toHaveBeenCalledWith("JANEDOE00001", T32);
   });
 
   it("gives one message for any credential failure, keeps the Access ID and clears the Access Token", async () => {
     const signInFn = vi.fn().mockRejectedValue(new ApiError(401, "invalid_credentials"));
     const user = userEvent.setup();
     render(<App makeApi={() => fakeApi()} signIn={signInFn} />);
-    await user.type(screen.getByLabelText("Access ID"), "JANE.DOE");
-    await user.type(screen.getByLabelText("Access Token"), "wrong");
+    await user.type(screen.getByLabelText("Access ID"), "JANEDOE00001");
+    await user.type(screen.getByLabelText("Access Token"), "w".repeat(32));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Access ID or Access Token is incorrect.");
-    expect(screen.getByLabelText("Access ID")).toHaveValue("JANE.DOE");
+    expect(screen.getByLabelText("Access ID")).toHaveValue("JANEDOE00001");
     expect(screen.getByLabelText("Access Token")).toHaveValue("");
     expect(sessionStorage.length).toBe(0);
   });
@@ -123,8 +138,8 @@ describe("sign-in", () => {
     const signInFn = vi.fn().mockRejectedValue(new ApiError(status, "x"));
     const user = userEvent.setup();
     render(<App makeApi={() => fakeApi()} signIn={signInFn} />);
-    await user.type(screen.getByLabelText("Access ID"), "a");
-    await user.type(screen.getByLabelText("Access Token"), "b");
+    await user.type(screen.getByLabelText("Access ID"), "a".repeat(12));
+    await user.type(screen.getByLabelText("Access Token"), "b".repeat(32));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(text);
   });
@@ -488,7 +503,7 @@ describe("two-step sign-in", () => {
     expect(screen.queryByLabelText("Access Token")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByLabelText("Access Token")).toHaveValue("");
-    expect(screen.getByLabelText("Access ID")).toHaveValue("JANE.DOE");
+    expect(screen.getByLabelText("Access ID")).toHaveValue("JANEDOE00001");
   });
 
   it("finishes sign-in with the code, sending the challenge token", async () => {
@@ -922,7 +937,7 @@ describe("page titles", () => {
     await screen.findByLabelText("Access ID");
     expect(title()).toBe("Sign In · Nuclear Admin");
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Access ID"), "JANE.DOE");
+    await user.type(screen.getByLabelText("Access ID"), "JANEDOE00001");
     await user.type(screen.getByLabelText("Access Token"), "x".repeat(32));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "Two-step verification" });

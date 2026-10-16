@@ -1,5 +1,9 @@
 // Helpers for the one-time credentials the server issues (Access IDs and Access Tokens are generated server-side).
 
+/** Access IDs are 12 characters and Access Tokens 32, always (the server generates both). */
+export const ACCESS_ID_LENGTH = 12;
+export const ACCESS_TOKEN_LENGTH = 32;
+
 /** The text of the downloadable credentials file. */
 export function credentialsText(name: string, accessId: string, accessToken: string, portalUrl: string): string {
   return [

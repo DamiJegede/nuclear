@@ -1,3 +1,4 @@
+import { ACCESS_ID_LENGTH, ACCESS_TOKEN_LENGTH } from "../token";
 import { usePageTitle } from "../title";
 import { useState, type FormEvent } from "react";
 import { ApiError, isChallenge, type MfaChallenge, type SignedIn } from "../api";
@@ -17,9 +18,11 @@ export function Login({ signIn, completeMfa, onSignedIn, notice }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const complete = accessId.trim().length === ACCESS_ID_LENGTH && token.length === ACCESS_TOKEN_LENGTH;
+
   async function submitToken(e: FormEvent) {
     e.preventDefault();
-    if (!accessId.trim() || !token) return;
+    if (!complete) return;
     setBusy(true);
     setError(null);
     try {
@@ -69,6 +72,7 @@ export function Login({ signIn, completeMfa, onSignedIn, notice }: Props) {
           autoCapitalize="characters"
           spellCheck={false}
           value={accessId}
+          maxLength={ACCESS_ID_LENGTH}
           onChange={(e) => setAccessId(e.target.value.toUpperCase())}
         />
         <label htmlFor="access-token">Access Token</label>
@@ -78,12 +82,14 @@ export function Login({ signIn, completeMfa, onSignedIn, notice }: Props) {
           autoComplete="current-password"
           spellCheck={false}
           value={token}
+          maxLength={ACCESS_TOKEN_LENGTH}
           onChange={(e) => setToken(e.target.value)}
           aria-describedby={error ? "login-error" : undefined}
           aria-invalid={error ? true : undefined}
         />
         {error && <p id="login-error" className="error" role="alert">{error}</p>}
-        <button type="submit" disabled={busy || !accessId.trim() || !token}>{busy ? "Signing in…" : "Continue"}</button>
+        {/* The button appears only once both are complete: a 12-character Access ID and a 32-character Access Token. */}
+        {complete && <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Continue"}</button>}
         <p className="hint">Several wrong attempts in a row lock the account for 15 minutes. Ask an admin or the operator if you are locked out, have lost your Access Token or lost your authenticator.</p>
       </form>
     </div>
