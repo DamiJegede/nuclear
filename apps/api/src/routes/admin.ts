@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
+import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
@@ -297,6 +298,37 @@ const uuid = z.string().uuid();
 // ---- System snapshot --------------------------------------------------------------------------
 
 admin.get("/stats", async (c) => c.json(await systemStats(c.get("sql"))));
+
+// ---- Merchants, users and transactions --------------------------------------------------------
+
+const nameFilter = z.object({ q: z.string().trim().max(80).optional() });
+admin.get("/merchants", async (c) => {
+  const q = nameFilter.safeParse(c.req.query());
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  return c.json({ merchants: await merchantList(c.get("sql"), q.data.q || null) });
+});
+admin.get("/users", async (c) => {
+  const q = nameFilter.safeParse(c.req.query());
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  return c.json({ users: await userList(c.get("sql"), q.data.q || null) });
+});
+
+const txQuery = z.object({
+  kind: z.enum(TX_KINDS as [TxKind, ...TxKind[]]).default("all"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(100).optional(),
+});
+admin.get("/transactions", async (c) => {
+  const q = txQuery.safeParse(c.req.query());
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  let cursor: { ts: string; id: string } | null = null;
+  if (q.data.cursor) {
+    const [ts, id] = q.data.cursor.split("|");
+    if (!ts || !id || Number.isNaN(Date.parse(ts)) || !z.string().uuid().safeParse(id).success) return c.json({ error: "invalid_cursor" }, 400);
+    cursor = { ts, id };
+  }
+  return c.json(await transactionFeed(c.get("sql"), q.data.kind, q.data.limit, cursor));
+});
 
 // ---- Tag models -------------------------------------------------------------------------------
 

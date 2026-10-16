@@ -1,3 +1,4 @@
+import { agentActivity } from "./adminLists";
 import type { Sql } from "../db";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
@@ -38,6 +39,7 @@ export type SystemStats = {
     tapped: Vol;
     /** Payments confirmed in the customer's app. */
     in_app: Vol;
+    agents: Vol;
     /** tapped + in_app: money paid to merchants. */
     merchant_payments: Vol;
     /** sent + tapped + in_app. */
@@ -45,7 +47,7 @@ export type SystemStats = {
     refunds: Vol;
     loaded: Vol;
     /** Completed since 00:00 America/New_York. */
-    today: { sent: Vol; tapped: Vol; in_app: Vol };
+    today: { sent: Vol; tapped: Vol; in_app: Vol; agents: Vol };
   };
 };
 
@@ -111,6 +113,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
     from transactions, start
     where status = 'completed'`;
 
+  const agents = await agentActivity(sql);
   const t = tx as Record<string, number | bigint>;
   const num = (k: string) => Number(t[k]);
   const sent = v(num("sent_n"), t.sent_v as bigint);
@@ -150,6 +153,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       sent,
       tapped,
       in_app: inApp,
+      agents: agents.lifetime,   // memo: sends and payments from agent wallets, already counted above
       merchant_payments: v(tapped.count + inApp.count, BigInt(tapped.volume) + BigInt(inApp.volume)),
       total: v(sent.count + tapped.count + inApp.count, BigInt(sent.volume) + BigInt(tapped.volume) + BigInt(inApp.volume)),
       refunds: v(num("ref_n"), t.ref_v as bigint),
@@ -158,6 +162,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
         sent: v(num("t_sent_n"), t.t_sent_v as bigint),
         tapped: v(num("t_tap_n"), t.t_tap_v as bigint),
         in_app: v(num("t_app_n"), t.t_app_v as bigint),
+        agents: agents.today,
       },
     },
   };

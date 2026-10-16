@@ -15,9 +15,9 @@ const STATS: Stats = {
   users: { total: 1234, active: 1200, suspended: 30, closed: 4, new_7d: 56, new_30d: 200 },
   merchants: { total: 42, active: 40, transacting: 31, terminals: 55 },
   payments: {
-    sent: v(10, 150000), tapped: v(2000, 5000000), in_app: v(300, 900000), merchant_payments: v(2300, 5900000),
+    sent: v(10, 150000), tapped: v(2000, 5000000), in_app: v(300, 900000), agents: v(25, 40000), merchant_payments: v(2300, 5900000),
     total: v(2310, 6050000), refunds: v(7, 12000), loaded: v(90, 8000000),
-    today: { sent: v(1, 1500), tapped: v(40, 100000), in_app: v(3, 7000) },
+    today: { sent: v(1, 1500), tapped: v(40, 100000), in_app: v(3, 7000), agents: v(2, 900) },
   },
 };
 
@@ -42,6 +42,9 @@ function fakeApi(over: Partial<Api> = {}): Api {
     changeAccessToken: vi.fn().mockResolvedValue(null),
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
+    merchants: vi.fn().mockResolvedValue([]),
+    users: vi.fn().mockResolvedValue([]),
+    transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, transactions: [], next_cursor: null }),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
     model: vi.fn().mockResolvedValue(undefined),
     updateModel: vi.fn(),
@@ -633,7 +636,7 @@ describe("security tab", () => {
   async function openSecurity(api: Api) {
     const user = await signIn(api);
     await screen.findByRole("article", { name: "Scheme balance" });
-    await user.click(screen.getByRole("link", { name: "Security" }));
+    await user.click(screen.getByRole("link", { name: "Jane Doe" }));   // the name opens Security
     return user;
   }
 
@@ -823,5 +826,88 @@ describe("admins page", () => {
     await user.type(screen.getByLabelText("Full name"), "X");
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  });
+});
+
+describe("merchants, users and transactions", () => {
+  async function go(api: Api, page: string) {
+    const user = await signIn(api);
+    await screen.findByRole("article", { name: "Scheme balance" });
+    await user.click(screen.getByRole("link", { name: page }));
+    return user;
+  }
+  const M = { id: "m1", name: "Cafe Nero", handle: "nero", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 12500, terminals: 2, payments: 40, volume: 98000 };
+  const U = { id: "u1", name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-02T00:00:00Z", balance: 9200, wallets: 2, agents: 1 };
+
+  it("orders the navigation Overview, Merchants, Users, Tags, Admins, with Transactions replacing Security on the right", async () => {
+    await signIn(fakeApi());
+    await screen.findByRole("article", { name: "Scheme balance" });
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Merchants", "Users", "Tags", "Admins"]);
+    expect(screen.getByRole("link", { name: "Transactions" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Security" })).toBeNull();
+  });
+
+  it("lists merchants and filters them by name as you type", async () => {
+    const merchants = vi.fn().mockResolvedValue([M]);
+    const user = await go(fakeApi({ merchants }), "Merchants");
+    expect(window.location.pathname).toBe("/merchants");
+    const row = await screen.findByRole("row", { name: /Cafe Nero/ });
+    expect(row).toHaveTextContent("$125.00");
+    expect(row).toHaveTextContent("@nero");
+    await user.type(screen.getByLabelText("Filter merchants by name"), "caf");
+    await waitFor(() => expect(merchants).toHaveBeenLastCalledWith("caf"));
+    merchants.mockResolvedValueOnce([]);
+    await user.type(screen.getByLabelText("Filter merchants by name"), "x");
+    expect(await screen.findByText("No merchants match that name.")).toBeInTheDocument();
+  });
+
+  it("lists users with their balance, wallets and agents, and filters by name", async () => {
+    const users = vi.fn().mockResolvedValue([U]);
+    const user = await go(fakeApi({ users }), "Users");
+    const row = await screen.findByRole("row", { name: /Ada Lovelace/ });
+    expect(row).toHaveTextContent("ada@example.com");
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toContain("$92.00");
+    await user.type(screen.getByLabelText("Filter users by name"), "ada");
+    await waitFor(() => expect(users).toHaveBeenLastCalledWith("ada"));
+  });
+
+  it("shows transactions with ALL selected by default and a card per filter with its count", async () => {
+    const transactions = vi.fn().mockImplementation(async (kind: string) => ({
+      counts: { all: 12, sends: 5, taps: 3, funds: 2, agents: 2 },
+      transactions: [{ id: "t1", type: kind === "all" ? "send" : kind, status: "completed", status_code: null, amount: 500, timestamp: "2026-10-16T10:00:00Z", via: null, agent: kind === "agents", from: "Ada Lovelace", from_wallet: "Agent Smith", to: "Bob Builder", to_wallet: "Bob Builder" }],
+      next_cursor: null,
+    }));
+    const user = await go(fakeApi({ transactions }), "Transactions");
+    expect(window.location.pathname).toBe("/transactions");
+    const group = await screen.findByRole("radiogroup", { name: "Show" });
+    expect(within(group).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["all", "sends", "taps", "funds", "agents"]);
+    expect(within(group).getByRole("radio", { name: /^All/ })).toBeChecked();
+    expect(transactions).toHaveBeenCalledWith("all");
+    await screen.findByRole("row", { name: /Ada Lovelace/ });
+    expect(group).toHaveTextContent("12");
+    await user.click(within(group).getByRole("radio", { name: /^Agents/ }));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("agents"));
+    expect(await screen.findByText("agent")).toBeInTheDocument();
+  });
+
+  it("loads more transactions with the cursor", async () => {
+    const t = (id: string) => ({ id, type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" });
+    const transactions = vi.fn()
+      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, transactions: [t("a")], next_cursor: "c1" })
+      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, transactions: [t("b")], next_cursor: null });
+    const user = await go(fakeApi({ transactions }), "Transactions");
+    await screen.findAllByRole("row");
+    await user.click(await screen.findByRole("button", { name: "Load More" }));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", "c1"));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));   // header + two
+    expect(screen.queryByRole("button", { name: "Load More" })).toBeNull();
+  });
+
+  it("shows the Agents row under Tapped in the payments table", async () => {
+    await signIn(fakeApi());
+    const row = await screen.findByRole("row", { name: /Agents/ });
+    expect(row).toHaveTextContent("25");
+    const rows = screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    expect(rows.findIndex((x) => x.startsWith("Agents"))).toBe(rows.findIndex((x) => x.startsWith("Tapped")) + 1);
   });
 });

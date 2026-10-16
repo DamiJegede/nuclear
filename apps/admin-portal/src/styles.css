@@ -227,3 +227,12 @@ button.model-card.action:hover .stat-label, button.model-card.action:hover .stat
 .tag-detail { align-items: stretch; }
 .tag-stats { grid-template-rows: repeat(2, minmax(0, 1fr)); height: 100%; }
 .model-card.stat { min-height: 0; height: 100%; }
+
+/* Merchants, Users, Transactions */
+.filter-box { margin: 0 0 12px; max-width: 420px; }
+.kind-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 14px; }
+.choice.kind { grid-auto-flow: row; height: auto; padding: 14px 12px; gap: 2px; }
+.kind-count { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.pill.via { margin-left: 6px; color: var(--muted); }
+.more { text-align: center; margin: 14px 0 0; }
+@media (max-width: 640px) { .kind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

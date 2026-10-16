@@ -109,6 +109,7 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
           <tbody>
             <Row label="Sent" note="wallet to wallet" life={p.sent} today={p.today.sent} />
             <Row label="Tapped" note="band or card at a terminal" life={p.tapped} today={p.today.tapped} />
+            <Row label="Agents" note="from agent wallets (already counted above)" life={p.agents} today={p.today.agents} />
             <Row label="In app" note="customer-confirmed" life={p.in_app} today={p.today.in_app} />
             <tr className="total">
               <th scope="row">All payments</th>

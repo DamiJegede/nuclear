@@ -24,11 +24,12 @@ export type Stats = {
     sent: Vol;
     tapped: Vol;
     in_app: Vol;
+    agents: Vol;
     merchant_payments: Vol;
     total: Vol;
     refunds: Vol;
     loaded: Vol;
-    today: { sent: Vol; tapped: Vol; in_app: Vol };
+    today: { sent: Vol; tapped: Vol; in_app: Vol; agents: Vol };
   };
 };
 
@@ -48,6 +49,21 @@ export type TagModel = {
   tags?: number;
   unassigned?: number;
 };
+
+export type MerchantRow = {
+  id: string; name: string; handle: string | null; status: string; created_at: string; balance: number;
+  terminals: number; payments: number; volume: number;
+};
+export type UserRow = {
+  id: string; name: string; handle: string | null; email: string | null; status: string; created_at: string;
+  balance: number; wallets: number; agents: number;
+};
+export type TxKind = "all" | "sends" | "taps" | "funds" | "agents";
+export type TxRow = {
+  id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
+  via: "tap" | "pass" | "app" | null; agent: boolean; from: string | null; from_wallet: string | null; to: string | null; to_wallet: string | null;
+};
+export type TxPage = { counts: Record<TxKind, number>; transactions: TxRow[]; next_cursor: string | null };
 
 /** One model with its provisioning and activation numbers. */
 export type TagDetail = TagModel & {
@@ -148,6 +164,12 @@ export function createApi(token: string, base: string = API_URL) {
   return {
     me: () => request<AdminMe>("GET", "/v1/admin/me"),
     logout: () => request<null>("POST", "/v1/admin/logout"),
+    merchants: async (q?: string) =>
+      (await request<{ merchants: MerchantRow[] }>("GET", `/v1/admin/merchants${q ? `?q=${encodeURIComponent(q)}` : ""}`)).merchants,
+    users: async (q?: string) =>
+      (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
+    transactions: (kind: TxKind = "all", cursor?: string) =>
+      request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */
     createAdmin: (name: string) =>

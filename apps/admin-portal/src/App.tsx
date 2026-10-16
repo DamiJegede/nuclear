@@ -8,6 +8,8 @@ import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
 import { Tags } from "./views/Tags";
 import { TagDetail } from "./views/TagDetail";
+import { Merchants, Users } from "./views/People";
+import { Transactions } from "./views/Transactions";
 import { Overview } from "./views/Overview";
 
 const KEY = "nuclear.admin.session";
@@ -21,11 +23,11 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "tags" | "tag" | "admins" | "security";
+type View = "overview" | "merchants" | "users" | "tags" | "tag" | "admins" | "transactions" | "security";
 type Route = { view: View; id?: string };
 
 // Each page has its own address, so the browser's back and forward buttons move between pages.
-const PATHS: Record<Exclude<View, "tag">, string> = { overview: "/", tags: "/tags", admins: "/admins", security: "/security" };
+const PATHS: Record<Exclude<View, "tag">, string> = { overview: "/", merchants: "/merchants", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", security: "/security" };
 const pathOf = (r: Route): string => (r.view === "tag" ? `/tags/${r.id}` : PATHS[r.view]);
 const routeFromPath = (path: string): Route => {
   const clean = path.replace(/\/+$/, "") || "/";
@@ -131,15 +133,16 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["tags", "Tags"], ["admins", "Admins"]] as const).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"]] as const).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
         </nav>
         <div className="who">
-          <span className="muted" title={me.access_id}>{me.name}</span>
-          <a href={PATHS.security} className={view === "security" ? "tab active" : "tab"} aria-current={view === "security" ? "page" : undefined}
-            onClick={(e) => { e.preventDefault(); setView("security"); }}>Security</a>
+          <a href={PATHS.security} className={view === "security" ? "tab active" : "tab"} aria-current={view === "security" ? "page" : undefined} title={`${me.access_id}: two-step verification`}
+            onClick={(e) => { e.preventDefault(); setView("security"); }}>{me.name}</a>
+          <a href={PATHS.transactions} className={view === "transactions" ? "tab active" : "tab"} aria-current={view === "transactions" ? "page" : undefined}
+            onClick={(e) => { e.preventDefault(); setView("transactions"); }}>Transactions</a>
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
       </header>
@@ -149,6 +152,9 @@ export function App({
         {view === "tag" && route.id && <TagDetail api={api} id={route.id} onBack={() => setView("tags")} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
         {view === "admins" && <Admins api={api} onError={onError} />}
+        {view === "merchants" && <Merchants api={api} onError={onError} />}
+        {view === "users" && <Users api={api} onError={onError} />}
+        {view === "transactions" && <Transactions api={api} onError={onError} />}
       </main>
     </div>
   );
