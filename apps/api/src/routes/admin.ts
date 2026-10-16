@@ -4,8 +4,10 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
-import { MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { approvePending, rejectPending } from "../lib/refund";
+import { reset as resetThrottle } from "../lib/throttle";
+import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { PHOTO_SQL } from "../lib/photo";
@@ -144,6 +146,8 @@ admin.use("/merchants", requirePage("merchants"));
 admin.use("/merchants/*", requirePage("merchants"));
 admin.use("/terminals/*", requirePage("merchants"));
 admin.use("/users", requirePage("users"));
+admin.use("/users/*", requirePage("users"));
+admin.use("/wallets/*", requirePage("users"));
 admin.use("/transactions", requirePage("transactions"));
 admin.use("/admins", requirePage("admins"));
 admin.use("/admins/*", requirePage("admins"));
@@ -447,6 +451,94 @@ admin.put("/merchants/:id/status", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status <> 'closed' returning id, status`;
   return rows.length ? c.json({ merchant: rows[0] }) : c.json({ error: "not_found" }, 404);
+});
+
+// ---- One person, for support ------------------------------------------------------------------------
+const userTxQuery = z.object({
+  kind: z.enum(USER_TX_KINDS as [UserTxKind, ...UserTxKind[]]).default("all"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(100).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine((q) => [q.from, q.to].every((d) => d === undefined || (!Number.isNaN(Date.parse(d)) && new Date(d).toISOString().startsWith(d))), { message: "invalid_date" })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, { message: "from_after_to" });
+
+admin.get("/users/:id", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const u = await userDetail(c.get("sql"), id.data);
+  return u ? c.json({ user: u }) : c.json({ error: "not_found" }, 404);
+});
+for (const [sub, fn, key] of [["wallets", userWallets, "wallets"], ["tags", userTags, "tags"], ["devices", userDevices, "devices"], ["funding", userFunding, "funding"], ["orders", userOrders, "orders"]] as const) {
+  admin.get(`/users/:id/${sub}`, async (c) => {
+    const id = merchantId.safeParse(c.req.param("id"));
+    if (!id.success || !(await userDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+    return c.json({ [key]: await fn(c.get("sql"), id.data) });
+  });
+}
+admin.get("/users/:id/transactions", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  const q = userTxQuery.safeParse(c.req.query());
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  let cursor: { ts: string; id: string } | null = null;
+  if (q.data.cursor) {
+    const [ts, cid] = q.data.cursor.split("|");
+    if (!ts || !cid || Number.isNaN(Date.parse(ts)) || !z.string().uuid().safeParse(cid).success) return c.json({ error: "invalid_cursor" }, 400);
+    cursor = { ts, id: cid };
+  }
+  if (!(await userDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json(await userTransactions(c.get("sql"), id.data, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }));
+});
+
+const roleGate = (list: readonly Role[]) => (c: any) => {
+  const a = c.get("adminAuth");
+  return a.kind === "admin" && !list.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
+};
+// Support actions (Admin and Support roles): sign a person out everywhere, unlock their login after too many
+// wrong passwords, and revoke an agent wallet's API key (for a leaked key; the owner can issue a new one).
+admin.post("/users/:id/sign-out", async (c) => {
+  const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await userDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update devices set revoked_at = now() where account_id = ${id.data} and revoked_at is null returning id`;
+  return c.json({ signed_out: rows.length });
+});
+admin.post("/users/:id/unlock-login", async (c) => {
+  const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const u = await userDetail(c.get("sql"), id.data);
+  if (!u) return c.json({ error: "not_found" }, 404);
+  if (u.email) await resetThrottle(c.get("sql"), `login:${u.email.toLowerCase()}`);
+  return c.body(null, 204);
+});
+admin.post("/wallets/:id/revoke-key", async (c) => {
+  const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data} and key_hash is not null returning id`;
+  return rows.length ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
+});
+// Admin only: suspend or reactivate a person, or one of their wallets. A suspended account is refused on its
+// next request (sessions, wallets, agent keys alike); nothing is deleted.
+admin.put("/users/:id/status", async (c) => {
+  const denied = roleGate(USER_ADMINS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'C' and status <> 'closed' returning id, status`;
+  return rows.length ? c.json({ user: rows[0] }) : c.json({ error: "not_found" }, 404);
+});
+admin.put("/wallets/:id/status", async (c) => {
+  const denied = roleGate(USER_ADMINS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const rows = await c.get("sql")`update wallets w set status = ${body.data.status} from accounts a where w.id = ${id.data} and a.id = w.account_id and a.type = 'C' and w.status <> 'closed' returning w.id, w.status`;
+  return rows.length ? c.json({ wallet: rows[0] }) : c.json({ error: "not_found" }, 404);
 });
 
 // Support action: sign a terminal out (clears its stored session, so its token stops working and the

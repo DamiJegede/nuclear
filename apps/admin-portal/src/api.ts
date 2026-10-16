@@ -106,6 +106,37 @@ export type MerchantTxPage = {
   transactions: MerchantTxRow[]; next_cursor: string | null;
 };
 
+export type UserDetailData = {
+  id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null; created_at: string;
+  login_locked: { retry_after: number } | null;
+  balances: { balance: number; pending: number; credit_limit: number; credit_spent: number; earmarked: number; shared: number };
+  stats: {
+    sent: { count: number; volume: number }; received: { count: number; volume: number }; payments: { count: number; volume: number };
+    loads: { count: number; volume: number }; failed: number; today: number; last_activity_at: string | null;
+    wallets: number; agents: number; tags: number; devices: number; orders: number;
+  };
+};
+export type UserWallet = {
+  id: string; name: string; type: "default" | "agent" | "person"; status: string; balance: number | null; earmarked: boolean;
+  daily_limit: number | null; spent_today: number | null; allow_pay: boolean; allow_send: boolean; tags: number;
+  key: { hint: string; last_used_at: string | null } | null; created_at: string;
+};
+export type UserTag = { id: string; label: string | null; locked: boolean; transaction_limit: number | null; last_read_at: string | null; updated_at: string; model: string; model_type: string; wallet: string };
+export type UserDevice = { id: string; platform: string | null; wallet: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; active: boolean };
+export type UserFunding = {
+  banks: { id: string; last4: string; status: string; created_at: string }[];
+  fundings: { id: string; amount: number; status: string; failure_code: string | null; last4: string | null; created_at: string; released_at: string | null; returned_at: string | null }[];
+};
+export type UserOrder = { id: string; model_name: string; model_type: string; quantity: number; unit_price: number; total: number; status: string; shipping: { city?: string; region?: string; country?: string }; created_at: string };
+export type UserTxKind = "all" | "sends" | "received" | "payments" | "loads" | "refunds";
+export type UserTxRow = {
+  id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; direction: "in" | "out";
+  via: "tap" | "pass" | "app" | null; counterparty: string | null; wallet: string | null; agent: boolean; reference: string | null;
+};
+export type UserTxPage = {
+  counts: Record<UserTxKind, number>; totals: { money_out: number; money_in: number }; transactions: UserTxRow[]; next_cursor: string | null;
+};
+
 /** One model with its provisioning and activation numbers. */
 export type TagDetail = TagModel & {
   tags: number; unassigned: number; activated: number; pending: number; rank: number; models_total: number;
@@ -228,6 +259,21 @@ export function createApi(token: string, base: string = API_URL) {
     /** Admin: suspend or reactivate a merchant. */
     setMerchantStatus: (merchantId: string, status: "active" | "suspended") =>
       request<{ merchant: { id: string; status: string } }>("PUT", `/v1/admin/merchants/${encodeURIComponent(merchantId)}/status`, { status }),
+    user: async (id: string) => (await request<{ user: UserDetailData }>("GET", `/v1/admin/users/${encodeURIComponent(id)}`)).user,
+    userWallets: async (id: string) => (await request<{ wallets: UserWallet[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/wallets`)).wallets,
+    userTags: async (id: string) => (await request<{ tags: UserTag[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/tags`)).tags,
+    userDevices: async (id: string) => (await request<{ devices: UserDevice[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/devices`)).devices,
+    userFunding: async (id: string) => (await request<{ funding: UserFunding }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/funding`)).funding,
+    userOrders: async (id: string) => (await request<{ orders: UserOrder[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/orders`)).orders,
+    userTransactions: (id: string, kind: UserTxKind = "all", cursor?: string, range: DayRange = {}) =>
+      request<UserTxPage>("GET", `/v1/admin/users/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    /** Support actions (Admin, Support): sign out everywhere, unlock the login, revoke an agent key. */
+    signOutUser: (id: string) => request<{ signed_out: number }>("POST", `/v1/admin/users/${encodeURIComponent(id)}/sign-out`),
+    unlockUserLogin: (id: string) => request<null>("POST", `/v1/admin/users/${encodeURIComponent(id)}/unlock-login`),
+    revokeAgentKey: (walletId: string) => request<null>("POST", `/v1/admin/wallets/${encodeURIComponent(walletId)}/revoke-key`),
+    /** Admin: suspend or reactivate a person, or one of their wallets. */
+    setUserStatus: (id: string, status: "active" | "suspended") => request<{ user: { id: string; status: string } }>("PUT", `/v1/admin/users/${encodeURIComponent(id)}/status`, { status }),
+    setWalletStatus: (walletId: string, status: "active" | "suspended") => request<{ wallet: { id: string; status: string } }>("PUT", `/v1/admin/wallets/${encodeURIComponent(walletId)}/status`, { status }),
     signOutTerminal: (id: string) => request<null>("POST", `/v1/admin/terminals/${encodeURIComponent(id)}/sign-out`),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */

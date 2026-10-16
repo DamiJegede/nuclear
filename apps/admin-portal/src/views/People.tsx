@@ -79,7 +79,7 @@ export function Merchants({ api, onError, open }: { api: Api; onError: (e: unkno
   );
 }
 
-export function Users({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+export function Users({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
   const load = useCallback((q: string) => api.users(q || undefined), [api]);
   const { q, setQ, rows, failed, retry } = useFiltered<UserRow>(load, onError);
   return (
@@ -102,7 +102,7 @@ export function Users({ api, onError }: { api: Api; onError: (e: unknown) => voi
               <tbody>
                 {rows.map((u) => (
                   <tr key={u.id}>
-                    <th scope="row">{u.name}</th>
+                    <th scope="row">{open ? <a className="row-link" href={`/users/${u.id}`} onClick={(e) => { e.preventDefault(); open(u.id); }}>{u.name}</a> : u.name}</th>
                     <td>{u.handle ? `@${u.handle}` : "—"}</td>
                     <td>{u.email ?? "—"}</td>
                     <td>{statusPill(u.status)}</td>

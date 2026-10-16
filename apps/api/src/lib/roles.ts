@@ -30,5 +30,10 @@ export const MERCHANT_WRITERS: readonly Role[] = ["admin", "merchants"];
 /** Roles that may approve or reject a merchant's pending refunds and suspend or reactivate a merchant. */
 export const MERCHANT_ADMINS: readonly Role[] = ["admin"];
 
+/** Roles that may take support actions on a person: sign them out everywhere, unlock their login, revoke an agent key. */
+export const USER_WRITERS: readonly Role[] = ["admin", "support"];
+/** Roles that may suspend or reactivate a person or one of their wallets. */
+export const USER_ADMINS: readonly Role[] = ["admin"];
+
 export const canSee = (role: Role, page: Page) => ROLE_PAGES[role].includes(page);
 export const isRole = (v: unknown): v is Role => typeof v === "string" && (ROLES as readonly string[]).includes(v);

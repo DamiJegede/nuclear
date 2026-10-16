@@ -1355,3 +1355,166 @@ describe("merchant support page", () => {
     expect(window.location.pathname).toBe("/");
   });
 });
+
+describe("user support page", () => {
+  const UID = "0190cccc-dddd-7eee-8fff-aaaaaaaaaaaa";
+  const UL = { id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 91000, wallets: 3, agents: 1 };
+  const DETAIL = {
+    id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", phone: "555-0101", status: "active", tier: "free", created_at: "2026-10-01T00:00:00Z", login_locked: null,
+    balances: { balance: 91000, pending: 500, credit_limit: 0, credit_spent: 0, earmarked: 19300, shared: 71700 },
+    stats: { sent: { count: 2, volume: 2200 }, received: { count: 1, volume: 400 }, payments: { count: 2, volume: 3400 }, loads: { count: 1, volume: 100000 }, failed: 2, today: 5, last_activity_at: "2026-10-16T12:00:00Z", wallets: 3, agents: 1, tags: 1, devices: 3, orders: 1 },
+  };
+  const WALLETS = [
+    { id: "w1", name: "Ada Lovelace", type: "default", status: "active", balance: null, earmarked: false, daily_limit: null, spent_today: 0, allow_pay: true, allow_send: true, tags: 1, key: null, created_at: "2026-10-01T00:00:00Z" },
+    { id: "w2", name: "Ada's Agent", type: "agent", status: "active", balance: 19300, earmarked: true, daily_limit: 5000, spent_today: 700, allow_pay: true, allow_send: true, tags: 0, key: { hint: "CSEY", last_used_at: "2026-10-16T11:00:00Z" }, created_at: "2026-10-02T00:00:00Z" },
+  ];
+  const utx = (id: string, type: string, status: string, amount: number, extra: object = {}) => ({ id, type, status, status_code: null, amount, timestamp: "2026-10-16T12:00:00Z", direction: "out", via: null, counterparty: "Bob", wallet: "Ada Lovelace", agent: false, reference: null, ...extra });
+  const TXP = { counts: { all: 3, sends: 2, received: 1, payments: 0, loads: 0, refunds: 0 }, totals: { money_out: 1500, money_in: 400 }, transactions: [utx("a", "send", "completed", 1500), utx("b", "send", "completed", 400, { direction: "in", counterparty: "Bob" }), utx("c", "send", "failed", 100, { status_code: "send_not_allowed", wallet: "Kid" })], next_cursor: null };
+  const api = (extra: Partial<Api> = {}) => fakeApi({
+    users: vi.fn().mockResolvedValue([UL]), user: vi.fn().mockResolvedValue(DETAIL), userWallets: vi.fn().mockResolvedValue(WALLETS),
+    userTags: vi.fn().mockResolvedValue([{ id: "t1", label: "Wrist", locked: false, transaction_limit: 5000, last_read_at: null, updated_at: "2026-10-03T00:00:00Z", model: "NEO Band", model_type: "band", wallet: "Ada Lovelace" }]),
+    userDevices: vi.fn().mockResolvedValue([{ id: "d1", platform: "ios", wallet: null, created_at: "2026-10-01T00:00:00Z", last_accessed_at: "2026-10-16T10:00:00Z", session_expires_at: "2027-01-01T00:00:00Z", revoked_at: null, active: true }, { id: "d2", platform: null, wallet: "Kid", created_at: "2026-10-02T00:00:00Z", last_accessed_at: null, session_expires_at: "2027-01-01T00:00:00Z", revoked_at: "2026-10-05T00:00:00Z", active: false }]),
+    userFunding: vi.fn().mockResolvedValue({ banks: [{ id: "b1", last4: "4321", status: "active", created_at: "2026-10-01T00:00:00Z" }], fundings: [{ id: "f1", amount: 100000, status: "completed", failure_code: null, last4: "4321", created_at: "2026-10-01T00:00:00Z", released_at: "2026-10-01T00:01:00Z", returned_at: null }, { id: "f2", amount: 5000, status: "failed", failure_code: "insufficient_funds", last4: "4321", created_at: "2026-10-02T00:00:00Z", released_at: null, returned_at: null }] }),
+    userOrders: vi.fn().mockResolvedValue([{ id: "o1", model_name: "NEO Band", model_type: "band", quantity: 2, unit_price: 2999, total: 5998, status: "paid", shipping: { city: "London", region: "LDN", country: "GB" }, created_at: "2026-10-04T00:00:00Z" }]),
+    userTransactions: vi.fn().mockResolvedValue(TXP), signOutUser: vi.fn().mockResolvedValue({ signed_out: 3 }), unlockUserLogin: vi.fn().mockResolvedValue(null),
+    revokeAgentKey: vi.fn().mockResolvedValue(null), setUserStatus: vi.fn().mockResolvedValue({ user: { id: UID, status: "suspended" } }), setWalletStatus: vi.fn().mockResolvedValue({ wallet: { id: "w2", status: "suspended" } }), ...extra,
+  } as Partial<Api>);
+  const as = (role: SignedIn["role"], pages: Page[]): SignedIn => ({ ...SIGNED, admin: { ...SIGNED.admin, role }, role, pages, landing: pages[0]! });
+  async function open(a: Api, signed: SignedIn = SIGNED) {
+    const user = await signIn(a, vi.fn().mockResolvedValue(signed));
+    await user.click(await screen.findByRole("link", { name: "Users" }));
+    await user.click(await screen.findByRole("link", { name: "Ada Lovelace" }));
+    await screen.findByRole("article", { name: "Balance" });
+    return user;
+  }
+  const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
+
+  it("opens from the Users list at its own address with the balance split and activity numbers", async () => {
+    await open(api());
+    expect(window.location.pathname).toBe(`/users/${UID}`);
+    expect(document.title).toBe("Ada Lovelace · Users · Nuclear Admin");
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Users" })).toHaveClass("active");
+    const bal = screen.getByRole("article", { name: "Balance" });
+    expect(bal).toHaveTextContent("$910.00");
+    expect(bal).toHaveTextContent("$717.00 shared · $193.00 earmarked");
+    expect(screen.getByRole("article", { name: "Money out" })).toHaveTextContent("$22.00 sent · $34.00 paid");
+    expect(screen.getByRole("article", { name: "Activity" })).toHaveTextContent("2 failed attempts");
+    for (const t of ["ada@example.com", "555-0101", "@ada01", UID]) expect(screen.getByText(t)).toBeInTheDocument();
+    expect(screen.getByText("Normal")).toBeInTheDocument();
+  });
+
+  it("Wallets: earmarked balance, limits, what each can do and the agent key hint; Revoke Key and Suspend behind confirms", async () => {
+    const revokeAgentKey = vi.fn().mockResolvedValue(null), setWalletStatus = vi.fn().mockResolvedValue({ wallet: { id: "w2", status: "suspended" } });
+    const user = await open(api({ revokeAgentKey, setWalletStatus }));
+    await user.click(tab("Wallets"));
+    expect(window.location.search).toBe("?tab=wallets");
+    const agent = await screen.findByRole("row", { name: /^Ada's Agent/ });
+    expect(agent).toHaveTextContent("$193.00");
+    expect(agent).toHaveTextContent("$7.00 of $50.00");
+    expect(agent).toHaveTextContent("pay · send");
+    expect(agent).toHaveTextContent("…CSEY");
+    expect(within(screen.getByRole("row", { name: /^Ada Lovelace/ })).getByText("Shared funds")).toBeInTheDocument();
+    expect(within(screen.getByRole("row", { name: /^Ada Lovelace/ })).queryByRole("button", { name: /Suspend wallet/ })).toBeNull();     // the default wallet stays
+    await user.click(within(agent).getByRole("button", { name: "Revoke agent key for Ada's Agent" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Revoke Agent Key" })).getByRole("button", { name: "Confirm Revoke" }));
+    await waitFor(() => expect(revokeAgentKey).toHaveBeenCalledWith("w2"));
+    await user.click(await screen.findByRole("button", { name: "Suspend wallet Ada's Agent" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Suspend Wallet" })).getByRole("button", { name: "Confirm Suspend" }));
+    await waitFor(() => expect(setWalletStatus).toHaveBeenCalledWith("w2", "suspended"));
+  });
+
+  it("Transactions: in and out with signs, the wallet and counterparty, failed rows tinted with their code; cards and period", async () => {
+    const userTransactions = vi.fn().mockResolvedValue(TXP);
+    const user = await open(api({ userTransactions }));
+    await user.click(tab("Transactions"));
+    const failed = await screen.findByRole("row", { name: /Kid/ });
+    expect(failed).toHaveClass("fail-row");
+    expect(within(failed).getByText("send_not_allowed")).toHaveClass("fail-reason");
+    expect(screen.getByText("+$4.00")).toHaveClass("amount-in");
+    expect(screen.getByText("−$15.00")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("$15.00 out · $4.00 in");
+    expect(within(screen.getByRole("radiogroup", { name: "Show" })).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["all", "sends", "received", "payments", "loads", "refunds"]);
+    await user.click(screen.getByRole("radio", { name: /^Received/ }));
+    await waitFor(() => expect(userTransactions).toHaveBeenLastCalledWith(UID, "received", undefined, {}));
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    await waitFor(() => expect(userTransactions).toHaveBeenLastCalledWith(UID, "received", undefined, expect.objectContaining({ from: expect.any(String) })));
+  });
+
+  it("Tags, Devices, Funding and Orders tabs", async () => {
+    const user = await open(api());
+    await user.click(tab("Tags"));
+    expect(await screen.findByRole("row", { name: /NEO Band/ })).toHaveTextContent("Wrist");
+    await user.click(tab("Devices"));
+    const active = await screen.findByRole("row", { name: /ios/ });
+    expect(within(active).getByText("active")).toBeInTheDocument();
+    expect(within(screen.getByRole("row", { name: /Kid/ })).getByText("signed out")).toBeInTheDocument();
+    await user.click(tab("Funding"));
+    const bad = await screen.findByRole("row", { name: /\$50\.00/ });
+    expect(bad).toHaveClass("fail-row");
+    expect(within(bad).getByText("insufficient_funds")).toBeInTheDocument();
+    expect(screen.getByText(/Linked banks: •••• 4321 \(active\)/)).toBeInTheDocument();
+    await user.click(tab("Orders"));
+    expect(await screen.findByRole("row", { name: /NEO Band/ })).toHaveTextContent("London, LDN, GB");
+  });
+
+  it("Sign Out Everywhere asks first, then signs them out; Unlock Login only shows while locked", async () => {
+    const signOutUser = vi.fn().mockResolvedValue({ signed_out: 3 }), unlockUserLogin = vi.fn().mockResolvedValue(null);
+    const locked = { ...DETAIL, login_locked: { retry_after: 600 } };
+    const user = await open(api({ signOutUser, unlockUserLogin, user: vi.fn().mockResolvedValueOnce(locked).mockResolvedValue(DETAIL) }));
+    expect(screen.getByText("login locked")).toBeInTheDocument();
+    expect(screen.getByText(/Locked, retry in about 10 min/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Unlock Login" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Unlock Login" })).getByRole("button", { name: "Confirm Unlock" }));
+    await waitFor(() => expect(unlockUserLogin).toHaveBeenCalledWith(UID));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Unlock Login" })).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Sign Out Everywhere" }));
+    expect(signOutUser).not.toHaveBeenCalled();
+    const d = within(screen.getByRole("dialog", { name: "Sign Out Everywhere" }));
+    expect(d.getByText(/all 3 active sessions/)).toBeInTheDocument();
+    await user.click(d.getByRole("button", { name: "Confirm Sign Out" }));
+    await waitFor(() => expect(signOutUser).toHaveBeenCalledWith(UID));
+  });
+
+  it("an Admin suspends and reactivates a person, with a confirm that says what stops", async () => {
+    const setUserStatus = vi.fn().mockResolvedValue({ user: { id: UID, status: "suspended" } });
+    const user = await open(api({ setUserStatus, user: vi.fn().mockResolvedValueOnce(DETAIL).mockResolvedValue({ ...DETAIL, status: "suspended" }) }));
+    await user.click(screen.getByRole("button", { name: "Suspend User" }));
+    const d = within(screen.getByRole("dialog", { name: "Suspend User" }));
+    expect(d.getByText(/Every session and agent key stops working/)).toBeInTheDocument();
+    await user.click(d.getByRole("button", { name: "Confirm Suspend" }));
+    await waitFor(() => expect(setUserStatus).toHaveBeenCalledWith(UID, "suspended"));
+    expect(await screen.findByRole("button", { name: "Reactivate User" })).toBeInTheDocument();
+  });
+
+  it("roles: Sales only looks; Support can sign out, unlock and revoke keys but not suspend; Admin can do everything", async () => {
+    const locked = { ...DETAIL, login_locked: { retry_after: 60 } };
+    await open(api({ user: vi.fn().mockResolvedValue(locked) }), as("sales", ["users", "merchants", "tags"]));
+    for (const b of ["Sign Out Everywhere", "Unlock Login", "Suspend User"]) expect(screen.queryByRole("button", { name: b })).toBeNull();
+    cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    const user = await open(api({ user: vi.fn().mockResolvedValue(locked) }), as("support", ["users", "transactions"]));
+    expect(screen.getByRole("button", { name: "Sign Out Everywhere" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unlock Login" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Suspend User" })).toBeNull();
+    await user.click(tab("Wallets"));
+    expect(await screen.findByRole("button", { name: "Revoke agent key for Ada's Agent" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Suspend wallet/ })).toBeNull();
+  });
+
+  it("each tab is its own history entry, a link straight to a tab works, and roles without Users are sent away", async () => {
+    const user = await open(api());
+    await user.click(tab("Devices"));
+    await screen.findByRole("row", { name: /ios/ });
+    act(() => { window.history.back(); });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true"));
+    cleanup();
+    window.history.replaceState(null, "", `/users/${UID}?tab=orders`);
+    sessionStorage.setItem(TOKEN_KEY, "t");
+    render(<App makeApi={() => api()} signIn={vi.fn()} />);
+    expect(await screen.findByRole("row", { name: /NEO Band/ })).toBeInTheDocument();
+    cleanup();
+    window.history.replaceState(null, "", `/users/${UID}`);
+    render(<App makeApi={() => api({ me: vi.fn().mockResolvedValue({ ...ME, role: "tags", pages: ["tags"], landing: "tags" }) })} signIn={vi.fn()} />);
+    await screen.findByRole("heading", { name: "Tags" });
+    expect(window.location.pathname).toBe("/tags");
+  });
+});
