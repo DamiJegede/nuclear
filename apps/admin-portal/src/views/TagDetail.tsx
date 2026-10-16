@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Api, TagDetail as Detail } from "../api";
 import { int } from "../format";
+import { usePageTitle } from "../title";
 import { ModelCard } from "./ModelCard";
 import { ProvisionModal } from "./Provision";
 import { TagFormModal } from "./TagForm";
@@ -8,6 +9,7 @@ import { TagFormModal } from "./TagForm";
 /** One tag: a static card, its sales rank and activation numbers, provisioning and editing. */
 export function TagDetail({ api, id, onBack, onError }: { api: Api; id: string; onBack: () => void; onError: (e: unknown) => void }) {
   const [m, setM] = useState<Detail | null>(null);
+  usePageTitle(m ? `${m.name} · Tags` : "Tag");
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [provisioning, setProvisioning] = useState(false);

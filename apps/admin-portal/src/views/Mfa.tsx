@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, type AdminMe, type Api, type MfaSetup } from "../api";
+import { usePageTitle } from "../title";
 import { CopyButton } from "./CopyButton";
 
 /** Groups of four, easier to read and type: "ABCD EFGH …". */
@@ -66,6 +67,7 @@ export function MfaEnroll({
 }: {
   api: Api; me: AdminMe; onDone: () => void; onSignOut: () => void; onError: (e: unknown) => void;
 }) {
+  usePageTitle("Set Up Two-Step Verification");
   const [setup, setSetup] = useState<MfaSetup | null>(null);
   const [code, setCode] = useState("");
   const [codes, setCodes] = useState<string[] | null>(null);

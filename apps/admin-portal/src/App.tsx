@@ -7,6 +7,7 @@ import { Admins } from "./views/Admins";
 import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
 import { Tags } from "./views/Tags";
+import { usePageTitle } from "./title";
 import { TagDetail } from "./views/TagDetail";
 import { Merchants, Users } from "./views/People";
 import { Transactions } from "./views/Transactions";
@@ -65,6 +66,12 @@ export function App({
   const [notice, setNotice] = useState<string | null>(null);
 
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
+
+  // Tab title per page. Sign-in, enrollment and the tag page set their own (undefined = leave it).
+  const TITLES: Record<Exclude<View, "tag">, string> = {
+    overview: "Overview", merchants: "Merchants", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", security: "Security",
+  };
+  usePageTitle(token && me?.mfa_enabled && view !== "tag" ? TITLES[view] : undefined);
 
   const clear = useCallback((why?: string) => {
     writeToken(null);

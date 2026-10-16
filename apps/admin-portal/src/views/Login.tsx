@@ -1,3 +1,4 @@
+import { usePageTitle } from "../title";
 import { useState, type FormEvent } from "react";
 import { ApiError, isChallenge, type MfaChallenge, type SignedIn } from "../api";
 
@@ -12,6 +13,7 @@ export function Login({ signIn, completeMfa, onSignedIn, notice }: Props) {
   const [accessId, setAccessId] = useState("");
   const [token, setToken] = useState("");
   const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
+  usePageTitle(challenge ? "Two-Step Verification" : "Sign In");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

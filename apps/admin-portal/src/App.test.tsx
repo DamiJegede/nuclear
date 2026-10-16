@@ -910,3 +910,44 @@ describe("merchants, users and transactions", () => {
     expect(rows.findIndex((x) => x.startsWith("Agents"))).toBe(rows.findIndex((x) => x.startsWith("Tapped")) + 1);
   });
 });
+
+describe("page titles", () => {
+  const title = () => document.title;
+  async function nav(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(within(screen.getByRole("navigation")).getByRole("link", { name }));
+  }
+
+  it("titles the sign-in and two-step pages", async () => {
+    render(<App makeApi={() => fakeApi()} signIn={vi.fn().mockResolvedValue(CHALLENGE)} completeMfa={vi.fn()} />);
+    await screen.findByLabelText("Access ID");
+    expect(title()).toBe("Sign In · Nuclear Admin");
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Access ID"), "JANE.DOE");
+    await user.type(screen.getByLabelText("Access Token"), "x".repeat(32));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Two-step verification" });
+    expect(title()).toBe("Two-Step Verification · Nuclear Admin");
+  });
+
+  it("titles each page as you move around, and the tag page with the tag's name", async () => {
+    const user = await signIn(fakeApi({ model: vi.fn().mockResolvedValue(DETAIL) } as Partial<Api>));
+    await screen.findByRole("article", { name: "Scheme balance" });
+    expect(title()).toBe("Overview · Nuclear Admin");
+    for (const page of ["Merchants", "Users", "Tags", "Admins", "Transactions"]) {
+      await nav(user, page);
+      expect(title()).toBe(`${page} · Nuclear Admin`);
+    }
+    await nav(user, "Tags");
+    await user.click(await screen.findByRole("link", { name: /NEO Band Lite/ }));
+    await screen.findByRole("group", { name: "Sales Ranking" });
+    await waitFor(() => expect(title()).toBe("NEO Band Lite · Tags · Nuclear Admin"));
+    await user.click(screen.getByRole("link", { name: "Jane Doe" }));
+    expect(title()).toBe("Security · Nuclear Admin");
+  });
+
+  it("titles the two-step enrollment page", async () => {
+    await signIn(fakeApi(), vi.fn().mockResolvedValue({ ...SIGNED, mfa_enabled: false }));
+    await screen.findByRole("heading", { name: "Set up two-step verification" });
+    expect(title()).toBe("Set Up Two-Step Verification · Nuclear Admin");
+  });
+});
