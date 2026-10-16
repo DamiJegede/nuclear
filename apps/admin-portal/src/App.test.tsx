@@ -918,7 +918,7 @@ describe("merchants, users and transactions", () => {
     expect(await screen.findByText("agent")).toBeInTheDocument();
   });
 
-  it("the full list tints failed rows and shows the reason on its own line", async () => {
+  it("the full list tints failed rows and shows the reason code on its own line", async () => {
     const transactions = vi.fn().mockResolvedValue({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 1, completed_volume: 100 },
       transactions: [
         { id: "ok", type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" },
@@ -927,7 +927,7 @@ describe("merchants, users and transactions", () => {
     await go(fakeApi({ transactions }), "Transactions");
     const bad = await screen.findByRole("row", { name: /Eve/ });
     expect(bad).toHaveClass("fail-row");
-    expect(within(bad).getByText("Failure reason: wallet_balance_exceeded")).toHaveClass("fail-reason");
+    expect(within(bad).getByText("wallet_balance_exceeded")).toHaveClass("fail-reason");
     expect(screen.getByRole("row", { name: /Ada/ })).not.toHaveClass("fail-row");
   });
 
@@ -1257,16 +1257,16 @@ describe("merchant support page", () => {
 
   const PENDING = { ...TXPAGE, counts: { all: 4, payments: 2, refunds: 1, pending: 1 }, transactions: [...TXPAGE.transactions, tx("p", "refund", "pending", 700, { status_code: "awaiting_approval", customer: "Ada" })] };
 
-  it("failed rows are tinted and say why on their own line: Failure reason: <code>; pending refunds say they are waiting", async () => {
+  it("failed rows are tinted and show the reason code on its own line; pending refunds say they are waiting", async () => {
     const user = await open(api({ merchantTransactions: vi.fn().mockResolvedValue(PENDING) }));
     await user.click(tab("Transactions"));
     const failed = await screen.findByRole("row", { name: /Poor/ });
     expect(failed).toHaveClass("fail-row");
-    expect(within(failed).getByText("Failure reason: insufficient_balance")).toHaveClass("fail-reason");
+    expect(within(failed).getByText("insufficient_balance")).toHaveClass("fail-reason");
     expect(screen.getByRole("row", { name: /2,500|\$25\.00/ })).not.toHaveClass("fail-row");
     const pending = screen.getByRole("row", { name: /\$7\.00/ });
     expect(pending).not.toHaveClass("fail-row");
-    expect(within(pending).queryByText(/Failure reason/)).toBeNull();
+    expect(within(pending).queryByText(/Failure reason|insufficient/)).toBeNull();
     expect(within(pending).getByText("awaiting_approval")).toBeInTheDocument();
   });
 

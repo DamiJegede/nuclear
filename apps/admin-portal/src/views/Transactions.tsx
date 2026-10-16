@@ -35,12 +35,12 @@ export function periodRange(period: Period, custom: { from: string; to: string }
   }
 }
 
-/** Status pill; a failed row also says why, on its own line at the right; a pending refund says it is waiting. */
+/** Status pill; a failed row also shows the reason code, on its own line at the right; a pending refund says it is waiting. */
 export function StatusCell({ status, code }: { status: string; code: string | null }) {
   return (
     <>
       <span className={`pill ${status === "completed" ? "available" : status === "failed" ? "closed" : "pending"}`}>{status}</span>
-      {status === "failed" && code && <div className="fail-reason">Failure reason: {code}</div>}
+      {status === "failed" && code && <div className="fail-reason">{code}</div>}
       {status === "pending" && code && <div className="muted note-line">{code}</div>}
     </>
   );
