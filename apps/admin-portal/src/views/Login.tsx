@@ -57,7 +57,7 @@ export function Login({ signIn, completeMfa, onSignedIn, notice }: Props) {
     <div className="login">
       <form onSubmit={submitToken} className="card login-card" aria-labelledby="login-title">
         <div className="brand big"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
-        <h1 id="login-title">Sign in</h1>
+        <h1 id="login-title" className="sr-only">Sign in</h1>
         {notice && <p className="notice" role="status">{notice}</p>}
         <label htmlFor="access-id">Access ID</label>
         <input

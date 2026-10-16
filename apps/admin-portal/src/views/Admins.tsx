@@ -50,7 +50,7 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
                   <td>
                     <span className={`pill ${a.status === "active" ? "available" : "closed"}`}>{a.status}</span>
                     {a.locked && <span className="pill pending"> locked</span>}
-                    {a.must_change_access_token && <span className="muted note">has not signed in yet</span>}
+                    {!a.last_login_at && <span className="muted note">has not signed in yet</span>}
                   </td>
                   <td>{a.mfa_enabled ? "On" : "Not set up"}</td>
                   <td>{when(a.last_login_at)}</td>
@@ -111,7 +111,7 @@ function NewAdminForm({
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       <button type="submit" disabled={busy}>{busy ? "Creating…" : "Create admin"}</button>
-      <p className="hint">The system generates a 12-character Access ID and a 32-character Access Token and shows them once, with a download. The new admin replaces the token and sets up two-step verification the first time they sign in.</p>
+      <p className="hint">The system generates a 12-character Access ID and a 32-character Access Token and shows them once, with a download. The new admin sets up two-step verification the first time they sign in.</p>
     </form>
   );
 }

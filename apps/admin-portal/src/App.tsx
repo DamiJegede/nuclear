@@ -4,7 +4,6 @@ import {
   type AdminMe, type Api, type MfaChallenge, type SignedIn,
 } from "./api";
 import { Admins } from "./views/Admins";
-import { ChangeAccessToken } from "./views/ChangeAccessToken";
 import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
 import { Models } from "./views/Models";
@@ -21,7 +20,7 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "models" | "admins" | "token" | "security";
+type View = "overview" | "models" | "admins" | "security";
 
 export function App({
   makeApi = createApi,
@@ -48,13 +47,10 @@ export function App({
   }, []);
 
   // A 401 "unauthorized" means the session ended (expired, signed out elsewhere, account disabled).
-  // Other 401s are not about the session: a wrong current Access Token on the change-token form is
-  // reported as invalid_credentials and must not sign the person out.
+  // Other 401s are not about the session: other 401s (e.g. invalid_credentials) must not sign the person out.
   const onError = useCallback((e: unknown) => {
     if (e instanceof ApiError && e.status === 401 && e.code === "unauthorized") clear("Your session ended. Sign in again.");
-    else if (e instanceof ApiError && e.status === 403 && e.code === "access_token_change_required") {
-      setMe((m) => (m ? { ...m, must_change_access_token: true } : m));
-    } else if (e instanceof ApiError && e.status === 403 && e.code === "mfa_setup_required") {
+    else if (e instanceof ApiError && e.status === 403 && e.code === "mfa_setup_required") {
       setMe((m) => (m ? { ...m, mfa_enabled: false } : m));
     }
   }, [clear]);
@@ -81,7 +77,7 @@ export function App({
         onSignedIn={(r) => {
           writeToken(r.session_token);
           setNotice(null);
-          setMe({ access_id: r.admin.access_id, name: r.admin.name, must_change_access_token: r.must_change_access_token, mfa_enabled: r.mfa_enabled });
+          setMe({ access_id: r.admin.access_id, name: r.admin.name, mfa_enabled: r.mfa_enabled });
           setToken(r.session_token);
         }}
       />
@@ -90,19 +86,6 @@ export function App({
 
   if (!me) {
     return <div className="login"><p className="muted" role="status">Loading…</p></div>;
-  }
-
-  if (me.must_change_access_token) {
-    return (
-      <ChangeAccessToken
-        api={api}
-        me={me}
-        forced
-        onDone={() => setMe({ ...me, must_change_access_token: false })}
-        onSignOut={signOut}
-        onError={onError}
-      />
-    );
   }
 
   if (!me.mfa_enabled) {
@@ -128,7 +111,6 @@ export function App({
         </nav>
         <div className="who">
           <span className="muted" title={me.access_id}>{me.name}</span>
-          <button className={view === "token" ? "tab active" : "tab"} onClick={() => setView("token")}>Access Token</button>
           <button className={view === "security" ? "tab active" : "tab"} onClick={() => setView("security")}>Security</button>
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
@@ -138,9 +120,6 @@ export function App({
         {view === "models" && <Models api={api} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
         {view === "admins" && <Admins api={api} onError={onError} />}
-        {view === "token" && (
-          <ChangeAccessToken api={api} me={me} onDone={() => setView("overview")} onError={onError} />
-        )}
       </main>
     </div>
   );

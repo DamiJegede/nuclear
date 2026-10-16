@@ -100,6 +100,7 @@ export function MfaEnroll({
 
   return (
     <div className="login">
+      <div className="login-stack wide">
       <div className="card login-card wide">
         <div className="brand big"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <h1>Set up two-step verification</h1>
@@ -119,15 +120,16 @@ export function MfaEnroll({
                 <p className="secret" aria-label="Setup key"><code>{groupSecret(setup.secret)}</code></p>
               </>
             ) : !error ? <p className="muted" role="status">Preparing…</p> : null}
-            <form onSubmit={submit}>
+            <form onSubmit={submit} className="stack">
               <label htmlFor="enroll-code">Then enter the 6-digit code it shows</label>
               <input id="enroll-code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} disabled={!setup} />
               {error && <p className="error" role="alert">{error}</p>}
-              <button type="submit" disabled={busy || !setup || !code.trim()}>{busy ? "Checking…" : "Turn on two-step verification"}</button>
+              <button type="submit" className="block" disabled={busy || !setup || !code.trim()}>{busy ? "Checking…" : "Turn on two-step verification"}</button>
             </form>
-            <button type="button" className="ghost" onClick={onSignOut}>Sign out</button>
           </>
         )}
+      </div>
+      {!codes && <p className="below"><button type="button" className="link" onClick={onSignOut}>Sign out</button></p>}
       </div>
     </div>
   );

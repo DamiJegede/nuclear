@@ -86,15 +86,12 @@ describe("api client", () => {
     await expect(signIn("a", "b", "https://api.test")).rejects.toMatchObject({ status: 401, code: "invalid_credentials" });
   });
 
-  it("changes the Access Token with both values and signs out with a POST", async () => {
+  it("signs out with a POST", async () => {
     const f = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
     const api = createApi("t", "https://api.test");
-    await api.changeAccessToken("old old old old", "new new new new");
-    expect(f.mock.calls[0]![0]).toBe("https://api.test/v1/admin/access-token");
-    expect(JSON.parse(f.mock.calls[0]![1]!.body as string)).toEqual({ current_access_token: "old old old old", new_access_token: "new new new new" });
     await api.logout();
-    expect(f.mock.calls[1]![0]).toBe("https://api.test/v1/admin/logout");
-    expect(f.mock.calls[1]![1]!.method).toBe("POST");
+    expect(f.mock.calls[0]![0]).toBe("https://api.test/v1/admin/logout");
+    expect(f.mock.calls[0]![1]!.method).toBe("POST");
   });
 
   it("never puts the token in the URL", async () => {

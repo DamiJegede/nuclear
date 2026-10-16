@@ -49,7 +49,7 @@ export type TerminalAuth = {
 /** Who is calling /v1/admin: the operator token (scripts) or a signed-in admin (the portal). */
 export type AdminAuth =
   | { kind: "operator" }
-  | { kind: "admin"; adminId: string; accessId: string; name: string; sessionId: string; mustChangeAccessToken: boolean; mfaEnabled: boolean };
+  | { kind: "admin"; adminId: string; accessId: string; name: string; sessionId: string; mfaEnabled: boolean };
 
 export type AppContext = {
   Bindings: Env;

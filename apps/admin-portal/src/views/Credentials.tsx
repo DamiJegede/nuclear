@@ -50,7 +50,7 @@ export function CredentialsPanel({
         <button type="button" onClick={download}>Download credentials</button>
       </div>
       {note && <p className="muted" role="status">{note}</p>}
-      <p className="hint">{name} must replace this token with their own and set up two-step verification the first time they sign in. Then this one stops working.</p>
+      <p className="hint">{name} signs in with it and sets up two-step verification the first time. Keep it safe: it cannot be shown again.</p>
       <label className="check"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I have saved these credentials</label>
       <button type="button" disabled={!saved} onClick={onDone}>{doneLabel}</button>
     </div>

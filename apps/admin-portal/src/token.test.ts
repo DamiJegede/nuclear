@@ -1,39 +1,4 @@
-import { ACCESS_TOKEN_LENGTH, copyText, credentialsText, downloadText, generateAccessToken } from "./token";
-
-describe("generateAccessToken", () => {
-  it("makes 32-character tokens", () => {
-    expect(ACCESS_TOKEN_LENGTH).toBe(32);
-    for (let i = 0; i < 200; i++) expect(generateAccessToken()).toHaveLength(32);
-  });
-
-  it("always mixes upper case, lower case, digits and symbols", () => {
-    for (let i = 0; i < 300; i++) {
-      const t = generateAccessToken();
-      expect(t).toMatch(/[A-Z]/);
-      expect(t).toMatch(/[a-z]/);
-      expect(t).toMatch(/[2-9]/);
-      expect(t).toMatch(/[-_.+=]/);
-    }
-  });
-
-  it("never uses look-alike characters or anything outside the alphabet", () => {
-    for (let i = 0; i < 300; i++) expect(generateAccessToken()).toMatch(/^[A-HJ-NP-Za-km-z2-9\-_.+=]{32}$/);
-  });
-
-  it("is different every time", () => {
-    const seen = new Set(Array.from({ length: 500 }, generateAccessToken));
-    expect(seen.size).toBe(500);
-  });
-
-  it("spreads characters evenly (no modulo bias)", () => {
-    const counts = new Map<string, number>();
-    for (let i = 0; i < 4000; i++) for (const c of generateAccessToken()) counts.set(c, (counts.get(c) ?? 0) + 1);
-    const values = [...counts.values()];
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    expect(Math.min(...values)).toBeGreaterThan(mean * 0.85);
-    expect(Math.max(...values)).toBeLessThan(mean * 1.15);
-  });
-});
+import { copyText, credentialsText, downloadText } from "./token";
 
 describe("credentials file", () => {
   it("contains the Access ID, token and instructions", () => {
@@ -42,7 +7,6 @@ describe("credentials file", () => {
     expect(t).toContain("Name:          Jane Doe");
     expect(t).toContain("Access ID:     ABCDEFGH2345");
     expect(t).toContain("Access Token:  tok-0123456789");
-    expect(t).toMatch(/replace this Access Token/);
     expect(t).toMatch(/two-step verification/);
   });
 });

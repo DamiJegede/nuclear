@@ -59,13 +59,12 @@ export type NewModel = {
   status: TagModel["status"];
 };
 
-export type AdminMe = { access_id: string; name: string; must_change_access_token: boolean; mfa_enabled: boolean };
+export type AdminMe = { access_id: string; name: string; mfa_enabled: boolean };
 
 export type SignedIn = {
   session_token: string;
   expires_at: string;
   admin: { access_id: string; name: string };
-  must_change_access_token: boolean;
   mfa_enabled: boolean;
 };
 
@@ -82,7 +81,6 @@ export type AdminRow = {
   access_id: string;
   name: string;
   status: "active" | "disabled";
-  must_change_access_token: boolean;
   mfa_enabled: boolean;
   locked: boolean;
   last_login_at: string | null;
@@ -137,8 +135,6 @@ export function createApi(token: string, base: string = API_URL) {
   return {
     me: () => request<AdminMe>("GET", "/v1/admin/me"),
     logout: () => request<null>("POST", "/v1/admin/logout"),
-    changeAccessToken: (current_access_token: string, new_access_token: string) =>
-      request<null>("POST", "/v1/admin/access-token", { current_access_token, new_access_token }),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */
     createAdmin: (name: string) =>

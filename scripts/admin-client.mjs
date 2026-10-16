@@ -32,7 +32,7 @@ export function credentialsText(name, creds, portalUrl) {
     `Access Token:  ${creds.access_token}`,
     "",
     "Keep this file private and delete it once you have signed in.",
-    "At your first sign-in you must replace this Access Token with your own (32 characters or more)",
+    "At your first sign-in you set up two-step verification with an authenticator app.",
     "and set up two-step verification with an authenticator app. This one then stops working.",
     "",
   ].filter((l) => l !== null).join("\n");
@@ -52,7 +52,7 @@ export function showCredentials(name, creds, saveTo) {
     console.log(`Access Token:  \x1b[1m\x1b[32m${creds.access_token}\x1b[0m`);
     console.log("This is the only time the Access Token is shown. Copy it now.");
   }
-  console.log("They must replace it with their own and set up two-step verification at first sign-in.");
+  console.log("They set up two-step verification at first sign-in.");
 }
 
 /** Minimal --flag value parser. */

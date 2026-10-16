@@ -4,9 +4,9 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
 import { systemStats } from "../lib/stats";
-import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge, verifyPassword } from "../crypto"; // hashing helpers are shared with customer accounts
+import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
-  accessTokenSchema, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
+  completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
   mfaNewRecoveryCodes, mfaSetup, revokeSessions, sameSecret, type Session,
 } from "../lib/adminAuth";
 
@@ -45,7 +45,6 @@ const sessionJson = (r: Session) => ({
   session_token: r.token,
   expires_at: r.expiresAt,
   admin: { access_id: r.admin.access_id, name: r.admin.name },
-  must_change_access_token: r.admin.must_change_access_token,
   mfa_enabled: r.admin.mfa_enabled,
 });
 
@@ -97,14 +96,12 @@ admin.use("*", async (c, next) => {
   if (!s) return c.json({ error: "unauthorized" }, 401);
   c.set("adminAuth", {
     kind: "admin", adminId: s.admin_id, accessId: s.access_id, name: s.name,
-    sessionId: s.session_id, mustChangeAccessToken: s.must_change_access_token, mfaEnabled: s.mfa_enabled,
+    sessionId: s.session_id, mfaEnabled: s.mfa_enabled,
   });
 
-  // Two things come before anything else: a token issued by someone else must be replaced, then the
-  // authenticator must be enrolled (multi-factor is mandatory).
+  // The authenticator must be enrolled before anything else (multi-factor is mandatory).
   const path = c.req.path;
-  const open = ["/v1/admin/me", "/v1/admin/access-token", "/v1/admin/logout"];
-  if (s.must_change_access_token && !open.includes(path)) return c.json({ error: "access_token_change_required" }, 403);
+  const open = ["/v1/admin/me", "/v1/admin/logout"];
   if (!s.mfa_enabled && ![...open, "/v1/admin/mfa/setup", "/v1/admin/mfa/enable"].includes(path)) {
     return c.json({ error: "mfa_setup_required" }, 403);
   }
@@ -122,7 +119,7 @@ admin.get("/me", (c) => {
   return c.json(
     a.kind === "operator"
       ? { operator: true }
-      : { access_id: a.accessId, name: a.name, must_change_access_token: a.mustChangeAccessToken, mfa_enabled: a.mfaEnabled },
+      : { access_id: a.accessId, name: a.name, mfa_enabled: a.mfaEnabled },
   );
 });
 
@@ -131,33 +128,6 @@ admin.post("/logout", async (c) => {
   if (a.kind === "admin") {
     await c.get("sql")`update admin_sessions set revoked_at = now() where id = ${a.sessionId}`;
   }
-  return c.body(null, 204);
-});
-
-const accessTokenBody = z.object({ current_access_token: z.string().min(1).max(256), new_access_token: accessTokenSchema });
-
-// Change your own access token (32 characters or more). Every other session of yours is signed out.
-admin.post("/access-token", async (c) => {
-  const a = c.get("adminAuth");
-  if (a.kind !== "admin") return c.json({ error: "forbidden" }, 403);
-  const body = accessTokenBody.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) {
-    const known = ["access_token_too_short", "access_token_too_long"];
-    return c.json({ error: body.error.issues.map((i) => i.message).find((m) => known.includes(m)) ?? "invalid_request" }, 400);
-  }
-  if (body.data.new_access_token === body.data.current_access_token) return c.json({ error: "access_token_unchanged" }, 400);
-  if (body.data.new_access_token.toUpperCase().includes(a.accessId)) return c.json({ error: "access_token_contains_access_id" }, 400);
-
-  const sql = c.get("sql");
-  const [row] = await sql<{ access_token_hash: string }[]>`select access_token_hash from admins where id = ${a.adminId}`;
-  if (!row || !(await verifyPassword(body.data.current_access_token, row.access_token_hash))) {
-    return c.json({ error: "invalid_credentials" }, 401);
-  }
-  await sql`
-    update admins set access_token_hash = ${await hashPassword(body.data.new_access_token)},
-                      must_change_access_token = false, failed_attempts = 0, locked_until = null
-     where id = ${a.adminId}`;
-  await revokeSessions(sql, a.adminId, a.sessionId);
   return c.body(null, 204);
 });
 
@@ -238,7 +208,7 @@ admin.post("/admins", requireStaff, async (c) => {
         returning id, access_id, name`;
       return c.json(
         {
-          admin: { ...a, status: "active", must_change_access_token: true },
+          admin: { ...a, status: "active" },
           credentials: { access_id: a!.access_id, access_token: accessToken },
         },
         201,
@@ -252,7 +222,7 @@ admin.post("/admins", requireStaff, async (c) => {
 
 admin.get("/admins", requireStaff, async (c) => {
   const rows = await c.get("sql")`
-    select a.id, a.access_id, a.name, a.status, a.must_change_access_token, a.last_login_at, a.created_at,
+    select a.id, a.access_id, a.name, a.status, a.last_login_at, a.created_at,
            (a.mfa_enabled_at is not null) as mfa_enabled,
            (a.locked_until is not null and a.locked_until > now()) as locked,
            c.access_id as created_by
@@ -282,7 +252,7 @@ admin.patch("/admins/:id", requireOperator, async (c) => {
   if (body.data.reset_access_token) {
     issued = generateAccessToken();
     await sql`
-      update admins set access_token_hash = ${await hashPassword(issued)}, must_change_access_token = true,
+      update admins set access_token_hash = ${await hashPassword(issued)},
                         failed_attempts = 0, locked_until = null
        where id = ${id.data}`;
   }
@@ -300,7 +270,7 @@ admin.patch("/admins/:id", requireOperator, async (c) => {
        where id = ${id.data}`;
   }
   if (body.data.reset_access_token || body.data.reset_mfa || body.data.status === "disabled") await revokeSessions(sql, id.data);
-  const [a] = await sql`select id, access_id, name, status, must_change_access_token from admins where id = ${id.data}`;
+  const [a] = await sql`select id, access_id, name, status from admins where id = ${id.data}`;
   return c.json({ admin: a, ...(issued ? { credentials: { access_id: cur.access_id, access_token: issued } } : {}) });
 });
 

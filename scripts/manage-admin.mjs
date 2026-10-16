@@ -8,7 +8,7 @@
 //   ADMIN_API_TOKEN=... node scripts/manage-admin.mjs --access-id JANEDOE0001 --reset-mfa
 //
 // --reset-token generates a fresh 32-character Access Token (shown once) and signs the person out
-// everywhere; they must replace it at their next sign-in. --reset-mfa is for a lost phone: the
+// everywhere; --reset-mfa is for a lost phone: the
 // authenticator and recovery codes are forgotten and they enrol a new one at their next sign-in.
 import { client, flags, showCredentials } from "./admin-client.mjs";
 
@@ -21,7 +21,7 @@ if (list.status !== 200) { console.error(`Error (${list.status}):`, JSON.stringi
 if (f.list) {
   if (list.json.admins.length === 0) console.log("No admin accounts yet. Create one with add-admin.mjs.");
   for (const a of list.json.admins) {
-    const flagsOut = [a.status, a.mfa_enabled ? "2-step on" : "2-step NOT set up", a.locked ? "LOCKED" : null, a.must_change_access_token ? "must replace Access Token" : null].filter(Boolean).join(", ");
+    const flagsOut = [a.status, a.mfa_enabled ? "2-step on" : "2-step NOT set up", a.locked ? "LOCKED" : null].filter(Boolean).join(", ");
     console.log(`${a.access_id.padEnd(16)} ${a.name.padEnd(24)} ${flagsOut}${a.last_login_at ? `  (last sign-in ${a.last_login_at})` : ""}${a.created_by ? `  (added by ${a.created_by})` : ""}`);
   }
   process.exit(0);

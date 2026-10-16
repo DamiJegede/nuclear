@@ -26,9 +26,9 @@ const MODEL: TagModel = {
 
 const SIGNED: SignedIn = {
   session_token: "session-abc", expires_at: new Date(Date.now() + 8 * 3600_000).toISOString(),
-  admin: { access_id: "JANE.DOE", name: "Jane Doe" }, must_change_access_token: false, mfa_enabled: true,
+  admin: { access_id: "JANE.DOE", name: "Jane Doe" }, mfa_enabled: true,
 };
-const ME: AdminMe = { access_id: "JANE.DOE", name: "Jane Doe", must_change_access_token: false, mfa_enabled: true };
+const ME: AdminMe = { access_id: "JANE.DOE", name: "Jane Doe", mfa_enabled: true };
 const CHALLENGE: MfaChallenge = { mfa_required: true, mfa_token: "challenge-token-0123456789", expires_in: 300 };
 const SETUP = { secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", otpauth_uri: "otpauth://totp/Nuclear%20Admin:JANE.DOE?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Nuclear%20Admin&algorithm=SHA1&digits=6&period=30" };
 const CODES = Array.from({ length: 10 }, (_, i) => `AAAA${i}-BBBB${i}`);
@@ -174,85 +174,6 @@ describe("sign-in", () => {
     sessionStorage.setItem(TOKEN_KEY, "revoked");
     render(<App makeApi={() => fakeApi({ me: vi.fn().mockRejectedValue(new ApiError(401, "unauthorized")) })} signIn={vi.fn()} />);
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-  });
-});
-
-describe("replacing the issued Access Token", () => {
-  const FORCED: SignedIn = { ...SIGNED, must_change_access_token: true };   // mfa already on: password step only
-
-  async function forcedScreen(api: Api) {
-    const user = await signIn(api, vi.fn().mockResolvedValue(FORCED));
-    await screen.findByRole("heading", { name: "Replace your Access Token" });
-    return user;
-  }
-  const fill = async (user: ReturnType<typeof userEvent.setup>, cur: string) => {
-    await user.type(screen.getByLabelText(/^(Temporary|Current) Access Token$/), cur);
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    await user.click(screen.getByLabelText("I have saved this Access Token"));
-    await user.click(screen.getByRole("button", { name: "Change Access Token" }));
-  };
-
-  it("makes a first-time admin replace the issued Access Token before anything else", async () => {
-    await forcedScreen(fakeApi());
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.queryByRole("article", { name: "Scheme balance" })).toBeNull();
-  });
-
-  it("will not let you type a new Access Token, only generate one", async () => {
-    const changeAccessToken = vi.fn();
-    const user = await forcedScreen(fakeApi({ changeAccessToken }));
-    const field = screen.getByLabelText("New Access Token");
-    expect(field).toHaveAttribute("readonly");
-    expect(screen.queryByLabelText("Repeat new Access Token")).toBeNull();
-    await user.type(field, "typed-by-hand-typed-by-hand-123456");
-    expect(field).toHaveValue("");
-    expect(screen.getByText("Press Generate for a strong random one, then save it in your password manager.")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Temporary Access Token"), "an-issued-temporary-token-of-32-chars-1");
-    expect(screen.queryByRole("button", { name: "Change Access Token" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    expect(screen.queryByRole("button", { name: "Generate" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Change Access Token" })).toBeDisabled();
-    expect(changeAccessToken).not.toHaveBeenCalled();
-  });
-
-  it("changes the Access Token and then opens the portal", async () => {
-    const changeAccessToken = vi.fn().mockResolvedValue(null);
-    const user = await forcedScreen(fakeApi({ changeAccessToken }));
-    await fill(user, "temp-token-1");
-    expect(changeAccessToken).toHaveBeenCalledWith("temp-token-1", expect.stringMatching(/^.{32}$/));
-    expect(await screen.findByRole("article", { name: "Scheme balance" })).toBeInTheDocument();
-  });
-
-  it("explains a wrong temporary Access Token and stays put", async () => {
-    const user = await forcedScreen(fakeApi({ changeAccessToken: vi.fn().mockRejectedValue(new ApiError(401, "invalid_credentials")) }));
-    await fill(user, "wrong-temp");
-    expect(await screen.findByRole("alert")).toHaveTextContent("current Access Token is not right");
-    expect(screen.getByRole("heading", { name: "Replace your Access Token" })).toBeInTheDocument();
-  });
-
-  it("lets the person sign out instead", async () => {
-    const user = await forcedScreen(fakeApi());
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-  });
-
-  it("falls back to the forced screen if the API demands a token change mid-session", async () => {
-    sessionStorage.setItem(TOKEN_KEY, "t");
-    const stats = vi.fn().mockRejectedValue(new ApiError(403, "access_token_change_required"));
-    render(<App makeApi={() => fakeApi({ stats })} signIn={vi.fn()} />);
-    expect(await screen.findByRole("heading", { name: "Replace your Access Token" })).toBeInTheDocument();
-  });
-
-  it("is also available any time from the Access Token tab", async () => {
-    const changeAccessToken = vi.fn().mockResolvedValue(null);
-    const user = await signIn(fakeApi({ changeAccessToken }));
-    await screen.findByRole("article", { name: "Scheme balance" });
-    await user.click(screen.getByRole("button", { name: "Access Token" }));
-    expect(screen.getByRole("heading", { name: "Change Access Token" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Current Access Token")).toBeInTheDocument();
-    await fill(user, "my-current-access-token-value");
-    expect(await screen.findByRole("status")).toHaveTextContent("Your other sessions were signed out");
-    expect(changeAccessToken).toHaveBeenCalledWith("my-current-access-token-value", expect.stringMatching(/^.{32}$/));
   });
 });
 
@@ -555,18 +476,6 @@ describe("two-step enrollment", () => {
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("comes after replacing the issued token, never before", async () => {
-    const first: SignedIn = { ...SIGNED, must_change_access_token: true, mfa_enabled: false };
-    const user = await signIn(fakeApi(), vi.fn().mockResolvedValue(first));
-    await screen.findByRole("heading", { name: "Replace your Access Token" });
-    expect(screen.queryByRole("heading", { name: "Set up two-step verification" })).toBeNull();
-    await user.type(screen.getByLabelText("Temporary Access Token"), "temp-token-1");
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    await user.click(screen.getByLabelText("I have saved this Access Token"));
-    await user.click(screen.getByRole("button", { name: "Change Access Token" }));
-    expect(await screen.findByRole("heading", { name: "Set up two-step verification" })).toBeInTheDocument();
-  });
-
   it("is demanded if the API says the data is closed until MFA is set up", async () => {
     sessionStorage.setItem(TOKEN_KEY, "t");
     const stats = vi.fn().mockRejectedValue(new ApiError(403, "mfa_setup_required"));
@@ -611,65 +520,10 @@ describe("security tab", () => {
   });
 });
 
-describe("generating a replacement Access Token", () => {
-  const ISSUED = "an-issued-temporary-token-of-32-chars-1";
-  const FORCED: SignedIn = { ...SIGNED, must_change_access_token: true };
-
-  async function forced(api: Api) {
-    const user = await signIn(api, vi.fn().mockResolvedValue(FORCED));
-    await screen.findByRole("heading", { name: "Replace your Access Token" });
-    return user;
-  }
-
-  it("Generate fills the read-only field with a 32-character token and hides the hint", async () => {
-    const user = await forced(fakeApi());
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    const field = screen.getByLabelText("New Access Token") as HTMLInputElement;
-    expect(field.value).toHaveLength(32);
-    expect(field).toHaveAttribute("type", "text");
-    expect(field).toHaveAttribute("readonly");
-    expect(screen.queryByText(/Press Generate for a strong random one/)).toBeNull();
-  });
-
-  it("will not submit a generated token until it has been saved", async () => {
-    const changeAccessToken = vi.fn().mockResolvedValue(null);
-    const user = await forced(fakeApi({ changeAccessToken }));
-    await user.type(screen.getByLabelText("Temporary Access Token"), ISSUED);
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    const submit = screen.getByRole("button", { name: "Change Access Token" });
-    expect(submit).toBeDisabled();
-    await user.click(screen.getByLabelText("I have saved this Access Token"));
-    expect(submit).toBeEnabled();
-    const sent = (screen.getByLabelText("New Access Token") as HTMLInputElement).value;
-    await user.click(submit);
-    expect(changeAccessToken).toHaveBeenCalledWith(ISSUED, sent);
-    expect(await screen.findByRole("article", { name: "Scheme balance" })).toBeInTheDocument();
-  });
-
-  it("offers copy and download for the generated token", async () => {
-    const user = await forced(fakeApi());
-    await user.click(screen.getByRole("button", { name: "Generate" }));
-    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
-  });
-
-  it("maps the API's refusals to plain messages", async () => {
-    for (const [code, text] of [["access_token_unchanged", "different from the current"], ["access_token_contains_access_id", "must not contain your Access ID"], ["access_token_too_long", "too long"]] as const) {
-      const user = await forced(fakeApi({ changeAccessToken: vi.fn().mockRejectedValue(new ApiError(400, code)) }));
-      await user.type(screen.getByLabelText("Temporary Access Token"), ISSUED);
-      await user.click(screen.getByRole("button", { name: "Generate" }));
-      await user.click(screen.getByLabelText("I have saved this Access Token"));
-      await user.click(screen.getByRole("button", { name: "Change Access Token" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent(text);
-      cleanup(); sessionStorage.clear();
-    }
-  });
-});
-
 describe("admins page", () => {
   const ROWS = [
-    { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", status: "active", must_change_access_token: false, mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
-    { id: "a2", access_id: "KQ7M2XW9TBDV", name: "New Person", status: "active", must_change_access_token: true, mfa_enabled: false, locked: false, last_login_at: null, created_at: "2026-10-15T00:00:00Z", created_by: "NLINF8Q0KAZ4" },
+    { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", status: "active", mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
+    { id: "a2", access_id: "KQ7M2XW9TBDV", name: "New Person", status: "active", mfa_enabled: false, locked: false, last_login_at: null, created_at: "2026-10-15T00:00:00Z", created_by: "NLINF8Q0KAZ4" },
   ];
   const CREDS = { access_id: "KQ7M2XW9TBDV", access_token: "Zk9-mQ4.vT7+xR2_bN5=cH8-wL3.jF6+" };
 

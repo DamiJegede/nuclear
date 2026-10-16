@@ -5,7 +5,7 @@
 //   ADMIN_API_TOKEN=... node scripts/add-admin.mjs --name "Jane Doe"
 //   ADMIN_API_TOKEN=... node scripts/add-admin.mjs --name "Jane Doe" --save jane-credentials.txt
 //
-// The person must replace the token with their own and set up two-step verification at first sign-in.
+// The person sets up two-step verification at first sign-in.
 import { client, flags, showCredentials } from "./admin-client.mjs";
 
 const f = flags(process.argv.slice(2));

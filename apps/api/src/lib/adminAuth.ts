@@ -61,7 +61,7 @@ export const sameSecret = (a: string, b: string) => timingSafeEqual(digest(a), d
 export type Session = {
   token: string;
   expiresAt: Date;
-  admin: { id: string; access_id: string; name: string; must_change_access_token: boolean; mfa_enabled: boolean };
+  admin: { id: string; access_id: string; name: string; mfa_enabled: boolean };
 };
 
 export type LoginResult = ({ ok: true } & Session) | { ok: "mfa"; adminId: string } | { ok: false };
@@ -75,7 +75,7 @@ const lockOnFailure = (sql: Sql, adminId: string) => sql`
 
 async function openSession(
   sql: Sql,
-  a: { id: string; access_id: string; name: string; must_change_access_token: boolean; mfa: boolean },
+  a: { id: string; access_id: string; name: string; mfa: boolean },
 ): Promise<Session> {
   const { token, hash } = newSessionToken();
   const [s] = await sql<{ expires_at: Date }[]>`
@@ -88,7 +88,7 @@ async function openSession(
   return {
     token,
     expiresAt: s!.expires_at,
-    admin: { id: a.id, access_id: a.access_id, name: a.name, must_change_access_token: a.must_change_access_token, mfa_enabled: a.mfa },
+    admin: { id: a.id, access_id: a.access_id, name: a.name, mfa_enabled: a.mfa },
   };
 }
 
@@ -101,9 +101,9 @@ async function openSession(
  */
 export async function login(sql: Sql, accessId: string, accessToken: string): Promise<LoginResult> {
   const [a] = await sql<
-    { id: string; access_id: string; name: string; access_token_hash: string; status: string; must_change_access_token: boolean; mfa: boolean; locked: boolean }[]
+    { id: string; access_id: string; name: string; access_token_hash: string; status: string; mfa: boolean; locked: boolean }[]
   >`
-    select id, access_id, name, access_token_hash, status, must_change_access_token,
+    select id, access_id, name, access_token_hash, status,
            (mfa_enabled_at is not null) as mfa,
            (locked_until is not null and locked_until > now()) as locked
       from admins where access_id = ${accessId}`;
@@ -128,9 +128,9 @@ export type MfaOutcome = ({ ok: true } & Session) | { ok: false } | { ok: "unava
 export async function completeMfa(sql: Sql, env: Env, adminId: string, code: string): Promise<MfaOutcome> {
   if (!env.MFA_ENCRYPTION_KEY) return { ok: "unavailable" };
   const [a] = await sql<
-    { id: string; access_id: string; name: string; status: string; must_change_access_token: boolean; mfa_secret: string | null; mfa_last_step: string | null; mfa: boolean; locked: boolean }[]
+    { id: string; access_id: string; name: string; status: string; mfa_secret: string | null; mfa_last_step: string | null; mfa: boolean; locked: boolean }[]
   >`
-    select id, access_id, name, status, must_change_access_token, mfa_secret, mfa_last_step,
+    select id, access_id, name, status, mfa_secret, mfa_last_step,
            (mfa_enabled_at is not null) as mfa,
            (locked_until is not null and locked_until > now()) as locked
       from admins where id = ${adminId}`;
@@ -214,9 +214,9 @@ export async function mfaNewRecoveryCodes(sql: Sql, env: Env, adminId: string, c
 
 export async function findSession(sql: Sql, token: string) {
   const [s] = await sql<
-    { session_id: string; admin_id: string; access_id: string; name: string; must_change_access_token: boolean; mfa_enabled: boolean }[]
+    { session_id: string; admin_id: string; access_id: string; name: string; mfa_enabled: boolean }[]
   >`
-    select s.id as session_id, a.id as admin_id, a.access_id, a.name, a.must_change_access_token,
+    select s.id as session_id, a.id as admin_id, a.access_id, a.name,
            (a.mfa_enabled_at is not null) as mfa_enabled
       from admin_sessions s join admins a on a.id = s.admin_id
      where s.token_hash = ${hashToken(token)} and s.revoked_at is null and s.expires_at > now()
