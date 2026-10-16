@@ -1,3 +1,4 @@
+import { debitWallet, spendable } from "./walletFunds";
 import type { TransactionSql } from "postgres";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
@@ -96,21 +97,24 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
   const pb = bal.find((r) => r.account_id === i.payerAccountId);
   if (!pb || bal.length !== 2) throw new Error("balances row missing");
 
-  const [w] = await tx<{ status: string; allow_pay: boolean; daily_limit: bigint | null; spent_today: bigint }[]>`
-    select status, allow_pay, daily_limit, spent_today from wallets
+  const [w] = await tx<{ status: string; allow_pay: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
+    select status, allow_pay, daily_limit, spent_today, balance from wallets
      where id = ${i.payerWalletId} for no key update`;
   const [pa] = await tx<{ status: string }[]>`select status from accounts where id = ${i.payerAccountId}`;
   const [ma] = await tx<{ status: string; type: string }[]>`
     select status, type from accounts where id = ${i.merchantAccountId}`;
 
-  const creditAvailable = pos(pb.credit_limit - pb.credit_spent);
+  // An earmarked wallet can spend only its own balance (a hard limit, never credit); otherwise the
+  // account's funds minus what is earmarked for other wallets, plus approved credit.
+  const funds = await spendable(tx, i.payerAccountId, pb.balance, w ? w.balance : null);
+  const creditAvailable = funds.earmarked ? 0n : pos(pb.credit_limit - pb.credit_spent);
   let code: string | null = null;
   if (!pa || pa.status !== "active" || !w || w.status !== "active") code = "payer_unavailable";
   else if (!w.allow_pay) code = "pay_not_allowed";
   else if (pb.balance < 0n || pb.credit_spent > pb.credit_limit) code = "account_restricted";
   else if (!ma || ma.status !== "active" || ma.type !== "B") code = "merchant_unavailable";
   else if (i.tagLimit !== null && i.amount > i.tagLimit) code = "tag_limit_exceeded";
-  else if (pos(pb.balance) + creditAvailable < i.amount) code = "insufficient_balance";
+  else if (funds.funds + creditAvailable < i.amount) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance";
   else if (w.daily_limit !== null && w.spent_today + i.amount > w.daily_limit) code = "spend_limit_exceeded";
 
   if (code) {
@@ -120,7 +124,7 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
     return { kind: "declined", row: r!, replayed: false };
   }
 
-  const fromBalance = pos(pb.balance) < i.amount ? pos(pb.balance) : i.amount;
+  const fromBalance = funds.funds < i.amount ? funds.funds : i.amount;
   const fromCredit = i.amount - fromBalance;
   const amt = i.amount.toString();
 
@@ -131,6 +135,7 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
      where account_id = ${i.payerAccountId}`;
   await tx`update balances set balance = balance + ${amt} where account_id = ${i.merchantAccountId}`;
   await tx`update wallets set spent_today = spent_today + ${amt} where id = ${i.payerWalletId}`;
+  await debitWallet(tx, i.payerWalletId, fromBalance);
 
   // Debits: payer funded balance and/or credit receivable. Credit: merchant funded balance.
   const lines: { account_id: string; bucket: string; direction: "debit" | "credit"; amount: string }[] = [];

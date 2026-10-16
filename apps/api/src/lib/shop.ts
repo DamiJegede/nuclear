@@ -1,3 +1,4 @@
+import { debitWallet, spendable } from "./walletFunds";
 import type { Sql } from "../db";
 import { PHOTO_SQL } from "./photo";
 import { n } from "./money";
@@ -102,14 +103,15 @@ export async function purchaseTags(sql: Sql, i: PurchaseInput): Promise<Purchase
 
     const [b] = await tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
       select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`;
-    const [w] = await tx<{ status: string; daily_limit: bigint | null; spent_today: bigint }[]>`
-      select status, daily_limit, spent_today from wallets where id = ${wallet.id} for no key update`;
+    const [w] = await tx<{ status: string; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
+      select status, daily_limit, spent_today, balance from wallets where id = ${wallet.id} for no key update`;
     const [a] = await tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`;
 
+    const funds = await spendable(tx, i.accountId, b ? b.balance : 0n, w ? w.balance : null);
     let code: string | null = null;
     if (!a || a.status !== "active" || !w || w.status !== "active") code = "buyer_unavailable";
     else if (!b || b.balance < 0n || b.credit_spent > b.credit_limit) code = "account_restricted";
-    else if (b.balance < total) code = "insufficient_balance"; // funded balance only, never credit
+    else if (funds.funds < total) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, never credit
     else if (w.daily_limit !== null && w.spent_today + total > w.daily_limit) code = "spend_limit_exceeded";
     if (code) {
       await tx`update transactions set status = 'failed', status_code = ${code} where id = ${txId}`;
@@ -118,6 +120,7 @@ export async function purchaseTags(sql: Sql, i: PurchaseInput): Promise<Purchase
 
     await tx`update balances set balance = balance - ${amt} where account_id = ${i.accountId}`;
     await tx`update wallets set spent_today = spent_today + ${amt} where id = ${wallet.id}`;
+    await debitWallet(tx, wallet.id, total);
     await tx`
       insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
       values (${txId}, 'purchase', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}),

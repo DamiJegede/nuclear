@@ -4,6 +4,7 @@ import type { AppContext } from "../env";
 import { LINK_TTL, signWalletLink } from "../crypto";
 import { amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
+import { setWalletBalance } from "../lib/walletFunds";
 
 export const wallets = new Hono<AppContext>();
 wallets.use("*", requireSession);
@@ -22,11 +23,12 @@ type WalletRow = {
   allow_pay: boolean;
   allow_send: boolean;
   status: string;
+  balance: bigint | null;
   created_at: Date;
 };
 
 const COLS = `id, account_id, display_name, photo, type, daily_limit, spent_today,
-  allow_pay, allow_send, status, created_at`;
+  allow_pay, allow_send, status, balance, created_at`;
 
 export function walletJson(w: WalletRow) {
   return {
@@ -40,6 +42,9 @@ export function walletJson(w: WalletRow) {
     allow_pay: w.allow_pay,
     allow_send: w.allow_send,
     status: w.status,
+    // Earmarked funds: null = spends from the account's shared funds; a number = a hard spending limit.
+    balance: n(w.balance),
+    earmarked: w.balance !== null,
     created_at: w.created_at,
   };
 }
@@ -62,6 +67,9 @@ const createBody = z.object({
   daily_limit: amountOrZero.nullish(),
   allow_pay: z.boolean().default(true),
   allow_send: z.boolean().default(false), // sends are opt-in for non-default wallets
+  // Funds set aside for this wallet. Agent wallets start at 0 (nothing to spend until the owner funds
+  // them); null opts out and shares the account's funds. Person wallets share unless a number is given.
+  balance: amountOrZero.nullish(),
 });
 
 wallets.post("/", requireOwner, async (c) => {
@@ -83,9 +91,21 @@ wallets.post("/", requireOwner, async (c) => {
               ${b.daily_limit === undefined || b.daily_limit === null ? null : b.daily_limit.toString()},
               ${b.allow_pay}, ${b.allow_send})
       returning ${tx.unsafe(COLS)}`;
-    return w!;
+    const initial = b.balance === undefined ? (b.type === "agent" ? 0n : null) : b.balance;
+    if (initial === null) return w!;
+    const set = await setWalletBalance(tx, { accountId, walletId: w!.id, target: initial, deviceId: c.get("auth").deviceId });
+    if (!set.ok) {
+      await tx`delete from wallets where id = ${w!.id}`;   // nothing is created if the earmark cannot be set
+      return { error: set.error, available: set.available } as const;
+    }
+    const [fresh] = await tx<WalletRow[]>`select ${tx.unsafe(COLS)} from wallets where id = ${w!.id}`;
+    return fresh!;
   });
   if (!row) return c.json({ error: "wallet_limit_reached" }, 409);
+  if ("error" in row) {
+    // Not enough shared funds to set aside: nothing was created.
+    return c.json({ error: row.error, available: n(row.available ?? 0n) }, 422);
+  }
   return c.json({ wallet: walletJson(row) }, 201);
 });
 
@@ -130,6 +150,10 @@ wallets.patch("/:id", requireOwner, async (c) => {
       return { error: "default_wallet_cannot_close", status: 409 as const };
     }
 
+    if (body.data.status === "closed" && cur.balance !== null) {
+      // A closed wallet gives its earmarked funds back to the shared funds.
+      await setWalletBalance(tx, { accountId, walletId: id.data, target: null, deviceId: c.get("auth").deviceId });
+    }
     const patch: Record<string, unknown> = { ...body.data };
     if ("daily_limit" in patch) {
       const v = body.data.daily_limit;
@@ -173,4 +197,41 @@ wallets.post("/:id/links", requireOwner, async (c) => {
   });
   const base = c.env.APP_URL ?? "https://app.nuclear.us";
   return c.json({ device_id: dev!.id, url: `${base}/magic-link/${jwt}`, expires_in: LINK_TTL }, 201);
+});
+
+// Set aside money for a wallet (or change it), or release it back to the shared funds with null.
+// Owner only. The wallet's balance is a hard limit: it spends only that, with no further approval.
+const balanceBody = z.object({ balance: amountOrZero.nullable() });
+
+wallets.put("/:id/balance", requireOwner, async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const body = balanceBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const { accountId, deviceId } = c.get("auth");
+  const sql = c.get("sql");
+  const out = await sql.begin(async (tx) => {
+    const r = await setWalletBalance(tx, { accountId, walletId: id.data, target: body.data.balance, deviceId });
+    if (!r.ok) return r;
+    const [w] = await tx<WalletRow[]>`select ${tx.unsafe(COLS)} from wallets where id = ${id.data}`;
+    return { ...r, wallet: w! };
+  });
+  if (!out.ok) {
+    const status = out.error === "not_found" ? 404 : out.error === "wallet_closed" ? 409 : 422;
+    return c.json({ error: out.error, ...(out.available !== undefined ? { available: n(out.available) } : {}) }, status);
+  }
+  return c.json({ wallet: walletJson(out.wallet), change: n(out.delta) });
+});
+
+// The wallet's earmark history, newest first (owner, or the delegated session of that wallet).
+wallets.get("/:id/allocations", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  const { accountId, walletId } = c.get("auth");
+  if (!id.success || (walletId !== null && walletId !== id.data)) return c.json({ error: "not_found" }, 404);
+  const sql = c.get("sql");
+  const rows = await sql<{ id: string; amount: bigint; balance_after: bigint | null; created_at: Date }[]>`
+    select id, amount, balance_after, created_at from wallet_allocations
+     where wallet_id = ${id.data} and account_id = ${accountId}
+     order by created_at desc, id desc limit 50`;
+  return c.json({ allocations: rows.map((r) => ({ id: r.id, amount: n(r.amount), balance_after: n(r.balance_after), created_at: r.created_at })) });
 });

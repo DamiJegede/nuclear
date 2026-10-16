@@ -17,6 +17,7 @@ export type Stats = {
     credit_matches_ledger: boolean;
     credit_difference: number;
     ledger_balanced: boolean;
+    earmarks_within_balances: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_7d: number; new_30d: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };

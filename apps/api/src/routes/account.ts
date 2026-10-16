@@ -54,10 +54,19 @@ account.get("/balance", async (c) => {
      where account_id = ${accountId}`;
   if (!b) return c.json({ error: "not_found" }, 404);
 
+  // Funds set aside for specific wallets are not available to the rest of the account. A delegated
+  // session on an earmarked wallet sees that wallet's balance (a hard limit, no credit).
+  const [e] = await sql<{ total: bigint }[]>`
+    select coalesce(sum(balance), 0)::bigint as total from wallets where account_id = ${accountId} and balance is not null`;
+  const [mine] = walletId
+    ? await sql<{ balance: bigint | null }[]>`select balance from wallets where id = ${walletId}`
+    : [undefined];
   const restricted = b.balance < 0n || b.credit_spent > b.credit_limit;
   const creditAvailable = pos(b.credit_limit - b.credit_spent);
-  const availableToSend = restricted ? 0n : pos(b.balance);
-  const availableToPay = restricted ? 0n : pos(b.balance) + creditAvailable;
+  const shared = pos(b.balance - e!.total);
+  const earmarkedWallet = mine?.balance !== null && mine?.balance !== undefined;
+  const availableToSend = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared;
+  const availableToPay = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared + creditAvailable;
   const common = {
     available_to_send: n(availableToSend),
     available_to_pay: n(availableToPay),
@@ -67,6 +76,7 @@ account.get("/balance", async (c) => {
   return c.json({
     ...common,
     balance: n(b.balance),
+    earmarked: n(e!.total),
     balance_pending: n(b.balance_pending),
     credit_limit: n(b.credit_limit),
     credit_spent: n(b.credit_spent),

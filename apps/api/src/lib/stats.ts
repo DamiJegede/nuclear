@@ -29,6 +29,7 @@ export type SystemStats = {
     credit_difference: number;
     /** Every posting event balances: total debits equal total credits. */
     ledger_balanced: boolean;
+    earmarks_within_balances: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_7d: number; new_30d: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
@@ -72,6 +73,11 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
                              then case direction when 'debit' then amount else -amount end end), 0)::bigint as credit,
            coalesce(sum(case direction when 'debit' then amount else -amount end), 0)::bigint as net
       from ledger_entries`;
+
+  const [over] = await sql<{ n: number }[]>`
+    select count(*)::int as n from (
+      select w.account_id from wallets w join balances b on b.account_id = w.account_id
+       where w.balance is not null group by w.account_id, b.balance having sum(w.balance) > b.balance) x`;
 
   const [acc] = await sql<Record<string, number>[]>`
     select (count(*) filter (where type = 'C'))::int as users,
@@ -140,6 +146,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       credit_matches_ledger: creditDiff === 0,
       credit_difference: creditDiff,
       ledger_balanced: Number(led!.net) === 0,
+      earmarks_within_balances: over!.n === 0,
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,

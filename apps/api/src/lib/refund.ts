@@ -1,3 +1,4 @@
+import { creditWallet } from "./walletFunds";
 import type { TransactionSql } from "postgres";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
@@ -147,6 +148,7 @@ async function settle(
   const amt = amount.toString();
 
   await tx`update balances set balance = balance - ${amt} where account_id = ${merchantAccountId}`;
+  if (orig.from_wallet_id) await creditWallet(tx, orig.from_wallet_id, toBalance);   // back to an earmarked wallet
   await tx`
     update balances set balance = balance + ${toBalance.toString()},
                         credit_spent = credit_spent - ${creditRestore.toString()}

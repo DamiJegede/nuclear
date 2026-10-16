@@ -1,3 +1,4 @@
+import { creditWallet, debitWallet, spendable } from "./walletFunds";
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 
@@ -126,18 +127,19 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     const sb = bal.find((r) => r.account_id === from.account_id);
     if (!sb || bal.length !== 2) throw new Error("balances row missing");
 
-    const [sw] = await tx<{ status: string; allow_send: boolean; daily_limit: bigint | null; spent_today: bigint }[]>`
-      select status, allow_send, daily_limit, spent_today from wallets where id = ${from.id} for no key update`;
+    const [sw] = await tx<{ status: string; allow_send: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
+      select status, allow_send, daily_limit, spent_today, balance from wallets where id = ${from.id} for no key update`;
     const [sa] = await tx<{ status: string }[]>`select status from accounts where id = ${from.account_id}`;
     const [rw] = await tx<{ status: string }[]>`select status from wallets where id = ${to.id} for share`;
     const [ra] = await tx<{ status: string }[]>`select status from accounts where id = ${to.account_id}`;
 
+    const funds = await spendable(tx, from.account_id, sb.balance, sw ? sw.balance : null);
     let code: string | null = null;
     if (!sa || sa.status !== "active" || !sw || sw.status !== "active") code = "sender_unavailable";
     else if (!sw.allow_send) code = "send_not_allowed";
     else if (sb.balance < 0n || sb.credit_spent > sb.credit_limit) code = "account_restricted";
     else if (!rw || rw.status !== "active" || !ra || ra.status !== "active") code = "recipient_unavailable";
-    else if (sb.balance < i.amount) code = "insufficient_balance"; // funded balance only, no credit
+    else if (funds.funds < i.amount) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, no credit
     else if (sw.daily_limit !== null && sw.spent_today + i.amount > sw.daily_limit) code = "spend_limit_exceeded";
     else if ((await incomingToday(tx, to.account_id)) + i.amount > i.dailyCap) code = "recipient_limit_exceeded";
 
@@ -152,6 +154,8 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     await tx`update balances set balance = balance - ${amt} where account_id = ${from.account_id}`;
     await tx`update balances set balance = balance + ${amt} where account_id = ${to.account_id}`;
     await tx`update wallets set spent_today = spent_today + ${amt} where id = ${from.id}`;
+    await debitWallet(tx, from.id, i.amount);
+    await creditWallet(tx, to.id, i.amount);   // money sent to an earmarked wallet is that wallet's to spend
     await tx`
       insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
       values (${txId}, 'send', 1, ${from.account_id}, 'funded_balance', 'debit', ${amt}),

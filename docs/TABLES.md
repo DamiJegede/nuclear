@@ -58,10 +58,15 @@ Before subtracting active reservations, sends may use max(balance, 0); payments 
 | allow_pay | Whether the wallet can make merchant payments. |
 | allow_send | Whether the wallet can send funded balance; credit cannot fund sends. |
 | status | Wallet access/lifecycle status. |
+| balance | Nullable bigint, added by migration 0011: earmarked funds. NULL (default) = the wallet draws on the account's shared funds. A number = money the owner set aside for this wallet: it can spend only up to that amount (a hard limit, never credit, no further approval) and the rest of the account cannot spend it. The amount stays inside balances.balance, so earmarking posts nothing to the ledger; sum(wallets.balance) never exceeds the account balance (every money movement locks the balances row first). Agent wallets start at 0; person wallets and the default wallet start NULL. Spends and sends decrement it, incoming sends and refunds to the wallet increase it, closing the wallet releases it. |
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
-No spend_date or member_account_id field. A wallet is a spending identity/permission path, not a separately funded balance. Only the primary holder can issue a five-minute signed JWT link for this wallet, redeemed into device-scoped access as described in [WALLET-ACCESS-POLICY.md](WALLET-ACCESS-POLICY.md). Session and single-use redemption state live in devices. Once financial history exists, wallet.account_id cannot change; moving a person to another owning account requires a new wallet.
+No spend_date or member_account_id field. A wallet is a spending identity/permission path; unless it carries an earmarked balance it is not separately funded. Only the primary holder can issue a five-minute signed JWT link for this wallet, redeemed into device-scoped access as described in [WALLET-ACCESS-POLICY.md](WALLET-ACCESS-POLICY.md). Session and single-use redemption state live in devices. Once financial history exists, wallet.account_id cannot change; moving a person to another owning account requires a new wallet.
+
+## wallet_allocations
+
+Audit trail of earmark changes (migration 0011): id, wallet_id and account_id (composite foreign key, so the wallet must belong to the account), amount (signed, never 0: positive = set aside, negative = returned to the shared funds), balance_after (NULL = released), device_id (the owner session that made the change, nullable) and created_at.
 
 ## devices
 
