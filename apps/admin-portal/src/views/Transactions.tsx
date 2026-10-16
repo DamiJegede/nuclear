@@ -35,6 +35,17 @@ export function periodRange(period: Period, custom: { from: string; to: string }
   }
 }
 
+/** Status pill; a failed row also says why, on its own line at the right; a pending refund says it is waiting. */
+export function StatusCell({ status, code }: { status: string; code: string | null }) {
+  return (
+    <>
+      <span className={`pill ${status === "completed" ? "available" : status === "failed" ? "closed" : "pending"}`}>{status}</span>
+      {status === "failed" && code && <div className="fail-reason">Failure reason: {code}</div>}
+      {status === "pending" && code && <div className="muted note-line">{code}</div>}
+    </>
+  );
+}
+
 const pill = (status: string) => (
   <span className={`pill ${status === "completed" ? "available" : status === "failed" ? "closed" : "pending"}`}>{status}</span>
 );
@@ -127,13 +138,13 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
               <thead>
                 <tr>
                   <th scope="col">When</th><th scope="col">Type</th><th scope="col">From</th><th scope="col">To</th>
-                  <th scope="col" className="num">Amount</th><th scope="col">Status</th>
+                  <th scope="col" className="num">Amount</th><th scope="col" className="status-col">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id}>
-                    <td>{new Date(t.timestamp).toLocaleString()}</td>
+                  <tr key={t.id} className={t.status === "failed" ? "fail-row" : undefined}>
+                    <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td>
                       <span className="pill">{t.type}</span>
                       {t.via && <span className="pill via">{t.via}</span>}
@@ -142,7 +153,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
                     <td>{party(t.from, t.from_wallet)}</td>
                     <td>{party(t.to, t.to_wallet)}</td>
                     <td className="num">{money(t.amount)}</td>
-                    <td>{pill(t.status)}{t.status_code && <span className="muted note">{t.status_code}</span>}</td>
+                    <td className="status-col"><StatusCell status={t.status} code={t.status_code} /></td>
                   </tr>
                 ))}
               </tbody>

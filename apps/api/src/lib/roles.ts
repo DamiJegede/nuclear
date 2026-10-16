@@ -24,5 +24,11 @@ export const landing = (role: Role): Page => ROLE_PAGES[role][0]!;
 /** Roles that may change tags (create, edit, upload images, load UIDs). Sales can see tags, not change them. */
 export const TAG_WRITERS: readonly Role[] = ["admin", "tags"];
 
+/** Roles that may take support actions on merchants (sign a terminal out). Sales can look. */
+export const MERCHANT_WRITERS: readonly Role[] = ["admin", "merchants"];
+
+/** Roles that may approve or reject a merchant's pending refunds and suspend or reactivate a merchant. */
+export const MERCHANT_ADMINS: readonly Role[] = ["admin"];
+
 export const canSee = (role: Role, page: Page) => ROLE_PAGES[role].includes(page);
 export const isRole = (v: unknown): v is Role => typeof v === "string" && (ROLES as readonly string[]).includes(v);

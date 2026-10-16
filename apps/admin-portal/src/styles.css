@@ -269,3 +269,29 @@ fieldset.role-field legend { font-weight: 500; font-size: 13px; color: var(--mut
 .period-bar { align-items: center; }
 .period-field { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; }
 .period-field select, .period-field input { width: auto; min-width: 170px; }
+
+/* Merchant page */
+a.row-link { color: var(--text); text-decoration: none; font-weight: 600; }
+a.row-link:hover { text-decoration: underline; }
+.merchant-stats { margin-bottom: 16px; }
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
+.subtab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 14px; cursor: pointer; font: inherit; font-weight: 600; margin-bottom: -1px; }
+.subtab.active { color: var(--text); border-bottom-color: var(--text); }
+.subtab-n { margin-left: 6px; font-size: 12px; font-weight: 600; background: var(--bg); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; color: var(--muted); }
+.detail-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; margin: 0; }
+.detail-list > div { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.detail-list dt { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.detail-list dd { margin: 4px 0 0; word-break: break-word; }
+.kind-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 760px) { .detail-list { grid-template-columns: 1fr; } .kind-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Transaction tables: centred rows, a smaller date, failed rows tinted with the reason on its own line */
+:root { --fail-row: #fdf2f3; --fail-text: #9b1c2c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fail-row: #2a1a1e; --fail-text: #ff9aa8; } }
+table td, table th { vertical-align: middle; }
+td.when { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+tr.fail-row { background: var(--fail-row); }
+td.status-col, th.status-col { text-align: right; }
+.fail-reason { margin-top: 4px; font-size: 12.5px; color: var(--fail-text); }
+.note-line { margin-top: 4px; font-size: 12.5px; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

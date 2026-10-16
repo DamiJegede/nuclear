@@ -918,6 +918,19 @@ describe("merchants, users and transactions", () => {
     expect(await screen.findByText("agent")).toBeInTheDocument();
   });
 
+  it("the full list tints failed rows and shows the reason on its own line", async () => {
+    const transactions = vi.fn().mockResolvedValue({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 1, completed_volume: 100 },
+      transactions: [
+        { id: "ok", type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" },
+        { id: "bad", type: "send", status: "failed", status_code: "wallet_balance_exceeded", amount: 500, timestamp: "2026-10-16T09:00:00Z", via: null, agent: true, from: "Eve", from_wallet: "Agent", to: "Bob", to_wallet: "Bob" },
+      ], next_cursor: null });
+    await go(fakeApi({ transactions }), "Transactions");
+    const bad = await screen.findByRole("row", { name: /Eve/ });
+    expect(bad).toHaveClass("fail-row");
+    expect(within(bad).getByText("Failure reason: wallet_balance_exceeded")).toHaveClass("fail-reason");
+    expect(screen.getByRole("row", { name: /Ada/ })).not.toHaveClass("fail-row");
+  });
+
   it("loads more transactions with the cursor", async () => {
     const t = (id: string) => ({ id, type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" });
     const transactions = vi.fn()
@@ -1130,5 +1143,215 @@ describe("transaction periods", () => {
     const range = transactions.mock.calls.at(-1)![2];
     await user.click(await screen.findByRole("button", { name: "Load More" }));
     await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", "c1", range));
+  });
+});
+
+describe("merchant support page", () => {
+  const MID = "0190bbbb-cccc-7ddd-8eee-ffffffffffff";
+  const ML = { id: MID, name: "Cafe Nero", handle: "nero", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 3800, terminals: 2, payments: 3, volume: 4200 };
+  const DETAIL = {
+    id: MID, name: "Cafe Nero", legal_name: "Nero Holdings LLC", handle: "nero", status: "active", email: "cafe@example.com", phone: "555-0100", created_at: "2026-10-01T00:00:00Z", website: "https://nero.example",
+    address: { line: null, city: "Springfield", state: "NY", post_code: "10001", country: "US" }, bank: { last4: "4321", status: "active" }, balance: 3800,
+    stats: { payments: { count: 3, volume: 4200, today: { count: 2, volume: 3000 }, declined: 1 }, refunds: { count: 1, volume: 400 }, pending_refunds: { count: 1, volume: 700 }, customers: 2, last_payment_at: "2026-10-16T12:00:00Z", terminals: 2, staff: 1, products: 2 },
+  };
+  const TERMS = [
+    { id: "t1", name: "Counter", allow_refunds: true, created_at: "2026-10-01T00:00:00Z", signed_in: true, orb: { uid: "AABBCC000001", model: "Orb 2", software: "1.4.2" }, payments: 2, volume: 3500, last_payment_at: "2026-10-16T12:00:00Z" },
+    { id: "t2", name: "Bar", allow_refunds: false, created_at: "2026-10-02T00:00:00Z", signed_in: false, orb: null, payments: 1, volume: 700, last_payment_at: null },
+  ];
+  const tx = (id: string, type: string, status: string, amount: number, extra: object = {}) => ({ id, type, status, status_code: null, amount, timestamp: "2026-10-16T12:00:00Z", via: type === "pay" ? "app" : null, reference: null, terminal: "Counter", customer: "Ada", approved_by: null, refund_of: null, ...extra });
+  const TXPAGE = { counts: { all: 3, payments: 2, refunds: 1, pending: 0 }, totals: { payments: { count: 2, volume: 3500 }, refunds: { count: 1, volume: 400 } }, transactions: [tx("a", "pay", "completed", 2500), tx("b", "pay", "failed", 900, { status_code: "insufficient_balance", customer: "Poor" }), tx("c", "refund", "completed", 400, { approved_by: "Sam Staff" })], next_cursor: null };
+  const api = (extra: Partial<Api> = {}) => fakeApi({
+    merchants: vi.fn().mockResolvedValue([ML]), merchant: vi.fn().mockResolvedValue(DETAIL), merchantTerminals: vi.fn().mockResolvedValue(TERMS),
+    merchantStaff: vi.fn().mockResolvedValue([{ id: "s1", staff_account_id: "x", name: "Sam Staff", email: "sam@example.com", handle: "sam", role: "write", bank_last4: "9876", created_at: "2026-10-03T00:00:00Z" }]),
+    merchantProducts: vi.fn().mockResolvedValue([{ id: "p1", name: "Latte", category: "Drinks", price: 450, discount: 50, stock: 12, active: true, status: "available", total_sold: 30, sold_today: 4 }, { id: "p2", name: "Muffin", category: null, price: 300, discount: 0, stock: null, active: false, status: "available", total_sold: 0, sold_today: 0 }]),
+    merchantTransactions: vi.fn().mockResolvedValue(TXPAGE), signOutTerminal: vi.fn().mockResolvedValue(null), ...extra,
+  } as Partial<Api>);
+  async function open(a: Api, signed: SignedIn = SIGNED) {
+    const user = await signIn(a, vi.fn().mockResolvedValue(signed));
+    await user.click(await screen.findByRole("link", { name: "Merchants" }));
+    await user.click(await screen.findByRole("link", { name: "Cafe Nero" }));
+    await screen.findByRole("article", { name: "Balance" });
+    return user;
+  }
+  const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
+
+  it("opens from the list at its own address, with the numbers support needs first", async () => {
+    await open(api());
+    expect(window.location.pathname).toBe(`/merchants/${MID}`);
+    expect(document.title).toBe("Cafe Nero · Merchants · Nuclear Admin");
+    expect(within(screen.getByRole("article", { name: "Balance" })).getByText("$38.00")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Payments" })).toHaveTextContent("$42.00 lifetime");
+    expect(screen.getByRole("article", { name: "Payments" })).toHaveTextContent("2 today · $30.00");
+    expect(screen.getByRole("article", { name: "Refunds" })).toHaveTextContent("1 declined payments");
+    expect(screen.getByRole("article", { name: "Awaiting approval" })).toHaveTextContent("$7.00 in pending refunds");
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Merchants" })).toHaveClass("active");
+  });
+
+  it("Details shows the business, contact, address, payout bank (last four only) and IDs", async () => {
+    await open(api());
+    const d = screen.getByRole("tab", { name: "Details" });
+    expect(d).toHaveAttribute("aria-selected", "true");
+    for (const t of ["Nero Holdings LLC", "@nero", "cafe@example.com", "555-0100", "Springfield, NY · 10001 · US", "https://nero.example", MID]) expect(screen.getByText(t)).toBeInTheDocument();
+    expect(screen.getByText(/•••• 4321/)).toBeInTheDocument();
+  });
+
+  it("Terminals: refund permission, session, Orb, payments, and Sign Out (with a confirm) for roles that may", async () => {
+    const signOutTerminal = vi.fn().mockResolvedValue(null);
+    const user = await open(api({ signOutTerminal }));
+    await user.click(tab("Terminals"));
+    expect(window.location.search).toBe("?tab=terminals");
+    const counter = await screen.findByRole("row", { name: /^Counter/ });
+    expect(within(counter).getByText("signed in")).toBeInTheDocument();
+    expect(within(counter).getByText("allowed")).toBeInTheDocument();
+    expect(counter).toHaveTextContent("Orb 2");
+    expect(counter).toHaveTextContent("AABBCC000001 · v1.4.2");
+    const bar = screen.getByRole("row", { name: /^Bar/ });
+    expect(within(bar).getByText("needs approval")).toBeInTheDocument();
+    expect(within(bar).getByText("None paired")).toBeInTheDocument();
+    expect(within(bar).queryByRole("button", { name: /Sign out/ })).toBeNull();                   // already signed out
+    await user.click(within(counter).getByRole("button", { name: "Sign out terminal Counter" }));
+    expect(signOutTerminal).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("dialog", { name: "Sign Out Terminal" })).getByRole("button", { name: "Confirm Sign Out" }));
+    await waitFor(() => expect(signOutTerminal).toHaveBeenCalledWith("t1"));
+  });
+
+  it("a read-only role (Sales) can look at terminals but has no Sign Out", async () => {
+    const sales: SignedIn = { ...SIGNED, admin: { ...SIGNED.admin, role: "sales" }, role: "sales", pages: ["users", "merchants", "tags"], landing: "users" };
+    const user = await open(api(), sales);
+    await user.click(tab("Terminals"));
+    await screen.findByRole("row", { name: /^Counter/ });
+    expect(screen.queryByRole("button", { name: /Sign out terminal/ })).toBeNull();
+  });
+
+  it("Staff and Products tabs", async () => {
+    const user = await open(api());
+    await user.click(tab("Staff"));
+    const sam = await screen.findByRole("row", { name: /^Sam Staff/ });
+    expect(sam).toHaveTextContent("sam@example.com");
+    expect(within(sam).getByText("can approve refunds")).toBeInTheDocument();
+    expect(sam).toHaveTextContent("•••• 9876");
+    await user.click(tab("Products"));
+    const latte = await screen.findByRole("row", { name: /^Latte/ });
+    expect(latte).toHaveTextContent("Drinks");
+    expect(latte).toHaveTextContent("$4.50");
+    expect(within(latte).getByText("visible")).toBeInTheDocument();
+    const muffin = screen.getByRole("row", { name: /^Muffin/ });
+    expect(within(muffin).getByText("Not tracked")).toBeInTheDocument();
+    expect(within(muffin).getByText("hidden")).toBeInTheDocument();
+  });
+
+  it("Transactions: payments and refunds with customer, terminal, status and why it failed; the cards filter; periods apply", async () => {
+    const merchantTransactions = vi.fn().mockResolvedValue(TXPAGE);
+    const user = await open(api({ merchantTransactions }));
+    await user.click(tab("Transactions"));
+    await screen.findByRole("row", { name: /Poor/ });
+    expect(screen.getByRole("row", { name: /Poor/ })).toHaveTextContent("insufficient_balance");
+    expect(screen.getByRole("row", { name: /refund/ })).toHaveTextContent("approved by Sam Staff");
+    expect(screen.getByRole("status")).toHaveTextContent("2 payments · $35.00");
+    expect(merchantTransactions).toHaveBeenLastCalledWith(MID, "all", undefined, {});
+    await user.click(screen.getByRole("radio", { name: /^Awaiting Approval/ }));
+    await waitFor(() => expect(merchantTransactions).toHaveBeenLastCalledWith(MID, "pending", undefined, {}));
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    await waitFor(() => expect(merchantTransactions).toHaveBeenLastCalledWith(MID, "pending", undefined, expect.objectContaining({ from: expect.any(String), to: expect.any(String) })));
+  });
+
+  const PENDING = { ...TXPAGE, counts: { all: 4, payments: 2, refunds: 1, pending: 1 }, transactions: [...TXPAGE.transactions, tx("p", "refund", "pending", 700, { status_code: "awaiting_approval", customer: "Ada" })] };
+
+  it("failed rows are tinted and say why on their own line: Failure reason: <code>; pending refunds say they are waiting", async () => {
+    const user = await open(api({ merchantTransactions: vi.fn().mockResolvedValue(PENDING) }));
+    await user.click(tab("Transactions"));
+    const failed = await screen.findByRole("row", { name: /Poor/ });
+    expect(failed).toHaveClass("fail-row");
+    expect(within(failed).getByText("Failure reason: insufficient_balance")).toHaveClass("fail-reason");
+    expect(screen.getByRole("row", { name: /2,500|\$25\.00/ })).not.toHaveClass("fail-row");
+    const pending = screen.getByRole("row", { name: /\$7\.00/ });
+    expect(pending).not.toHaveClass("fail-row");
+    expect(within(pending).queryByText(/Failure reason/)).toBeNull();
+    expect(within(pending).getByText("awaiting_approval")).toBeInTheDocument();
+  });
+
+  it("an Admin approves a pending refund after a confirm; the lists and numbers refresh", async () => {
+    const resolveMerchantRefund = vi.fn().mockResolvedValue({ refund: { id: "p", status: "completed", status_code: null } });
+    const merchantTransactions = vi.fn().mockResolvedValue(PENDING);
+    const user = await open(api({ resolveMerchantRefund, merchantTransactions }));
+    await user.click(tab("Transactions"));
+    await user.click(await screen.findByRole("button", { name: "Approve refund $7.00 to Ada" }));
+    expect(resolveMerchantRefund).not.toHaveBeenCalled();
+    const d = within(screen.getByRole("dialog", { name: "Approve Refund" }));
+    expect(d.getByText(/moves from the merchant to the customer now/)).toBeInTheDocument();
+    const loads = merchantTransactions.mock.calls.length;
+    await user.click(d.getByRole("button", { name: "Confirm Approve" }));
+    await waitFor(() => expect(resolveMerchantRefund).toHaveBeenCalledWith(MID, "p", "approve"));
+    await waitFor(() => expect(merchantTransactions.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  it("an Admin can reject one, and a failed attempt is reported without closing the dialog", async () => {
+    const resolveMerchantRefund = vi.fn().mockRejectedValueOnce(new ApiError(500, "boom")).mockResolvedValue({ refund: { id: "p", status: "failed", status_code: "rejected" } });
+    const user = await open(api({ resolveMerchantRefund, merchantTransactions: vi.fn().mockResolvedValue(PENDING) }));
+    await user.click(tab("Transactions"));
+    await user.click(await screen.findByRole("button", { name: "Reject refund $7.00 to Ada" }));
+    const d = within(screen.getByRole("dialog", { name: "Reject Refund" }));
+    await user.click(d.getByRole("button", { name: "Confirm Reject" }));
+    expect(await d.findByRole("alert")).toHaveTextContent("Couldn't resolve the refund");
+    await user.click(d.getByRole("button", { name: "Confirm Reject" }));
+    await waitFor(() => expect(resolveMerchantRefund).toHaveBeenLastCalledWith(MID, "p", "reject"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("only the Admin role gets Approve, Reject and Suspend; the Merchants role can sign terminals out but nothing else", async () => {
+    const merchantsRole: SignedIn = { ...SIGNED, admin: { ...SIGNED.admin, role: "merchants" }, role: "merchants", pages: ["merchants"], landing: "merchants" };
+    const user = await signIn(api({ merchantTransactions: vi.fn().mockResolvedValue(PENDING) }), vi.fn().mockResolvedValue(merchantsRole));
+    await user.click(await screen.findByRole("link", { name: "Cafe Nero" }));
+    await screen.findByRole("article", { name: "Balance" });
+    expect(screen.queryByRole("button", { name: "Suspend Merchant" })).toBeNull();
+    await user.click(tab("Transactions"));
+    await screen.findByRole("row", { name: /Poor/ });
+    expect(screen.queryByRole("button", { name: /Approve refund/ })).toBeNull();
+    await user.click(tab("Terminals"));
+    expect(await screen.findByRole("button", { name: "Sign out terminal Counter" })).toBeInTheDocument();
+  });
+
+  it("an Admin suspends a merchant after a confirm that says what stops, and can reactivate it", async () => {
+    const setMerchantStatus = vi.fn().mockResolvedValue({ merchant: { id: MID, status: "suspended" } });
+    const merchant = vi.fn().mockResolvedValueOnce(DETAIL).mockResolvedValue({ ...DETAIL, status: "suspended" });
+    const user = await open(api({ setMerchantStatus, merchant }));
+    await user.click(screen.getByRole("button", { name: "Suspend Merchant" }));
+    const d = within(screen.getByRole("dialog", { name: "Suspend Merchant" }));
+    expect(d.getByText(/can't take payments, its owner can't sign in and its terminals stop working/)).toBeInTheDocument();
+    await user.click(d.getByRole("button", { name: "Confirm Suspend" }));
+    await waitFor(() => expect(setMerchantStatus).toHaveBeenCalledWith(MID, "suspended"));
+    expect(await screen.findByRole("button", { name: "Reactivate Merchant" })).toBeInTheDocument();
+    expect(screen.getAllByText("suspended").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Reactivate Merchant" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Reactivate Merchant" })).getByRole("button", { name: "Confirm Reactivate" }));
+    await waitFor(() => expect(setMerchantStatus).toHaveBeenLastCalledWith(MID, "active"));
+  });
+
+  it("each tab is its own history entry (back and forward), and a link straight to a tab works", async () => {
+    const user = await open(api());
+    await user.click(tab("Staff"));
+    await screen.findByRole("row", { name: /^Sam Staff/ });
+    act(() => { window.history.back(); });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true"));
+    act(() => { window.history.forward(); });
+    await screen.findByRole("row", { name: /^Sam Staff/ });
+    cleanup();
+    window.history.replaceState(null, "", `/merchants/${MID}?tab=products`);
+    sessionStorage.setItem(TOKEN_KEY, "t");
+    render(<App makeApi={() => api()} signIn={vi.fn()} />);
+    expect(await screen.findByRole("row", { name: /^Latte/ })).toBeInTheDocument();
+  });
+
+  it("Back goes to the list, and roles without the Merchants page are sent away", async () => {
+    const user = await open(api());
+    await user.click(document.querySelector("a.crumb")!);
+    await screen.findByRole("heading", { name: "Merchants" });
+    expect(window.location.pathname).toBe("/merchants");
+    cleanup();
+    window.history.replaceState(null, "", `/merchants/${MID}`);
+    sessionStorage.setItem(TOKEN_KEY, "t");
+    render(<App makeApi={() => api({ me: vi.fn().mockResolvedValue({ ...ME, role: "accounting", pages: ["overview", "transactions"], landing: "overview" }) })} signIn={vi.fn()} />);
+    await screen.findByRole("article", { name: "Scheme balance" });
+    expect(window.location.pathname).toBe("/");
   });
 });

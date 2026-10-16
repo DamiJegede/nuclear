@@ -4,7 +4,9 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
-import { PAGES, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { approvePending, rejectPending } from "../lib/refund";
+import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
@@ -139,6 +141,8 @@ const tagsAccess = async (c: any, next: any) => {
 };
 admin.use("/stats", requirePage("overview"));
 admin.use("/merchants", requirePage("merchants"));
+admin.use("/merchants/*", requirePage("merchants"));
+admin.use("/terminals/*", requirePage("merchants"));
 admin.use("/users", requirePage("users"));
 admin.use("/transactions", requirePage("transactions"));
 admin.use("/admins", requirePage("admins"));
@@ -360,6 +364,100 @@ admin.get("/users", async (c) => {
   const q = nameFilter.safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
   return c.json({ users: await userList(c.get("sql"), q.data.q || null) });
+});
+
+// ---- One merchant, for support: profile and numbers, terminals, staff, products, payments and refunds ----
+const merchantId = z.string().uuid();
+const merchantTxQuery = z.object({
+  kind: z.enum(MERCHANT_TX_KINDS as [MerchantTxKind, ...MerchantTxKind[]]).default("all"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(100).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine((q) => [q.from, q.to].every((d) => d === undefined || (!Number.isNaN(Date.parse(d)) && new Date(d).toISOString().startsWith(d))), { message: "invalid_date" })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, { message: "from_after_to" });
+
+admin.get("/merchants/:id", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const m = await merchantDetail(c.get("sql"), id.data);
+  return m ? c.json({ merchant: m }) : c.json({ error: "not_found" }, 404);
+});
+admin.get("/merchants/:id/terminals", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json({ terminals: await merchantTerminals(c.get("sql"), id.data) });
+});
+admin.get("/merchants/:id/staff", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json({ staff: await merchantStaff(c.get("sql"), id.data) });
+});
+admin.get("/merchants/:id/products", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json({ products: await merchantProducts(c.get("sql"), id.data) });
+});
+admin.get("/merchants/:id/transactions", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  const q = merchantTxQuery.safeParse(c.req.query());
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  let cursor: { ts: string; id: string } | null = null;
+  if (q.data.cursor) {
+    const [ts, cid] = q.data.cursor.split("|");
+    if (!ts || !cid || Number.isNaN(Date.parse(ts)) || !z.string().uuid().safeParse(cid).success) return c.json({ error: "invalid_cursor" }, 400);
+    cursor = { ts, id: cid };
+  }
+  if (!(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json(await merchantTransactions(c.get("sql"), id.data, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }));
+});
+
+// Admin-only actions on a merchant. Both are recorded on the rows they touch without any new schema:
+// a refund resolved here carries `provider_reference` = "admin:<ACCESS ID>" (or "operator"), shown as the approver.
+const adminOnly = (c: any) => {
+  const a = c.get("adminAuth");
+  return a.kind === "admin" && !MERCHANT_ADMINS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
+};
+const actor = (c: any) => { const a = c.get("adminAuth"); return a.kind === "admin" ? `admin:${a.accessId}` : "operator"; };
+
+for (const action of ["approve", "reject"] as const) {
+  admin.post(`/merchants/:id/refunds/:refundId/${action}`, async (c) => {
+    const denied = adminOnly(c); if (denied) return denied;
+    const id = merchantId.safeParse(c.req.param("id")), rid = merchantId.safeParse(c.req.param("refundId"));
+    if (!id.success || !rid.success) return c.json({ error: "not_found" }, 404);
+    const out = await c.get("sql").begin(async (tx) => {
+      const r = action === "approve" ? await approvePending(tx, id.data, rid.data, null) : await rejectPending(tx, id.data, rid.data);
+      if (r.kind !== "error") await tx`update transactions set provider_reference = ${actor(c)} where id = ${rid.data}`;
+      return r;
+    });
+    if (out.kind === "error") return c.json({ error: out.error }, out.status);
+    return c.json({ refund: { id: out.row.id, status: out.row.status, status_code: out.row.status_code } }, 200);
+  });
+}
+
+// Suspend or reactivate a merchant (admin only). A suspended merchant cannot take payments, its owner's
+// sessions and its terminals stop working at once (every request re-checks the account), and everything
+// resumes when it is reactivated.
+admin.put("/merchants/:id/status", async (c) => {
+  const denied = adminOnly(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status <> 'closed' returning id, status`;
+  return rows.length ? c.json({ merchant: rows[0] }) : c.json({ error: "not_found" }, 404);
+});
+
+// Support action: sign a terminal out (clears its stored session, so its token stops working and the
+// merchant signs it in again). Admin and Merchants roles only.
+admin.post("/terminals/:id/sign-out", async (c) => {
+  const a = c.get("adminAuth");
+  if (a.kind === "admin" && !MERCHANT_WRITERS.includes(a.role)) return c.json({ error: "forbidden_role" }, 403);
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update terminals set session_token_hash = null where id = ${id.data} returning id`;
+  return rows.length ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
 });
 
 const txQuery = z.object({

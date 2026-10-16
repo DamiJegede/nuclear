@@ -282,7 +282,7 @@ export async function approvePending(
   tx: Tx,
   merchantAccountId: string,
   refundId: string,
-  approver: string,
+  approver: string | null,
 ): Promise<RefundOutcome> {
   const [head] = await tx<{ related_transaction_id: string }[]>`
     select related_transaction_id from transactions

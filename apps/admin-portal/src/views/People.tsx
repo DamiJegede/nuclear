@@ -38,7 +38,7 @@ function FilterBox({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-export function Merchants({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+export function Merchants({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
   const load = useCallback((q: string) => api.merchants(q || undefined), [api]);
   const { q, setQ, rows, failed, retry } = useFiltered<MerchantRow>(load, onError);
   return (
@@ -61,7 +61,7 @@ export function Merchants({ api, onError }: { api: Api; onError: (e: unknown) =>
               <tbody>
                 {rows.map((m) => (
                   <tr key={m.id}>
-                    <th scope="row">{m.name}</th>
+                    <th scope="row">{open ? <a className="row-link" href={`/merchants/${m.id}`} onClick={(e) => { e.preventDefault(); open(m.id); }}>{m.name}</a> : m.name}</th>
                     <td>{m.handle ? `@${m.handle}` : "—"}</td>
                     <td>{statusPill(m.status)}</td>
                     <td className="num">{money(m.balance)}</td>

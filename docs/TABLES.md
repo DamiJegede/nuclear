@@ -353,7 +353,7 @@ Sends, purchases, settlements, refunds and adjustments are recorded here, includ
 | status | Operation state, including pending, completed, failed, or returned; full state model to be finalized. |
 | status_code | Nullable machine-readable detail explaining the operation status, including declines/failures such as insufficient_balance, spend_limit_exceeded, or bank_rejected. Success detail codes may be defined as needed. |
 | idempotency_key | Stable retry identifier, unique within the agreed operation scope; must reject mismatched reuse. Scope: per merchant account for pay (terminal attempts use a t: prefix, customer-confirmed payments a c:<payer account>: prefix); per source account and type for all other operations. |
-| provider_reference | Nullable bank/provider operation identifier, for external operations such as settlement. Funding provider references live in fundings. |
+| provider_reference | Nullable bank/provider operation identifier, for external operations such as settlement. Funding provider references live in fundings. Also used, without a schema change, to record who resolved a pending refund from the admin portal: `admin:<ACCESS ID>` or `operator`. |
 | timestamp | Operation creation timestamp. |
 | completed_at | Nullable completion timestamp. A later return preserves the original completion history. |
 

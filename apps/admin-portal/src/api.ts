@@ -75,6 +75,37 @@ export type TxPage = {
 /** Program dates (America/New_York, YYYY-MM-DD), inclusive. */
 export type DayRange = { from?: string; to?: string };
 
+export type MerchantDetailData = {
+  id: string; name: string; legal_name: string | null; handle: string | null; status: string; email: string | null; phone: string | null;
+  created_at: string; website: string | null;
+  address: { line: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null };
+  bank: { last4: string; status: string } | null;
+  balance: number;
+  stats: {
+    payments: { count: number; volume: number; today: { count: number; volume: number }; declined: number };
+    refunds: { count: number; volume: number };
+    pending_refunds: { count: number; volume: number };
+    customers: number; last_payment_at: string | null; terminals: number; staff: number; products: number;
+  };
+};
+export type MerchantTerminal = {
+  id: string; name: string; allow_refunds: boolean; created_at: string; signed_in: boolean;
+  orb: { uid: string; model: string | null; software: string | null } | null;
+  payments: number; volume: number; last_payment_at: string | null;
+};
+export type MerchantStaffRow = { id: string; staff_account_id: string; name: string; email: string | null; handle: string | null; role: "read" | "write"; bank_last4: string | null; created_at: string };
+export type MerchantProduct = { id: string; name: string; category: string | null; price: number; discount: number; stock: number | null; active: boolean; status: string; total_sold: number; sold_today: number };
+export type MerchantTxKind = "all" | "payments" | "refunds" | "pending";
+export type MerchantTxRow = {
+  id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
+  via: "tap" | "pass" | "app" | null; reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null;
+};
+export type MerchantTxPage = {
+  counts: Record<MerchantTxKind, number>;
+  totals: { payments: { count: number; volume: number }; refunds: { count: number; volume: number } };
+  transactions: MerchantTxRow[]; next_cursor: string | null;
+};
+
 /** One model with its provisioning and activation numbers. */
 export type TagDetail = TagModel & {
   tags: number; unassigned: number; activated: number; pending: number; rank: number; models_total: number;
@@ -184,6 +215,20 @@ export function createApi(token: string, base: string = API_URL) {
       (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    merchant: async (id: string) => (await request<{ merchant: MerchantDetailData }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}`)).merchant,
+    merchantTerminals: async (id: string) => (await request<{ terminals: MerchantTerminal[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/terminals`)).terminals,
+    merchantStaff: async (id: string) => (await request<{ staff: MerchantStaffRow[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/staff`)).staff,
+    merchantProducts: async (id: string) => (await request<{ products: MerchantProduct[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/products`)).products,
+    merchantTransactions: (id: string, kind: MerchantTxKind = "all", cursor?: string, range: DayRange = {}) =>
+      request<MerchantTxPage>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    /** Support action: signs a terminal out so its token stops working. */
+    /** Admin: approve or reject a merchant's pending refund (approving moves the money now). */
+    resolveMerchantRefund: (merchantId: string, refundId: string, action: "approve" | "reject") =>
+      request<{ refund: { id: string; status: string; status_code: string | null } }>("POST", `/v1/admin/merchants/${encodeURIComponent(merchantId)}/refunds/${encodeURIComponent(refundId)}/${action}`),
+    /** Admin: suspend or reactivate a merchant. */
+    setMerchantStatus: (merchantId: string, status: "active" | "suspended") =>
+      request<{ merchant: { id: string; status: string } }>("PUT", `/v1/admin/merchants/${encodeURIComponent(merchantId)}/status`, { status }),
+    signOutTerminal: (id: string) => request<null>("POST", `/v1/admin/terminals/${encodeURIComponent(id)}/sign-out`),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */
     createAdmin: (name: string, role: Role) =>
