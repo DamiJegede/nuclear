@@ -83,6 +83,9 @@ wallets.post("/", requireOwner, async (c) => {
   const { accountId } = c.get("auth");
   const sql = c.get("sql");
 
+  // An agent wallet is created together with its API key (shown once, in this response).
+  const agentKey = b.type === "agent" ? newAgentKey() : null;
+
   const row = await sql.begin(async (tx) => {
     // Serialize concurrent creates per account so the cap cannot be raced.
     await tx`select 1 from accounts where id = ${accountId} for no key update`;
@@ -90,10 +93,10 @@ wallets.post("/", requireOwner, async (c) => {
       select count(*)::bigint as count from wallets where account_id = ${accountId} and status <> 'closed'`;
     if ((cnt?.count ?? 0n) >= BigInt(MAX_WALLETS_PER_ACCOUNT)) return null;
     const [w] = await tx<WalletRow[]>`
-      insert into wallets (account_id, display_name, photo, type, daily_limit, allow_pay, allow_send)
+      insert into wallets (account_id, display_name, photo, type, daily_limit, allow_pay, allow_send, key_hash, key_hint)
       values (${accountId}, ${b.display_name}, ${b.photo ?? null}, ${b.type},
               ${b.daily_limit === undefined || b.daily_limit === null ? null : b.daily_limit.toString()},
-              ${b.allow_pay}, ${b.allow_send})
+              ${b.allow_pay}, ${b.allow_send}, ${agentKey?.hash ?? null}, ${agentKey?.hint ?? null})
       returning ${tx.unsafe(COLS)}`;
     const initial = b.balance === undefined ? (b.type === "agent" ? 0n : null) : b.balance;
     if (initial === null) return w!;
@@ -110,7 +113,7 @@ wallets.post("/", requireOwner, async (c) => {
     // Not enough shared funds to set aside: nothing was created.
     return c.json({ error: row.error, available: n(row.available ?? 0n) }, 422);
   }
-  return c.json({ wallet: walletJson(row) }, 201);
+  return c.json({ wallet: walletJson(row), ...(agentKey ? { key: agentKey.key } : {}) }, 201);
 });
 
 wallets.get("/:id", async (c) => {
@@ -241,7 +244,7 @@ wallets.get("/:id/allocations", async (c) => {
   return c.json({ allocations: rows.map((r) => ({ id: r.id, amount: n(r.amount), balance_after: n(r.balance_after), created_at: r.created_at })) });
 });
 
-// The agent's API key. One per agent wallet; creating a key replaces (rotates) the current one, which
+// The agent's API key. One per agent wallet, created together with the wallet; this route rotates it: it replaces the current key, which
 // stops working at once. The key is returned only here, once. Owner only.
 wallets.post("/:id/key", requireOwner, async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
