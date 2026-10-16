@@ -28,14 +28,18 @@ export interface Env {
   [key: `TAG_KEY_V${number}`]: string | undefined;
 }
 
-/** owner = the account holder's own login; wallet = delegated shared-wallet device. */
-export type SessionKind = "owner" | "wallet";
+/**
+ * owner = the account holder's own login; wallet = delegated shared-wallet device;
+ * agent = an agent wallet's API key (acts like a wallet session, but has no device).
+ */
+export type SessionKind = "owner" | "wallet" | "agent";
 
 export type SessionAuth = {
-  deviceId: string;
+  /** Null for agent keys. */
+  deviceId: string | null;
   accountId: string;
   kind: SessionKind;
-  /** Set only for wallet sessions. */
+  /** Set for wallet sessions and agent keys. */
   walletId: string | null;
 };
 

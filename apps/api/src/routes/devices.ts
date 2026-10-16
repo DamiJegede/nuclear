@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { newSessionToken, verifyWalletLink } from "../crypto";
-import { requireOwner, requireSession } from "../session";
+import { requireDeviceSession, requireOwner } from "../session";
 
 export const devices = new Hono<AppContext>();
 
@@ -54,7 +54,7 @@ devices.post("/redeem", async (c) => {
   });
 });
 
-devices.use("*", requireSession);
+devices.use("*", requireDeviceSession);
 
 // Called on every app launch. Rolling 90 days; never shortens expiry or clears revocation.
 devices.post("/session/extend", async (c) => {

@@ -839,11 +839,10 @@ describe("merchants, users and transactions", () => {
   const M = { id: "m1", name: "Cafe Nero", handle: "nero", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 12500, terminals: 2, payments: 40, volume: 98000 };
   const U = { id: "u1", name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-02T00:00:00Z", balance: 9200, wallets: 2, agents: 1 };
 
-  it("orders the navigation Overview, Merchants, Users, Tags, Admins, with Transactions replacing Security on the right", async () => {
+  it("centres the navigation: Overview, Merchants, Users, Tags, Admins, Transactions; the name (Security) and Sign Out stay on the right", async () => {
     await signIn(fakeApi());
     await screen.findByRole("article", { name: "Scheme balance" });
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Merchants", "Users", "Tags", "Admins"]);
-    expect(screen.getByRole("link", { name: "Transactions" })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Merchants", "Users", "Tags", "Admins", "Transactions"]);
     expect(screen.queryByRole("link", { name: "Security" })).toBeNull();
   });
 

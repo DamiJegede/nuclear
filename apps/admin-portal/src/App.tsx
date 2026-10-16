@@ -133,7 +133,7 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"]] as const).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["transactions", "Transactions"]] as const).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
@@ -141,8 +141,6 @@ export function App({
         <div className="who">
           <a href={PATHS.security} className={view === "security" ? "tab active" : "tab"} aria-current={view === "security" ? "page" : undefined} title={`${me.access_id}: two-step verification`}
             onClick={(e) => { e.preventDefault(); setView("security"); }}>{me.name}</a>
-          <a href={PATHS.transactions} className={view === "transactions" ? "tab active" : "tab"} aria-current={view === "transactions" ? "page" : undefined}
-            onClick={(e) => { e.preventDefault(); setView("transactions"); }}>Transactions</a>
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
       </header>

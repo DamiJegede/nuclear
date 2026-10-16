@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { hashPassword, newSessionToken, verifyPassword } from "../crypto";
-import { requireOwner, requireSession } from "../session";
+import { requireDeviceSession, requireOwner } from "../session";
 
 export const auth = new Hono<AppContext>();
 
@@ -100,7 +100,7 @@ auth.post("/login", async (c) => {
   });
 });
 
-auth.post("/logout", requireSession, async (c) => {
+auth.post("/logout", requireDeviceSession, async (c) => {
   const { deviceId } = c.get("auth");
   // revoked_at only; session_token_hash is never reset (would reopen redemption).
   await c.get("sql")`update devices set revoked_at = coalesce(revoked_at, now()) where id = ${deviceId}`;

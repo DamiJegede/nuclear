@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppContext, SessionKind } from "./env";
-import { hashToken, verifyTerminalJwt } from "./crypto";
+import { AGENT_KEY_PREFIX, hashToken, verifyTerminalJwt } from "./crypto";
 import { connect } from "./db";
 
 /** Opens one DB client per request and closes it after the response. */
@@ -30,6 +30,20 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
     if (!token) return c.json({ error: "unauthorized" }, 401);
 
     const sql = c.get("sql");
+
+    // An agent wallet's API key: nk_agent_<random>. It acts for that wallet only, like a delegated session.
+    if (token.startsWith(AGENT_KEY_PREFIX)) {
+      const [k] = await sql<{ id: string; account_id: string }[]>`
+        update wallets w set key_last_used_at = now()
+         where w.key_hash = ${hashToken(token)} and w.status = 'active'
+           and exists (select 1 from accounts a where a.id = w.account_id and a.status = 'active')
+        returning w.id, w.account_id`;
+      if (!k) return c.json({ error: "unauthorized" }, 401);
+      if (!allowed.includes("agent")) return c.json({ error: "forbidden" }, 403);
+      c.set("auth", { deviceId: null, accountId: k.account_id, kind: "agent", walletId: k.id });
+      return next();
+    }
+
     const [dev] = await sql<{ id: string; account_id: string; wallet_id: string | null }[]>`
       select d.id, d.account_id, d.wallet_id
         from devices d
@@ -51,7 +65,10 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
 }
 
 /** Customer-facing endpoints, and logout/extend: the account holder or a delegated wallet device. */
-export const requireSession = sessionGuard("owner", "wallet");
+export const requireSession = sessionGuard("owner", "wallet", "agent");
+
+/** Endpoints tied to a device (sessions, logout): people only, never an agent key. */
+export const requireDeviceSession = sessionGuard("owner", "wallet");
 
 /** Owner-only endpoints: the primary holder's own login, never a delegated wallet device. */
 export const requireOwner: MiddlewareHandler<AppContext> = async (c, next) => {

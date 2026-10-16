@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
-import { LINK_TTL, signWalletLink } from "../crypto";
+import { LINK_TTL, newAgentKey, signWalletLink } from "../crypto";
 import { amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { setWalletBalance } from "../lib/walletFunds";
@@ -24,11 +24,13 @@ type WalletRow = {
   allow_send: boolean;
   status: string;
   balance: bigint | null;
+  key_hint: string | null;
+  key_last_used_at: Date | null;
   created_at: Date;
 };
 
 const COLS = `id, account_id, display_name, photo, type, daily_limit, spent_today,
-  allow_pay, allow_send, status, balance, created_at`;
+  allow_pay, allow_send, status, balance, key_hint, key_last_used_at, created_at`;
 
 export function walletJson(w: WalletRow) {
   return {
@@ -45,6 +47,8 @@ export function walletJson(w: WalletRow) {
     // Earmarked funds: null = spends from the account's shared funds; a number = a hard spending limit.
     balance: n(w.balance),
     earmarked: w.balance !== null,
+    // The agent API key, if one exists: never the key itself, only what identifies it.
+    key: w.key_hint === null ? null : { hint: w.key_hint, last_used_at: w.key_last_used_at },
     created_at: w.created_at,
   };
 }
@@ -150,6 +154,7 @@ wallets.patch("/:id", requireOwner, async (c) => {
       return { error: "default_wallet_cannot_close", status: 409 as const };
     }
 
+    if (body.data.status === "closed") await tx`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data}`;
     if (body.data.status === "closed" && cur.balance !== null) {
       // A closed wallet gives its earmarked funds back to the shared funds.
       await setWalletBalance(tx, { accountId, walletId: id.data, target: null, deviceId: c.get("auth").deviceId });
@@ -234,4 +239,34 @@ wallets.get("/:id/allocations", async (c) => {
      where wallet_id = ${id.data} and account_id = ${accountId}
      order by created_at desc, id desc limit 50`;
   return c.json({ allocations: rows.map((r) => ({ id: r.id, amount: n(r.amount), balance_after: n(r.balance_after), created_at: r.created_at })) });
+});
+
+// The agent's API key. One per agent wallet; creating a key replaces (rotates) the current one, which
+// stops working at once. The key is returned only here, once. Owner only.
+wallets.post("/:id/key", requireOwner, async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const { accountId } = c.get("auth");
+  const sql = c.get("sql");
+  const [cur] = await sql<{ type: string; status: string }[]>`
+    select type, status from wallets where id = ${id.data} and account_id = ${accountId}`;
+  if (!cur) return c.json({ error: "not_found" }, 404);
+  if (cur.type !== "agent") return c.json({ error: "not_an_agent_wallet" }, 409);
+  if (cur.status !== "active") return c.json({ error: "wallet_not_active" }, 409);
+  const k = newAgentKey();
+  const [w] = await sql<WalletRow[]>`
+    update wallets set key_hash = ${k.hash}, key_hint = ${k.hint}, key_last_used_at = null
+     where id = ${id.data} and account_id = ${accountId} returning ${sql.unsafe(COLS)}`;
+  return c.json({ wallet: walletJson(w!), key: k.key }, 201);
+});
+
+wallets.delete("/:id/key", requireOwner, async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const { accountId } = c.get("auth");
+  const rows = await c.get("sql")`
+    update wallets set key_hash = null, key_hint = null, key_last_used_at = null
+     where id = ${id.data} and account_id = ${accountId} returning id`;
+  if (rows.length === 0) return c.json({ error: "not_found" }, 404);
+  return c.body(null, 204);
 });

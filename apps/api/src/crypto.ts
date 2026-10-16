@@ -139,3 +139,11 @@ export async function verifyMfaChallenge(secret: string, token: string): Promise
     return null;
   }
 }
+
+/** Agent wallet API keys: a recognisable prefix (so secret scanners can find a leaked one) plus 256 random bits. */
+export const AGENT_KEY_PREFIX = "nk_agent_";
+export function newAgentKey(): { key: string; hash: string; hint: string } {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = AGENT_KEY_PREFIX + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return { key, hash: hashToken(key), hint: key.slice(-4) };
+}

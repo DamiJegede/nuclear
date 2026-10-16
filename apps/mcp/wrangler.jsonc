@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nuclear-mcp",
+  "account_id": "2e328fde1db62ab22f16e8f464562d3c",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  // Calls go to the API worker through a service binding: no public hop, and this worker holds no
+  // database access and no secrets. The agent's own key is passed through on every call.
+  "services": [{ "binding": "API", "service": "nuclear-api" }],
+  "vars": {
+    // Used only when the service binding is absent (local runs).
+    "API_URL": "https://nuclear-api.a-space.workers.dev"
+  }
+}

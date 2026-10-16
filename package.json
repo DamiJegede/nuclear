@@ -7,6 +7,8 @@
   "scripts": {
     "api:dev": "npm run dev -w @nuclear/api",
     "api:deploy": "npm run deploy -w @nuclear/api",
+    "mcp:dev": "npm run dev -w @nuclear/mcp",
+    "mcp:deploy": "npm run deploy -w @nuclear/mcp",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "add-model": "node scripts/add-model.mjs",
     "add-bands": "node scripts/add-bands.mjs",
