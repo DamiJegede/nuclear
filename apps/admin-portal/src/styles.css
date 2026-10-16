@@ -88,3 +88,41 @@ dl.facts dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .login-card { width: min(400px, 100%); padding: 24px; display: grid; gap: 8px; }
 .login-card h1 { font-size: 18px; margin-bottom: 4px; }
 .login-card button { margin-top: 8px; }
+
+.who { display: flex; align-items: center; gap: 8px; }
+.login-card .sub { margin: 0 0 6px; }
+.login-card button.ghost { margin-top: 0; }
+
+.login-card.wide { width: min(460px, 100%); }
+.qr { display: block; margin: 8px auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.qr.placeholder { width: 220px; height: 220px; }
+.secret { text-align: center; margin: 4px 0 10px; }
+.secret code { font-size: 15px; letter-spacing: 0.06em; user-select: all; }
+.steps { margin: 0 0 6px; padding-left: 18px; }
+.codes { list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px; padding: 12px; margin: 10px 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.codes code { font-size: 15px; letter-spacing: 0.05em; user-select: all; }
+.row { display: flex; gap: 8px; margin-bottom: 10px; }
+button.link.left { text-align: left; justify-self: start; }
+label.check { display: flex; align-items: center; gap: 8px; margin: 10px 0 8px; color: var(--text); }
+label.check input { width: auto; margin: 0; }
+
+input.upper { text-transform: uppercase; letter-spacing: 0.04em; }
+.inline { display: flex; gap: 8px; align-items: stretch; }
+.inline input { flex: 1; }
+.inline button { white-space: nowrap; }
+.notice.warn { background: var(--good-bg); color: var(--text); border: 1px solid var(--line); }
+.cred-list { margin: 10px 0; }
+.cred-list div { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.cred-list dt { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.cred-list dd { margin: 2px 0 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cred-list code { font-size: 15px; user-select: all; word-break: break-all; }
+button.small { padding: 3px 10px; font-size: 13px; }
+.creds { margin-top: 6px; }
+
+button.block { width: 100%; }
+.token-field { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: default; }
+.row .note { align-self: center; }
+.below { text-align: center; margin: 14px 0 0; }
+.login-stack { width: min(400px, 100%); }
+.login-stack .login-card { width: 100%; }
+.creds button.block { margin-top: 12px; }

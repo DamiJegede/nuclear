@@ -7,10 +7,16 @@ export interface Env {
   /** "true" enables POST /v1/sandbox/fundings (simulated bank load). Never enable in live. */
   SANDBOX_FUNDING?: string;
   /**
-   * Bearer token for /v1/admin/* (tag models and supplier band imports). Unset = the admin routes
-   * answer 404. `wrangler secret put ADMIN_API_TOKEN`; `.dev.vars` locally.
+   * Operator bearer token for scripts calling /v1/admin/* (tag models, supplier imports, creating
+   * admin accounts). People use the portal with their own access id and password instead. Unset =
+   * operator access is off. `wrangler secret put ADMIN_API_TOKEN`; `.dev.vars` locally.
    */
   ADMIN_API_TOKEN?: string;
+  /**
+   * AES-256 key (base64 of 32 random bytes) that encrypts admins' authenticator secrets at rest.
+   * `wrangler secret put MFA_ENCRYPTION_KEY`. Without it admin MFA enrollment and sign-in return 503.
+   */
+  MFA_ENCRYPTION_KEY?: string;
   /** Browser origins allowed to call /v1/admin/* (comma-separated), e.g. the admin portal's URL. */
   ADMIN_ORIGINS?: string;
   /** Program daily associated-value cap in cents (draft target $2,000). Configurable until finalized. */
@@ -40,7 +46,12 @@ export type TerminalAuth = {
   allowRefunds: boolean;
 };
 
+/** Who is calling /v1/admin: the operator token (scripts) or a signed-in admin (the portal). */
+export type AdminAuth =
+  | { kind: "operator" }
+  | { kind: "admin"; adminId: string; accessId: string; name: string; sessionId: string; mustChangeAccessToken: boolean; mfaEnabled: boolean };
+
 export type AppContext = {
   Bindings: Env;
-  Variables: { auth: SessionAuth; terminal: TerminalAuth; sql: import("./db").Sql };
+  Variables: { auth: SessionAuth; terminal: TerminalAuth; adminAuth: AdminAuth; sql: import("./db").Sql };
 };

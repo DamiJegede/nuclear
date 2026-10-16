@@ -12,6 +12,8 @@
     "add-bands": "node scripts/add-bands.mjs",
     "admin:dev": "npm run dev -w @nuclear/admin-portal",
     "admin:build": "npm run build -w @nuclear/admin-portal",
-    "admin:test": "npm run test -w @nuclear/admin-portal"
+    "admin:test": "npm run test -w @nuclear/admin-portal",
+    "add-admin": "node scripts/add-admin.mjs",
+    "manage-admin": "node scripts/manage-admin.mjs"
   }
 }

@@ -15,7 +15,7 @@ docs/         specs (authoritative order below)
 migrations/   shared plain-SQL migrations
 apps/api/     backend Worker (src/, wrangler.jsonc, .dev.vars)
 apps/merchant-portal/   placeholder (merchant web portal)
-apps/admin-portal/      admin portal (Vite + React): system overview + tag models; `npm run admin:dev|test|build`; hosted at https://nuclear-admin.a-space.workers.dev (Worker `nuclear-admin`, static assets; `npm run deploy -w @nuclear/admin-portal`)
+apps/admin-portal/      admin portal (Vite + React): system overview + tag models; `npm run admin:dev|test|build`; hosted at https://nuclear-admin.a-space.workers.dev (Worker `nuclear-admin`, static assets, version `af00d0ca`; `npm run deploy -w @nuclear/admin-portal`)
 ```
 
 Specs, in authoritative order: `docs/TABLES.md`, `docs/BALANCE-POLICY.md`,
@@ -33,7 +33,7 @@ Cloudflare tooling note: `wrangler pages ...` now delegates to the unified Worke
 | Branch | main (this is the dev database; migrations are applied directly to it) |
 | Hyperdrive | config `6e47c72ff9934571ab4d21c0f2c40621`, binding `HYPERDRIVE`, caching disabled |
 | Cloudflare account | `2e328fde1db62ab22f16e8f464562d3c` (pinned in wrangler.jsonc) |
-| Worker | `nuclear-api`, deployed at https://nuclear-api.a-space.workers.dev (version `016f5818`, 2026-10-15; crons `0 4`/`0 5 * * *`). `SANDBOX_FUNDING=true`, so anyone who can reach it can mint test balance: dev only |
+| Worker | `nuclear-api`, deployed at https://nuclear-api.a-space.workers.dev (version `49ce79d9`, 2026-10-15; crons `0 4`/`0 5 * * *`). `SANDBOX_FUNDING=true`, so anyone who can reach it can mint test balance: dev only |
 
 Always run `pscale` with `--format json`; put `--org nuclear` on resource subcommands. Load the
 `planetscale-pscale-cli-automation` skill before driving the CLI. Postgres branches apply DDL
@@ -49,14 +49,17 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 | `0004_products.sql` | Applied to nuclear-dev/main |
 | `0005_checkouts.sql` | Applied to nuclear-dev/main |
 | `0006_orb_uid.sql` | Applied to nuclear-dev/main (2026-10-15) |
+| `0007_admins.sql` | Applied to nuclear-dev/main (2026-10-15): admins (with MFA columns) and admin_sessions |
+| `0008_admin_access_tokens.sql` | Applied to nuclear-dev/main (2026-10-15, with `--force`, owner-approved, for its `DROP CONSTRAINT admins_access_id_check`) |
 
-All six are applied and frozen: never edit an applied migration, add a new numbered file. The database
-has 19 tables and no data.
+All eight are applied and frozen: never edit an applied migration, add a new numbered file. The database
+has 21 tables and no data.
 
 ## Approval rules
 
 - Read-only SQL and read-only `pscale` commands (`org/database/branch list`, `insights`, `inspect`, `select`) are allowed without asking.
-- Ask the owner before: any DDL or write SQL against PlanetScale, creating/deleting branches, creating roles or credentials, Traffic Control or webhook changes, deploying the Worker, or changing secrets. `DROP` needs `--force` and explicit approval, after a read-only check that the tables are empty.
+- **Standing authorization (owner, 2026-10-15): after each update that passes its tests, deploy it to Cloudflare** (`npm run api:deploy` for the Worker, `npm run deploy -w @nuclear/admin-portal` for the portal) without asking again, and smoke-test the live result read-only. Still ask for the things below, and apply any migration the update depends on *before* deploying code that needs it.
+- Ask the owner before: any DDL or write SQL against PlanetScale, creating/deleting branches, creating roles or credentials, Traffic Control or webhook changes, or changing existing secrets (a new secret that a requested feature needs may be added, never printed, and mirrored in `.dev.vars`). `DROP` needs `--force` and explicit approval, after a read-only check that the tables are empty.
 - Never commit connection strings, roles, passwords, keys or tokens. Secrets live in `apps/api/.dev.vars` (git-ignored) and Wrangler secrets. Never print a secret value.
 - Local testing uses a throwaway local Postgres 18 (Homebrew `postgresql@18`) in the scratchpad, never PlanetScale.
 
@@ -65,7 +68,8 @@ has 19 tables and no data.
 | Name | Purpose |
 | --- | --- |
 | `JWT_SECRET` | HS256 secret for wallet magic-link JWTs and terminal session JWTs |
-| `ADMIN_API_TOKEN` | Bearer token for `/v1/admin/*` (operator only). Set on the Worker and in `apps/api/.dev.vars`. Load it into your shell for the scripts with `export ADMIN_API_TOKEN=$(grep ^ADMIN_API_TOKEN= apps/api/.dev.vars | cut -d= -f2)`; never pass it as an argument |
+| `ADMIN_API_TOKEN` | Operator bearer token for scripts calling `/v1/admin/*` (the portal does not use it; people sign in with an access id and password). Set on the Worker and in `apps/api/.dev.vars`. Load it into your shell for the scripts with `export ADMIN_API_TOKEN=$(grep ^ADMIN_API_TOKEN= apps/api/.dev.vars | cut -d= -f2)`; never pass it as an argument |
+| `MFA_ENCRYPTION_KEY` | AES-256 key (base64, 32 bytes) encrypting admins' authenticator secrets at rest. Losing it makes every enrolled authenticator unrecoverable (operators then reset MFA and people re-enroll); rotating it needs a re-encryption step (stored values carry a `v1.` prefix for that) |
 | `TAG_KEY_V1` | NTAG 424 PICC-data AES-128 key (32 hex) for tag URLs `/v1/<cipherHex>`; add `TAG_KEY_V2` etc. for new versions |
 
 Optional vars: `ADMIN_ORIGINS` (browser origins allowed to call `/v1/admin/*`; localhost:5173 and the hosted portal in wrangler.jsonc), `APP_URL` (magic-link base), `DAILY_VALUE_CAP_CENTS` (default 200000),
@@ -87,6 +91,7 @@ Optional vars: `ADMIN_ORIGINS` (browser origins allowed to call `/v1/admin/*`; l
 
 - Account holder: email + password (scrypt), session in `devices` (hashed token, rolling 90 days). Session kinds: `owner` (devices.wallet_id NULL) and `wallet` (delegated shared-wallet device from a 5-minute magic link).
 - Merchant terminals are not devices. A terminal authenticates with its own HS256 JWT (aud `nuclear:terminal`, own expiry); `terminals.session_token_hash` stores the token's SHA-256 so it is revocable and single-active. Terminal sessions have no owner or wallet powers and only reach `/v1/terminal/*`.
+- Admin portal: people sign in with an **Access ID and an access token** (`POST /v1/admin/login {access_id, access_token}`, public), then a code from their authenticator. (Customers' passwords are a separate thing and keep the name "password".) The Access ID is 12 uppercase characters (A-Z, 2-9 without look-alikes, starts with a letter) and always stored/shown uppercase (lowercase input is accepted); the access token is 32 characters (mixed case, digits, `-_.+=`). **The server generates both**: `POST /v1/admin/admins {name}` (any fully signed-in admin, or the operator token) returns `{admin, credentials:{access_id, access_token}}` **once**; only a hash is kept and the token can never be shown again. The portal's Admins page shows them with a download button. `admins.created_by` records who made each admin. A person's issued token is temporary (`must_change_access_token`): until they replace it via `POST /v1/admin/access-token {current_access_token, new_access_token}` (32+ characters; the portal can generate one) every other endpoint answers 403 `access_token_change_required`. Sessions are 8 hours (hashed in `admin_sessions`). Failures are all one answer; 5 wrong tokens or codes lock the account for 15 minutes. Operator-only (scripts): `ADMIN_API_TOKEN=... npm run add-admin -- --name "Jane Doe" [--save file]`, and `npm run manage-admin -- --list | --access-id ID --disable | --enable | --reset-token [--save file] | --reset-mfa`; `--reset-token` generates a fresh token (shown once, or saved to a 0600 file). `GET /v1/admin/me`, `POST /v1/admin/logout`. A wrong *current* token is 401 `invalid_credentials`; only `unauthorized` means the session ended. The operator token still opens the data endpoints and can create/list admins, but cannot change an access token. **Two-step verification (TOTP) is mandatory**: after the token step an admin without it can only call `/me`, `/access-token`, `/logout`, `/mfa/setup`, `/mfa/enable` (everything else is 403 `mfa_setup_required`). `POST /mfa/setup` returns the base32 key and `otpauth_uri` (the portal draws the QR code); `POST /mfa/enable {code}` confirms and returns ten single-use recovery codes, shown once. Once enrolled, `POST /login` returns `{mfa_required, mfa_token}` (a 5-minute challenge JWT, not a session) and `POST /login/mfa {mfa_token, code}` takes the 6-digit code or a recovery code. Codes are RFC 6238 (SHA-1, 30 s, ±1 step), each usable once; wrong codes count toward the lock, and a correct token does not reset that count while MFA is pending. `POST /mfa/recovery-codes {code}` replaces the recovery codes. Lost phone: `--reset-mfa`. No audit log of admin actions beyond `created_by`; no admin roles.
 - Handles (`accounts.handle`, 4-12 lowercase alphanumeric, unique, nullable) can be set or changed only by the primary account's own owner session.
 
 ## Domain rules worth remembering

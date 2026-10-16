@@ -119,3 +119,23 @@ export async function verifyTerminalJwt(
     return null;
   }
 }
+
+// MFA challenge: proof that the password step succeeded, valid for five minutes and good only for the
+// second step. It is not a session: no endpoint accepts it as one.
+const MFA_AUD = "nuclear:admin-mfa";
+export const MFA_CHALLENGE_SECONDS = 300;
+
+export async function signMfaChallenge(secret: string, adminId: string): Promise<string> {
+  const iat = Math.floor(Date.now() / 1000);
+  return sign({ iss: LINK_ISS, aud: MFA_AUD, sub: adminId, iat, exp: iat + MFA_CHALLENGE_SECONDS }, secret, "HS256");
+}
+
+export async function verifyMfaChallenge(secret: string, token: string): Promise<string | null> {
+  try {
+    const p = (await verify(token, secret, "HS256")) as Record<string, unknown>;
+    if (p.iss !== LINK_ISS || p.aud !== MFA_AUD || typeof p.sub !== "string") return null;
+    return p.sub;
+  } catch {
+    return null;
+  }
+}

@@ -26,8 +26,19 @@ npm run admin:test       # component and client tests
 npm run admin:build      # typecheck + production build into dist/
 ```
 
-Sign in with the operator token (`ADMIN_API_TOKEN`; locally it is in `apps/api/.dev.vars`). It is kept in
-`sessionStorage`, so it survives a refresh but is gone when the tab closes. Set `VITE_API_URL` (see
+Sign in with your **Access ID** and **Access Token**, then a **6-digit code from your authenticator app**.
+
+- **Getting an account:** an existing admin adds you on the **Admins** page (or the operator runs
+  `npm run add-admin -- --name "Your Name"`). The system generates your 12-character Access ID and
+  32-character Access Token and shows them **once**, with a download button. It can never show the token
+  again.
+- **First sign-in:** replace the issued token with your own (32 characters or more; the **Generate** button
+  makes a strong one, then save it in your password manager), then set up two-step verification by scanning
+  a QR code (or typing the key) with an authenticator app and saving the ten recovery codes shown once. If you
+  lose your phone, use a recovery code or ask an admin/the operator for a reset (`manage-admin --reset-mfa`).
+- The session token (8 hours) is kept in `sessionStorage`, so it survives a refresh but is gone when the tab
+  closes. Several wrong attempts lock the
+account for 15 minutes. Set `VITE_API_URL` (see
 `.env.example`) to point at a different API; the default is the deployed Worker.
 
 The API only answers browser calls from origins listed in its `ADMIN_ORIGINS` var (set to
@@ -35,5 +46,6 @@ The API only answers browser calls from origins listed in its `ADMIN_ORIGINS` va
 
 ## Known limits
 
-- One shared operator token, no per-person admin accounts or audit trail yet.
+- No audit log of who did what yet.
+- Any admin can add admins, but disabling or resetting someone is the operator's job (scripts) for now; there are no admin roles.
 - The API must list the portal's origin in `ADMIN_ORIGINS` (it does) and be deployed with the stats endpoint.
