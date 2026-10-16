@@ -1,4 +1,4 @@
-import { ROOT, applyMigration, migrate, psql, resetSchema } from "./db.ts";
+import { ROOT, applyMigration, migrate, migrationFiles, psql, resetSchema } from "./db.ts";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import postgres from "postgres";
@@ -36,9 +36,10 @@ const li0 = await call("POST", "/v1/admin/login", { body: { access_id: "nlinf8q0
 eq("a 16-character Access Token is no longer accepted at sign-in (32 characters are enforced)", [li0.status, li0.json.error], [400, "invalid_request"]);
 psql(["-f", ROOT + "migrations/0009_drop_must_change_access_token.sql"]);
 eq("0009 drops the flag column and keeps the row", (await q("select access_id, (select count(*)::int from information_schema.columns where table_name='admins' and column_name='must_change_access_token') as c from admins")), [{ access_id: "NLINF8Q0KAZ4", c: 0 }]);
+for (const f of migrationFiles().filter((f) => f.slice(0, 4) > "0009")) applyMigration(f);   // the rest of the migrations, as the live database got them
 const adminId = (await q("select id from admins"))[0].id;
 const reset = await call("PATCH", `/v1/admin/admins/${adminId}`, { token: env.ADMIN_API_TOKEN, body: { reset_access_token: true } });
 const li = await call("POST", "/v1/admin/login", { body: { access_id: "nlinf8q0kaz4", access_token: reset.json.credentials.access_token } });
-eq("the operator issues a fresh 32-character token for the existing admin, who signs in with it", [reset.json.credentials.access_token.length, li.status, li.json.admin], [32, 200, { access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin" }]);
+eq("the operator issues a fresh 32-character token for the existing admin, who signs in with it and keeps full (admin) access", [reset.json.credentials.access_token.length, li.status, li.json.admin], [32, 200, { access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", role: "admin" }]);
 eq("and is taken straight to two-step enrollment (no forced token change)", (await call("GET", "/v1/admin/stats", { token: li.json.session_token })).json.error, "mfa_setup_required");
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

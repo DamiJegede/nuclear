@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { ApiError, type AdminMe, type Api, type MfaChallenge, type SignedIn, type Stats, type TagModel } from "./api";
 import { groupSecret } from "./views/Mfa";
+import type { Page } from "./roles";
 
 vi.mock("./image", () => ({ PHOTO_SIZE: 256, resizePhoto: vi.fn(async () => new Blob(["jpeg-bytes"], { type: "image/jpeg" })) }));
 
@@ -26,11 +27,12 @@ const MODEL: TagModel = {
   quantity: 1000, sold: 12, limited: false, status: "pending", created_at: new Date().toISOString(), tags: 800, unassigned: 790,
 };
 
+const ALL_PAGES: Page[] = ["overview", "merchants", "users", "tags", "admins", "transactions"];
 const SIGNED: SignedIn = {
   session_token: "session-abc", expires_at: new Date(Date.now() + 8 * 3600_000).toISOString(),
-  admin: { access_id: "JANEDOE00001", name: "Jane Doe" }, mfa_enabled: true,
+  admin: { access_id: "JANEDOE00001", name: "Jane Doe", role: "admin" }, role: "admin", pages: ALL_PAGES, landing: "overview", mfa_enabled: true,
 };
-const ME: AdminMe = { access_id: "JANEDOE00001", name: "Jane Doe", mfa_enabled: true };
+const ME: AdminMe = { access_id: "JANEDOE00001", name: "Jane Doe", role: "admin", pages: ALL_PAGES, landing: "overview", mfa_enabled: true };
 const CHALLENGE: MfaChallenge = { mfa_required: true, mfa_token: "challenge-token-0123456789", expires_in: 300 };
 const SETUP = { secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", otpauth_uri: "otpauth://totp/Nuclear%20Admin:JANE.DOE?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Nuclear%20Admin&algorithm=SHA1&digits=6&period=30" };
 const CODES = Array.from({ length: 10 }, (_, i) => `AAAA${i}-BBBB${i}`);
@@ -44,7 +46,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     createAdmin: vi.fn(),
     merchants: vi.fn().mockResolvedValue([]),
     users: vi.fn().mockResolvedValue([]),
-    transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, transactions: [], next_cursor: null }),
+    transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 0, completed_volume: 0 }, transactions: [], next_cursor: null }),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
     model: vi.fn().mockResolvedValue(undefined),
     updateModel: vi.fn(),
@@ -753,8 +755,8 @@ describe("rotating an Access Token", () => {
 
 describe("admins page", () => {
   const ROWS = [
-    { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", status: "active", mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
-    { id: "a2", access_id: "KQ7M2XW9TBDV", name: "New Person", status: "active", mfa_enabled: false, locked: false, last_login_at: null, created_at: "2026-10-15T00:00:00Z", created_by: "NLINF8Q0KAZ4" },
+    { id: "a1", access_id: "NLINF8Q0KAZ4", name: "Nuclear Admin", role: "admin", status: "active", mfa_enabled: true, locked: false, last_login_at: "2026-10-15T20:00:00Z", created_at: "2026-10-14T00:00:00Z", created_by: null },
+    { id: "a2", access_id: "KQ7M2XW9TBDV", name: "New Person", role: "accounting", status: "active", mfa_enabled: false, locked: false, last_login_at: null, created_at: "2026-10-15T00:00:00Z", created_by: "NLINF8Q0KAZ4" },
   ];
   const CREDS = { access_id: "KQ7M2XW9TBDV", access_token: "Zk9-mQ4.vT7+xR2_bN5=cH8-wL3.jF6+" };
 
@@ -765,14 +767,16 @@ describe("admins page", () => {
     return user;
   }
 
-  it("lists admins with status, two-step, last sign-in and who added them", async () => {
+  it("lists admins with status, role, last sign-in and who added them", async () => {
     await openAdmins(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS) }));
     const first = await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     expect(within(first).getByText("Nuclear Admin")).toBeInTheDocument();
-    expect(within(first).getByText("On")).toBeInTheDocument();
+    expect(within(first).getByText("Admin")).toBeInTheDocument();
     expect(within(first).getByText("Operator")).toBeInTheDocument();
     const second = screen.getByRole("row", { name: /^KQ7M2XW9TBDV/ });
-    expect(within(second).getByText("Not set up")).toBeInTheDocument();
+    expect(within(second).getByText("Accounting")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Two-step" })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
     expect(within(second).getByText("Never")).toBeInTheDocument();
     expect(within(second).getByText("has not signed in yet")).toBeInTheDocument();
     expect(within(second).getByText("NLINF8Q0KAZ4")).toBeInTheDocument();
@@ -784,8 +788,9 @@ describe("admins page", () => {
     const user = await openAdmins(fakeApi({ admins, createAdmin }));
     await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     await user.type(screen.getByLabelText("Full name"), "  New Person ");
+    await user.click(screen.getByRole("radio", { name: /^Accounting/ }));
     await user.click(screen.getByRole("button", { name: "Create admin" }));
-    expect(createAdmin).toHaveBeenCalledWith("New Person");
+    expect(createAdmin).toHaveBeenCalledWith("New Person", "accounting");
     expect(await screen.findByTestId("access-id")).toHaveTextContent("KQ7M2XW9TBDV");
     expect(screen.getByTestId("access-token")).not.toHaveTextContent(CREDS.access_token);   // masked on screen
     expect(screen.getByText(/only time/)).toBeInTheDocument();
@@ -797,6 +802,7 @@ describe("admins page", () => {
     const user = await openAdmins(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), createAdmin }));
     await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     await user.type(screen.getByLabelText("Full name"), "New Person");
+    await user.click(screen.getByRole("radio", { name: /^Tags/ }));
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     await screen.findByTestId("access-token");
     const done = screen.getByRole("button", { name: "Done" });
@@ -816,6 +822,7 @@ describe("admins page", () => {
     const user = await openAdmins(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), createAdmin }));
     await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     await user.type(screen.getByLabelText("Full name"), "New Person");
+    await user.click(screen.getByRole("radio", { name: /^Tags/ }));
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     await user.click(await screen.findByRole("button", { name: "Download credentials" }));
     expect(click).toHaveBeenCalled();
@@ -831,8 +838,11 @@ describe("admins page", () => {
     await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter the person's name.");
-    expect(createAdmin).not.toHaveBeenCalled();
     await user.type(screen.getByLabelText("Full name"), "X");
+    await user.click(screen.getByRole("button", { name: "Create admin" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a role.");
+    expect(createAdmin).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("radio", { name: /^Sales/ }));
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't create the admin");
   });
@@ -842,6 +852,7 @@ describe("admins page", () => {
     const user = await openAdmins(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), createAdmin }));
     await screen.findByRole("row", { name: /^NLINF8Q0KAZ4/ });
     await user.type(screen.getByLabelText("Full name"), "X");
+    await user.click(screen.getByRole("radio", { name: /^Sales/ }));
     await user.click(screen.getByRole("button", { name: "Create admin" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
@@ -890,7 +901,7 @@ describe("merchants, users and transactions", () => {
 
   it("shows transactions with ALL selected by default and a card per filter with its count", async () => {
     const transactions = vi.fn().mockImplementation(async (kind: string) => ({
-      counts: { all: 12, sends: 5, taps: 3, funds: 2, agents: 2 },
+      counts: { all: 12, sends: 5, taps: 3, funds: 2, agents: 2 }, totals: { completed_count: 9, completed_volume: 123400 },
       transactions: [{ id: "t1", type: kind === "all" ? "send" : kind, status: "completed", status_code: null, amount: 500, timestamp: "2026-10-16T10:00:00Z", via: null, agent: kind === "agents", from: "Ada Lovelace", from_wallet: "Agent Smith", to: "Bob Builder", to_wallet: "Bob Builder" }],
       next_cursor: null,
     }));
@@ -899,23 +910,23 @@ describe("merchants, users and transactions", () => {
     const group = await screen.findByRole("radiogroup", { name: "Show" });
     expect(within(group).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["all", "sends", "taps", "funds", "agents"]);
     expect(within(group).getByRole("radio", { name: /^All/ })).toBeChecked();
-    expect(transactions).toHaveBeenCalledWith("all");
+    expect(transactions).toHaveBeenCalledWith("all", undefined, {});
     await screen.findByRole("row", { name: /Ada Lovelace/ });
     expect(group).toHaveTextContent("12");
     await user.click(within(group).getByRole("radio", { name: /^Agents/ }));
-    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("agents"));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("agents", undefined, {}));
     expect(await screen.findByText("agent")).toBeInTheDocument();
   });
 
   it("loads more transactions with the cursor", async () => {
     const t = (id: string) => ({ id, type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" });
     const transactions = vi.fn()
-      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, transactions: [t("a")], next_cursor: "c1" })
-      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, transactions: [t("b")], next_cursor: null });
+      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 2, completed_volume: 200 }, transactions: [t("a")], next_cursor: "c1" })
+      .mockResolvedValueOnce({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 2, completed_volume: 200 }, transactions: [t("b")], next_cursor: null });
     const user = await go(fakeApi({ transactions }), "Transactions");
     await screen.findAllByRole("row");
     await user.click(await screen.findByRole("button", { name: "Load More" }));
-    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", "c1"));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", "c1", {}));
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));   // header + two
     expect(screen.queryByRole("button", { name: "Load More" })).toBeNull();
   });
@@ -967,5 +978,157 @@ describe("page titles", () => {
     await signIn(fakeApi(), vi.fn().mockResolvedValue({ ...SIGNED, mfa_enabled: false }));
     await screen.findByRole("heading", { name: "Set up two-step verification" });
     expect(title()).toBe("Set Up Two-Step Verification · Nuclear Admin");
+  });
+});
+
+describe("roles", () => {
+  const as = (role: SignedIn["role"], pages: Page[]): SignedIn => ({ ...SIGNED, admin: { ...SIGNED.admin, role }, role, pages, landing: pages[0]! });
+  const ROLES_TABLE: [SignedIn["role"], Page[], string, string[]][] = [
+    ["accounting", ["overview", "transactions"], "/", ["Overview", "Transactions"]],
+    ["sales", ["users", "merchants", "tags"], "/users", ["Merchants", "Users", "Tags"]],
+    ["support", ["users", "transactions"], "/users", ["Users", "Transactions"]],
+    ["tags", ["tags"], "/tags", ["Tags"]],
+    ["merchants", ["merchants"], "/merchants", ["Merchants"]],
+  ];
+  const navLinks = () => within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent);
+
+  it.each(ROLES_TABLE)("%s sees only its own pages and lands on the first one after sign-in", async (role, pages, path, links) => {
+    await signIn(fakeApi(), vi.fn().mockResolvedValue(as(role, pages)));
+    await waitFor(() => expect(window.location.pathname).toBe(path));
+    expect(navLinks()).toEqual(links);
+  });
+
+  it("an address a role may not open sends it to its landing page (a Tags person typing /admins)", async () => {
+    window.history.replaceState(null, "", "/admins");
+    sessionStorage.setItem(TOKEN_KEY, "t");
+    render(<App makeApi={() => fakeApi({ me: vi.fn().mockResolvedValue({ ...ME, role: "tags", pages: ["tags"], landing: "tags" }) })} signIn={vi.fn()} />);
+    await screen.findByRole("heading", { name: "Tags" });
+    expect(window.location.pathname).toBe("/tags");
+    expect(screen.queryByRole("heading", { name: "Admins" })).toBeNull();
+  });
+
+  it("every role keeps its own Security page (the name on the right)", async () => {
+    const user = await signIn(fakeApi(), vi.fn().mockResolvedValue(as("tags", ["tags"])));
+    await user.click(await screen.findByRole("link", { name: "Jane Doe" }));
+    expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+  });
+
+  it("Sales can look at tags but not change them: no Add Tag card, no Provision or Edit on a tag", async () => {
+    const user = await signIn(fakeApi({ model: vi.fn().mockResolvedValue({ ...MODEL, tags: 600, unassigned: 480, activated: 120, pending: 400, rank: 1, models_total: 3 }) } as Partial<Api>), vi.fn().mockResolvedValue(as("sales", ["users", "merchants", "tags"])));
+    await user.click(await screen.findByRole("link", { name: "Tags" }));
+    await screen.findByRole("heading", { name: "NEO Band Lite" });
+    expect(screen.queryByRole("button", { name: "Add Tag" })).toBeNull();
+    await user.click(screen.getByRole("link", { name: /NEO Band Lite/ }));
+    await screen.findByRole("group", { name: "Sales Ranking" });
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Provision Tags" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Pending" })).toHaveTextContent("400");
+  });
+
+  it("the Tags role can change tags", async () => {
+    const user = await signIn(fakeApi(), vi.fn().mockResolvedValue(as("tags", ["tags"])));
+    expect(await screen.findByRole("button", { name: "Add Tag" })).toBeInTheDocument();
+    void user;
+  });
+
+  const ROWS = [
+    { id: "a1", access_id: "JANEDOE00001", name: "Jane Doe", role: "admin", status: "active", mfa_enabled: true, locked: false, last_login_at: null, created_at: "2026-10-14T00:00:00Z", created_by: null },
+    { id: "a2", access_id: "KQ7M2XW9TBDV", name: "Sam Sales", role: "sales", status: "active", mfa_enabled: true, locked: false, last_login_at: null, created_at: "2026-10-15T00:00:00Z", created_by: "JANEDOE00001" },
+  ];
+
+  it("the Admins page changes someone's role in a modal; you cannot change your own", async () => {
+    const setAdminRole = vi.fn().mockResolvedValue({ admin: { id: "a2", access_id: "KQ7M2XW9TBDV", name: "Sam Sales", role: "support" } });
+    const user = await signIn(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), setAdminRole }));
+    await user.click(await screen.findByRole("link", { name: "Admins" }));
+    await screen.findByRole("row", { name: /^KQ7M2XW9TBDV/ });
+    expect(screen.queryByRole("button", { name: "Change role for Jane Doe" })).toBeNull();         // that is you
+    await user.click(screen.getByRole("button", { name: "Change role for Sam Sales" }));
+    const d = within(screen.getByRole("dialog", { name: "Role for Sam Sales" }));
+    expect(d.getByRole("radio", { name: /^Sales/ })).toBeChecked();
+    expect(d.getByRole("button", { name: "Save Role" })).toBeDisabled();                           // nothing changed yet
+    await user.click(d.getByRole("radio", { name: /^Support/ }));
+    await user.click(d.getByRole("button", { name: "Save Role" }));
+    await waitFor(() => expect(setAdminRole).toHaveBeenCalledWith("a2", "support"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("each role in the picker says what it can open", async () => {
+    const user = await signIn(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS) }));
+    await user.click(await screen.findByRole("link", { name: "Admins" }));
+    const group = await screen.findByRole("radiogroup", { name: "Role" });
+    expect(within(group).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["admin", "accounting", "sales", "support", "tags", "merchants"]);
+    expect(group).toHaveTextContent("Overview and Transactions");
+    expect(group).toHaveTextContent("Tags only");
+  });
+});
+
+describe("transaction periods", () => {
+  async function open(api: Api) {
+    const user = await signIn(api);
+    await screen.findByRole("article", { name: "Scheme balance" });
+    await user.click(screen.getByRole("link", { name: "Transactions" }));
+    await screen.findByRole("radiogroup", { name: "Show" });
+    return user;
+  }
+  const page = (n = 0) => ({ counts: { all: n, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: n, completed_volume: n * 1000 }, transactions: [], next_cursor: null });
+
+  it("offers All Time (the default), Today, Yesterday, Last 7 Days, Last 30 Days, This Month, Last Month and a custom range", async () => {
+    await open(fakeApi());
+    const sel = screen.getByLabelText("Period") as HTMLSelectElement;
+    expect(sel.value).toBe("all");
+    expect(within(sel).getAllByRole("option").map((o) => o.textContent)).toEqual(["All Time", "Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month", "Custom Range"]);
+  });
+
+  it("asks the API for the chosen period, shows its totals, and the cards follow", async () => {
+    const transactions = vi.fn().mockResolvedValue(page(3));
+    const user = await open(fakeApi({ transactions }));
+    await user.selectOptions(screen.getByLabelText("Period"), "today");
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", undefined, expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), to: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) })));
+    const last = transactions.mock.calls.at(-1)![2];
+    expect(last.from).toBe(last.to);
+    const totalsLine = await screen.findByText(/completed/, { selector: ".period-totals" });
+    expect(totalsLine).toHaveTextContent("3 completed · $30.00");
+    await user.click(screen.getByRole("radio", { name: /^Sends/ }));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("sends", undefined, last));            // the kind keeps the period
+  });
+
+  it("works out the ranges in New York dates", async () => {
+    const { periodRange } = await import("./views/Transactions");
+    const now = new Date("2026-03-09T03:30:00Z");                       // 23:30 on 8 March in New York (EDT started that day)
+    expect(periodRange("today", { from: "", to: "" }, now)).toEqual({ from: "2026-03-08", to: "2026-03-08" });
+    expect(periodRange("yesterday", { from: "", to: "" }, now)).toEqual({ from: "2026-03-07", to: "2026-03-07" });
+    expect(periodRange("7d", { from: "", to: "" }, now)).toEqual({ from: "2026-03-02", to: "2026-03-08" });
+    expect(periodRange("30d", { from: "", to: "" }, now)).toEqual({ from: "2026-02-07", to: "2026-03-08" });
+    expect(periodRange("month", { from: "", to: "" }, now)).toEqual({ from: "2026-03-01", to: "2026-03-08" });
+    expect(periodRange("last-month", { from: "", to: "" }, now)).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    expect(periodRange("last-month", { from: "", to: "" }, new Date("2026-01-15T12:00:00Z"))).toEqual({ from: "2025-12-01", to: "2025-12-31" });
+    expect(periodRange("all", { from: "", to: "" }, now)).toEqual({});
+    expect(periodRange("custom", { from: "2026-02-01", to: "" }, now)).toEqual({ from: "2026-02-01" });
+  });
+
+  it("a custom range takes two dates, and a start after the end is flagged instead of sent", async () => {
+    const transactions = vi.fn().mockResolvedValue(page(1));
+    const user = await open(fakeApi({ transactions }));
+    await user.selectOptions(screen.getByLabelText("Period"), "custom");
+    await user.type(screen.getByLabelText("From"), "2026-10-01");
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", undefined, { from: "2026-10-01" }));
+    await user.type(screen.getByLabelText("To"), "2026-10-15");
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", undefined, { from: "2026-10-01", to: "2026-10-15" }));
+    const calls = transactions.mock.calls.length;
+    await user.clear(screen.getByLabelText("From"));
+    await user.type(screen.getByLabelText("From"), "2026-10-20");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The start date is after the end date.");
+    expect(transactions.mock.calls.slice(calls).some((c) => c[2].from === "2026-10-20")).toBe(false);
+  });
+
+  it("load more keeps the period", async () => {
+    const t = (id: string) => ({ id, type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" });
+    const transactions = vi.fn().mockImplementation(async (_k: string, cursor?: string) => ({ ...page(2), transactions: [t(cursor ? "b" : "a")], next_cursor: cursor ? null : "c1" }));
+    const user = await open(fakeApi({ transactions }));
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    await screen.findAllByRole("row");
+    const range = transactions.mock.calls.at(-1)![2];
+    await user.click(await screen.findByRole("button", { name: "Load More" }));
+    await waitFor(() => expect(transactions).toHaveBeenLastCalledWith("all", "c1", range));
   });
 });

@@ -3,22 +3,24 @@
 // the Access Token (32 characters) and returns them once; only a hash of the token is kept.
 //
 //   ADMIN_API_TOKEN=... node scripts/add-admin.mjs --name "Jane Doe"
-//   ADMIN_API_TOKEN=... node scripts/add-admin.mjs --name "Jane Doe" --save jane-credentials.txt
+//   ADMIN_API_TOKEN=... node scripts/add-admin.mjs --name "Jane Doe" --role accounting --save jane-credentials.txt
+//
+// Roles: admin (default), accounting, sales, support, tags, merchants.
 //
 // The person sets up two-step verification at first sign-in.
 import { client, flags, showCredentials } from "./admin-client.mjs";
 
 const f = flags(process.argv.slice(2));
 if (typeof f.name !== "string" || !f.name.trim()) {
-  console.error('Usage: add-admin.mjs --name "<full name>" [--save <file>]');
+  console.error('Usage: add-admin.mjs --name "<full name>" [--role admin|accounting|sales|support|tags|merchants] [--save <file>]');
   process.exit(1);
 }
 
 const call = client();
-const { status, json } = await call("POST", "/v1/admin/admins", { name: f.name.trim() });
+const { status, json } = await call("POST", "/v1/admin/admins", { name: f.name.trim(), role: typeof f.role === "string" ? f.role : "admin" });
 if (status !== 201) {
   console.error(`Error creating the account (${status}): ${JSON.stringify(json)}`);
   process.exit(1);
 }
-console.log(`Created ${json.admin.name}.`);
+console.log(`Created ${json.admin.name} (${json.admin.role}).`);
 showCredentials(json.admin.name, json.credentials, f.save);

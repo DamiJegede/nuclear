@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
+import { PAGES, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
@@ -44,10 +45,14 @@ const bearer = (h: string | undefined) => (h ?? "").startsWith("Bearer ") ? (h a
 
 const loginBody = z.object({ access_id: z.string().trim().min(1).max(64), access_token: z.string().length(ACCESS_TOKEN_LENGTH) });
 
+/** What the portal needs to know about a role: the pages to show and where to land. */
+const roleJson = (role: Role) => ({ role, pages: ROLE_PAGES[role], landing: landing(role) });
+
 const sessionJson = (r: Session) => ({
   session_token: r.token,
   expires_at: r.expiresAt,
-  admin: { access_id: r.admin.access_id, name: r.admin.name },
+  admin: { access_id: r.admin.access_id, name: r.admin.name, role: r.admin.role },
+  ...roleJson(r.admin.role),
   mfa_enabled: r.admin.mfa_enabled,
 });
 
@@ -98,7 +103,7 @@ admin.use("*", async (c, next) => {
   const s = await findSession(c.get("sql"), token);
   if (!s) return c.json({ error: "unauthorized" }, 401);
   c.set("adminAuth", {
-    kind: "admin", adminId: s.admin_id, accessId: s.access_id, name: s.name,
+    kind: "admin", adminId: s.admin_id, accessId: s.access_id, name: s.name, role: s.role,
     sessionId: s.session_id, mfaEnabled: s.mfa_enabled,
   });
 
@@ -117,12 +122,36 @@ const requireOperator = async (c: any, next: any) => {
   await next();
 };
 
+// ---- Roles: which routes each role may use (the operator token counts as admin) ------------------
+const requirePage = (page: Page) => async (c: any, next: any) => {
+  const a = c.get("adminAuth");
+  if (a.kind === "admin" && !canSee(a.role, page)) return c.json({ error: "forbidden_role" }, 403);
+  await next();
+};
+/** Reading tags needs the Tags page; changing them needs a role that manages tags. */
+const tagsAccess = async (c: any, next: any) => {
+  const a = c.get("adminAuth");
+  if (a.kind === "admin") {
+    if (!canSee(a.role, "tags")) return c.json({ error: "forbidden_role" }, 403);
+    if (c.req.method !== "GET" && !TAG_WRITERS.includes(a.role)) return c.json({ error: "forbidden_role" }, 403);
+  }
+  await next();
+};
+admin.use("/stats", requirePage("overview"));
+admin.use("/merchants", requirePage("merchants"));
+admin.use("/users", requirePage("users"));
+admin.use("/transactions", requirePage("transactions"));
+admin.use("/admins", requirePage("admins"));
+admin.use("/admins/*", requirePage("admins"));
+admin.use("/tag-models", tagsAccess);
+admin.use("/tag-models/*", tagsAccess);
+
 admin.get("/me", (c) => {
   const a = c.get("adminAuth");
   return c.json(
     a.kind === "operator"
-      ? { operator: true }
-      : { access_id: a.accessId, name: a.name, mfa_enabled: a.mfaEnabled },
+      ? { operator: true, ...roleJson("admin") }
+      : { access_id: a.accessId, name: a.name, ...roleJson(a.role), mfa_enabled: a.mfaEnabled },
   );
 });
 
@@ -190,7 +219,7 @@ const requireStaff = async (c: any, next: any) => {
   await next();
 };
 
-const newAdminBody = z.object({ name: z.string().trim().min(1).max(80) });
+const newAdminBody = z.object({ name: z.string().trim().min(1).max(80), role: z.enum(ROLES).default("admin") });
 
 // The server generates the Access ID (12 characters, uppercase) and the access token (32 characters).
 // The token is returned here, once, and only its hash is stored: it can never be shown again.
@@ -205,10 +234,10 @@ admin.post("/admins", requireStaff, async (c) => {
   for (let attempt = 0; attempt < 5; attempt++) {
     const accessId = generateAccessId();
     try {
-      const [a] = await sql<{ id: string; access_id: string; name: string }[]>`
-        insert into admins (access_id, name, access_token_hash, created_by)
-        values (${accessId}, ${body.data.name}, ${hash}, ${by.kind === "admin" ? by.adminId : null})
-        returning id, access_id, name`;
+      const [a] = await sql<{ id: string; access_id: string; name: string; role: Role }[]>`
+        insert into admins (access_id, name, role, access_token_hash, created_by)
+        values (${accessId}, ${body.data.name}, ${body.data.role}, ${hash}, ${by.kind === "admin" ? by.adminId : null})
+        returning id, access_id, name, role`;
       return c.json(
         {
           admin: { ...a, status: "active" },
@@ -225,13 +254,32 @@ admin.post("/admins", requireStaff, async (c) => {
 
 admin.get("/admins", requireStaff, async (c) => {
   const rows = await c.get("sql")`
-    select a.id, a.access_id, a.name, a.status, a.last_login_at, a.created_at,
+    select a.id, a.access_id, a.name, a.role, a.status, a.last_login_at, a.created_at,
            (a.mfa_enabled_at is not null) as mfa_enabled,
            (a.locked_until is not null and a.locked_until > now()) as locked,
            c.access_id as created_by
       from admins a left join admins c on c.id = a.created_by
      order by a.created_at, a.id`;
   return c.json({ admins: rows });
+});
+
+// Change an admin's role (Admin role or the operator). You cannot change your own, so the person making the
+// change always stays an Admin (someone can always manage roles). Takes effect on their next request.
+admin.put("/admins/:id/role", async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param("id"));
+  const body = z.object({ role: z.enum(ROLES) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const by = c.get("adminAuth");
+  if (by.kind === "admin" && by.adminId === id.data) return c.json({ error: "cannot_change_own_role" }, 409);
+  const sql = c.get("sql");
+  return sql.begin(async (tx) => {
+    const [cur] = await tx<{ role: Role }[]>`select role from admins where id = ${id.data} for no key update`;
+    if (!cur) return c.json({ error: "not_found" }, 404);
+    const [a] = await tx<{ id: string; access_id: string; name: string; role: Role; status: string }[]>`
+      update admins set role = ${body.data.role} where id = ${id.data} returning id, access_id, name, role, status`;
+    return c.json({ admin: a });
+  });
 });
 
 const patchAdminBody = z
@@ -318,7 +366,11 @@ const txQuery = z.object({
   kind: z.enum(TX_KINDS as [TxKind, ...TxKind[]]).default("all"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().max(100).optional(),
-});
+  // Program dates (America/New_York), inclusive: from the start of `from` to the end of `to`.
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine((q) => [q.from, q.to].every((d) => d === undefined || (!Number.isNaN(Date.parse(d)) && new Date(d).toISOString().startsWith(d))), { message: "invalid_date" })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, { message: "from_after_to" });
 admin.get("/transactions", async (c) => {
   const q = txQuery.safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
@@ -328,7 +380,7 @@ admin.get("/transactions", async (c) => {
     if (!ts || !id || Number.isNaN(Date.parse(ts)) || !z.string().uuid().safeParse(id).success) return c.json({ error: "invalid_cursor" }, 400);
     cursor = { ts, id };
   }
-  return c.json(await transactionFeed(c.get("sql"), q.data.kind, q.data.limit, cursor));
+  return c.json(await transactionFeed(c.get("sql"), q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }));
 });
 
 // ---- Tag models -------------------------------------------------------------------------------

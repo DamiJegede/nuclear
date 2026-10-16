@@ -1,5 +1,7 @@
 export type Vol = { count: number; volume: number };
 
+import type { Page, Role } from "./roles";
+
 export type Stats = {
   as_of: string;
   scheme: {
@@ -64,7 +66,14 @@ export type TxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
   via: "tap" | "pass" | "app" | null; agent: boolean; from: string | null; from_wallet: string | null; to: string | null; to_wallet: string | null;
 };
-export type TxPage = { counts: Record<TxKind, number>; transactions: TxRow[]; next_cursor: string | null };
+export type TxPage = {
+  counts: Record<TxKind, number>;
+  totals: { completed_count: number; completed_volume: number };
+  transactions: TxRow[];
+  next_cursor: string | null;
+};
+/** Program dates (America/New_York, YYYY-MM-DD), inclusive. */
+export type DayRange = { from?: string; to?: string };
 
 /** One model with its provisioning and activation numbers. */
 export type TagDetail = TagModel & {
@@ -85,12 +94,15 @@ export type NewModel = {
   status: TagModel["status"];
 };
 
-export type AdminMe = { access_id: string; name: string; mfa_enabled: boolean };
+export type AdminMe = { access_id: string; name: string; role: Role; pages: Page[]; landing: Page; mfa_enabled: boolean };
 
 export type SignedIn = {
   session_token: string;
   expires_at: string;
-  admin: { access_id: string; name: string };
+  admin: { access_id: string; name: string; role: Role };
+  role: Role;
+  pages: Page[];
+  landing: Page;
   mfa_enabled: boolean;
 };
 
@@ -106,6 +118,7 @@ export type AdminRow = {
   id: string;
   access_id: string;
   name: string;
+  role: Role;
   status: "active" | "disabled";
   mfa_enabled: boolean;
   locked: boolean;
@@ -169,12 +182,15 @@ export function createApi(token: string, base: string = API_URL) {
       (await request<{ merchants: MerchantRow[] }>("GET", `/v1/admin/merchants${q ? `?q=${encodeURIComponent(q)}` : ""}`)).merchants,
     users: async (q?: string) =>
       (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
-    transactions: (kind: TxKind = "all", cursor?: string) =>
-      request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
+      request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */
-    createAdmin: (name: string) =>
-      request<{ admin: Pick<AdminRow, "id" | "access_id" | "name">; credentials: Credentials }>("POST", "/v1/admin/admins", { name }),
+    createAdmin: (name: string, role: Role) =>
+      request<{ admin: Pick<AdminRow, "id" | "access_id" | "name" | "role">; credentials: Credentials }>("POST", "/v1/admin/admins", { name, role }),
+    /** Changes an admin's role (not your own). Takes effect on their next request. */
+    setAdminRole: (id: string, role: Role) =>
+      request<{ admin: Pick<AdminRow, "id" | "access_id" | "name" | "role"> }>("PUT", `/v1/admin/admins/${encodeURIComponent(id)}/role`, { role }),
     /** Rotates an admin's Access Token; the new one is returned once. */
     rotateAccessToken: (id: string) =>
       request<{ admin: Pick<AdminRow, "id" | "access_id" | "name">; credentials: Credentials }>("POST", `/v1/admin/admins/${encodeURIComponent(id)}/rotate-token`),

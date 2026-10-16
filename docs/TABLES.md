@@ -71,9 +71,9 @@ No spend_date or member_account_id field. A wallet is a spending identity/permis
 
 Audit trail of earmark changes (migration 0011): id, wallet_id and account_id (composite foreign key, so the wallet must belong to the account), amount (signed, never 0: positive = set aside, negative = returned to the shared funds), balance_after (NULL = released), device_id (the owner session that made the change, nullable) and created_at.
 
-## daily_reset
+## system
 
-One row (migration 0015): `id` (always true) and `last_day`, the program date (America/New_York) on which wallets.spent_today and products.sold_today were last reset. The first cron run or money request on a new program day updates it and zeroes the counters in one transaction, so a missed cron cannot leave yesterday's counters in force.
+Key/value system state (migration 0016, replacing the one-row daily_reset): `key` (primary key), `value` (text) and `updated_at`. Keys in use: `daily_reset_day` (the America/New_York date on which wallets.spent_today and products.sold_today were last reset; the first cron run or money request on a new day updates it and zeroes the counters in one transaction, so a missed cron cannot leave yesterday's counters in force) and `cron_last_run` (the scheduled time of the last daily job, a heartbeat).
 
 ## throttles
 
@@ -271,6 +271,7 @@ People who sign in to the admin portal with an Access ID and an access token (th
 | updated_at | Last update timestamp. |
 
 Every sign-in failure (unknown id, wrong password, wrong code, disabled, locked) gives the same answer. With multi-factor enrolled, a correct password only yields a five-minute challenge; a session needs a valid authenticator or recovery code too, and wrong codes count toward the same lock. Any fully signed-in admin (or the operator, via scripts) can create admins; disabling, resetting and similar changes are the operator's. There is no admin role distinction yet.
+| role | admin (default), accounting, sales, support, tags or merchants (check constraint; migration 0017; physically the last column). Decides which admin pages and API routes the person may use; see AGENTS.md. |
 
 ## admin_sessions
 

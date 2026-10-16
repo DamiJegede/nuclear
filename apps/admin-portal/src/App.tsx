@@ -8,6 +8,7 @@ import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
 import { Tags } from "./views/Tags";
 import { usePageTitle } from "./title";
+import type { Page } from "./roles";
 import { TagDetail } from "./views/TagDetail";
 import { Merchants, Users } from "./views/People";
 import { Transactions } from "./views/Transactions";
@@ -98,6 +99,13 @@ export function App({
     return () => { alive = false; };
   }, [api, me, onError]);
 
+  // Each role sees only its own pages. Anything else in the address bar goes to the role's landing page.
+  useEffect(() => {
+    if (!me || !me.mfa_enabled) return;
+    const ok = view === "security" || me.pages.includes(view === "tag" ? "tags" : (view as Page));
+    if (!ok) setView(me.landing, true);
+  }, [me, view, setView]);
+
   const signOut = useCallback(async () => {
     try { await api?.logout(); } catch { /* the token is dropped locally either way */ }
     clear();
@@ -112,7 +120,8 @@ export function App({
         onSignedIn={(r) => {
           writeToken(r.session_token);
           setNotice(null);
-          setMe({ access_id: r.admin.access_id, name: r.admin.name, mfa_enabled: r.mfa_enabled });
+          setMe({ access_id: r.admin.access_id, name: r.admin.name, role: r.role, pages: r.pages, landing: r.landing, mfa_enabled: r.mfa_enabled });
+          setView(r.landing, true);                       // each role lands on its own first page
           setToken(r.session_token);
         }}
       />
@@ -135,12 +144,15 @@ export function App({
     );
   }
 
+  // Tags can be changed by Admin and Tags; Sales may look.
+  const canWriteTags = me.role === "admin" || me.role === "tags";
+
   return (
     <div className="shell">
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["transactions", "Transactions"]] as const).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["transactions", "Transactions"]] as const).filter(([v]) => me.pages.includes(v)).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
@@ -152,14 +164,14 @@ export function App({
         </div>
       </header>
       <main>
-        {view === "overview" && <Overview api={api} onError={onError} />}
-        {view === "tags" && <Tags api={api} onError={onError} open={(id) => setView("tag", false, id)} />}
-        {view === "tag" && route.id && <TagDetail api={api} id={route.id} onBack={() => setView("tags")} onError={onError} />}
+        {view === "overview" && me.pages.includes("overview") && <Overview api={api} onError={onError} />}
+        {view === "tags" && me.pages.includes("tags") && <Tags api={api} onError={onError} canWrite={canWriteTags} open={(id) => setView("tag", false, id)} />}
+        {view === "tag" && route.id && me.pages.includes("tags") && <TagDetail api={api} id={route.id} canWrite={canWriteTags} onBack={() => setView("tags")} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
-        {view === "admins" && <Admins api={api} onError={onError} />}
-        {view === "merchants" && <Merchants api={api} onError={onError} />}
-        {view === "users" && <Users api={api} onError={onError} />}
-        {view === "transactions" && <Transactions api={api} onError={onError} />}
+        {view === "admins" && me.pages.includes("admins") && <Admins api={api} me={me} onError={onError} />}
+        {view === "merchants" && me.pages.includes("merchants") && <Merchants api={api} onError={onError} />}
+        {view === "users" && me.pages.includes("users") && <Users api={api} onError={onError} />}
+        {view === "transactions" && me.pages.includes("transactions") && <Transactions api={api} onError={onError} />}
       </main>
     </div>
   );

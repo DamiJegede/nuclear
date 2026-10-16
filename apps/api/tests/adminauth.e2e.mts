@@ -96,7 +96,7 @@ const bad = [await signInRaw("JANE.DOE", "w".repeat(32)), await signInRaw("NOBOD
 eq("wrong token, unknown id, empty token: same refusal", bad.map((b) => [b.status, b.json.error ?? "invalid_request"]), [[401, "invalid_credentials"], [401, "invalid_credentials"], [400, "invalid_request"]]);
 eq("login body is validated", (await call("POST", "/v1/admin/login", { body: {} })).status, 400);
 const li = await signInRaw("Jane.Doe", TOKEN0);
-eq("sign-in works (access ID case-insensitive)", [li.status, li.json.admin, li.json.must_change_access_token, li.json.mfa_enabled, typeof li.json.session_token], [200, { access_id: "JANE.DOE", name: "Jane Doe" }, undefined, false, "string"]);
+eq("sign-in works (access ID case-insensitive)", [li.status, li.json.admin, li.json.must_change_access_token, li.json.mfa_enabled, typeof li.json.session_token], [200, { access_id: "JANE.DOE", name: "Jane Doe", role: "admin" }, undefined, false, "string"]);
 const T1 = li.json.session_token;
 eq("only a hash of the session token is stored", [(await q("select count(*)::int n from admin_sessions where token_hash = $1", [T1]))[0].n, (await q("select count(*)::int n from admin_sessions where token_hash = $1", [createHash("sha256").update(T1).digest("hex")]))[0].n], [0, 1]);
 const hrs = (await q("select extract(epoch from (expires_at - created_at))/3600 as h from admin_sessions where admin_id=$1 limit 1", [jane]))[0].h;
@@ -107,7 +107,7 @@ eq("before enrolling, nothing but /me, /logout and MFA setup is open", [
   (await call("GET", "/v1/admin/stats", { token: T1 })).json.error,
   (await call("GET", "/v1/admin/tag-models", { token: T1 })).status,
   (await call("POST", "/v1/admin/admins", { token: T1, body: { name: "Sneaky" } })).status], ["mfa_setup_required", 403, 403]);
-eq("/me has no token-change flag", (await call("GET", "/v1/admin/me", { token: T1 })).json, { access_id: "JANE.DOE", name: "Jane Doe", mfa_enabled: false });
+eq("/me has no token-change flag", (await call("GET", "/v1/admin/me", { token: T1 })).json, { access_id: "JANE.DOE", name: "Jane Doe", role: "admin", pages: ["overview", "merchants", "users", "tags", "admins", "transactions"], landing: "overview", mfa_enabled: false });
 const recov = await enroll(T1, "JANE.DOE");
 eq("after enrolling, the same session reaches the data", [recov.length, (await call("GET", "/v1/admin/stats", { token: T1 })).status], [10, 200]);
 eq("there is no route to change an Access Token", [(await call("POST", "/v1/admin/access-token", { token: T1, body: { current_access_token: TOKEN0, new_access_token: "q".repeat(32) } })).status >= 400, (await signIn("JANE.DOE", TOKEN0)).status], [true, 200]);
@@ -125,7 +125,7 @@ const list = (await as("GET", "/v1/admin/admins")).json.admins;
 eq("the list shows who created whom (the operator shows as null)", [list.find((a: any) => a.access_id === byJane.json.credentials.access_id).created_by, list.find((a: any) => a.access_id === cr.access_id).created_by], ["JANE.DOE", null]);
 eq("the list never contains tokens or hashes", [JSON.stringify(list).includes("scrypt"), JSON.stringify(list).includes(byJane.json.credentials.access_token), JSON.stringify(list).includes("hash")], [false, false, false]);
 eq("changing existing admins stays with the operator", [(await as("PATCH", `/v1/admin/admins/${jane}`, { status: "disabled" })).status, (await as("PATCH", `/v1/admin/admins/${jane}`, { reset_access_token: true })).status], [403, 403]);
-eq("the operator token still works for scripts", [(await op("GET", "/v1/admin/stats")).status, (await op("GET", "/v1/admin/me")).json], [200, { operator: true }]);
+eq("the operator token still works for scripts", [(await op("GET", "/v1/admin/stats")).status, (await op("GET", "/v1/admin/me")).json], [200, { operator: true, role: "admin", pages: ["overview", "merchants", "users", "tags", "admins", "transactions"], landing: "overview" }]);
 eq("a random token opens nothing", (await call("GET", "/v1/admin/stats", { token: randomBytes(24).toString("base64url") })).status, 401);
 eq("the new admin can sign in, has no MFA yet", await (async () => { const r = await signInRaw(byJane.json.credentials.access_id, byJane.json.credentials.access_token); return [r.status, r.json.mfa_enabled]; })(), [200, false]);
 

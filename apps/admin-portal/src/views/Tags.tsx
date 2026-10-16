@@ -3,7 +3,7 @@ import type { Api, TagModel } from "../api";
 import { ModelCard } from "./ModelCard";
 import { TagFormModal } from "./TagForm";
 
-export function Tags({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open: (id: string) => void }) {
+export function Tags({ api, onError, open, canWrite = true }: { api: Api; onError: (e: unknown) => void; open: (id: string) => void; canWrite?: boolean }) {
   const [models, setModels] = useState<TagModel[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -31,12 +31,14 @@ export function Tags({ api, onError, open }: { api: Api; onError: (e: unknown) =
       ) : (
         <ul className="model-grid" aria-label="Tags">
           {models.map((m) => <ModelCard key={m.id} m={m} href={`/tags/${m.id}`} onOpen={() => open(m.id)} />)}
-          <li className="model-card model-add">
-            <button type="button" onClick={() => setAdding(true)} aria-label="Add Tag">
-              <span className="plus" aria-hidden>+</span>
-              <span>Add Tag</span>
-            </button>
-          </li>
+          {canWrite && (
+            <li className="model-card model-add">
+              <button type="button" onClick={() => setAdding(true)} aria-label="Add Tag">
+                <span className="plus" aria-hidden>+</span>
+                <span>Add Tag</span>
+              </button>
+            </li>
+          )}
         </ul>
       )}
 

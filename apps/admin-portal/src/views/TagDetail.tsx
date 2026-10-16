@@ -7,7 +7,7 @@ import { ProvisionModal } from "./Provision";
 import { TagFormModal } from "./TagForm";
 
 /** One tag: a static card, its sales rank and activation numbers, provisioning and editing. */
-export function TagDetail({ api, id, onBack, onError }: { api: Api; id: string; onBack: () => void; onError: (e: unknown) => void }) {
+export function TagDetail({ api, id, onBack, onError, canWrite = true }: { api: Api; id: string; onBack: () => void; onError: (e: unknown) => void; canWrite?: boolean }) {
   const [m, setM] = useState<Detail | null>(null);
   usePageTitle(m ? `${m.name} · Tags` : "Tag");
   const [failed, setFailed] = useState(false);
@@ -50,15 +50,22 @@ export function TagDetail({ api, id, onBack, onError }: { api: Api; id: string; 
               <strong className="stat-value">{int(m.activated)}</strong>
               <span className="stat-sub">of {int(m.tags)} provisioned</span>
             </div>
-            <button type="button" className="model-card stat action" onClick={() => setProvisioning(true)} aria-label="Provision Tags">
+            {canWrite && <button type="button" className="model-card stat action" onClick={() => setProvisioning(true)} aria-label="Provision Tags">
               <span className="stat-label">Provision Tags</span>
               <strong className="stat-value">{int(m.pending)}</strong>
               <span className="stat-sub">PENDING · {int(m.tags)} of {int(m.quantity)} loaded</span>
-            </button>
-            <button type="button" className="model-card stat action" onClick={() => setEditing(true)} aria-label="Edit">
+            </button>}
+            {canWrite && <button type="button" className="model-card stat action" onClick={() => setEditing(true)} aria-label="Edit">
               <PencilIcon />
               <span className="stat-label">Edit</span>
-            </button>
+            </button>}
+            {!canWrite && (
+              <div className="model-card static stat" role="group" aria-label="Pending">
+                <span className="stat-label">Pending</span>
+                <strong className="stat-value">{int(m.pending)}</strong>
+                <span className="stat-sub">{int(m.tags)} of {int(m.quantity)} loaded</span>
+              </div>
+            )}
           </div>
         </div>
       )}

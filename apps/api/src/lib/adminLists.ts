@@ -51,7 +51,14 @@ type TxRow = {
 };
 
 /** The transaction feed for the admin portal, newest first, with a count per filter card. */
-export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cursor: { ts: string; id: string } | null) {
+/** An inclusive range of program dates (America/New_York), either end optional. */
+export type DayRange = { from: string | null; to: string | null };
+
+export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cursor: { ts: string; id: string } | null, range: DayRange = { from: null, to: null }) {
+  // A day runs from 00:00 to 24:00 New York time (so a spring-forward or fall-back day is 23 or 25 hours long).
+  const inRange = sql`
+    ${range.from ? sql`and t."timestamp" >= (${range.from}::text::date)::timestamp at time zone ${PROGRAM_TZ}` : sql``}
+    ${range.to ? sql`and t."timestamp" < ((${range.to}::text::date + 1)::timestamp at time zone ${PROGRAM_TZ})` : sql``}`;
   const filter =
     kind === "sends" ? sql`and t.type = 'send'`
     : kind === "taps" ? sql`and t.type = 'pay' and (t.tag_id is not null or t.pass_id is not null)`
@@ -75,7 +82,7 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
       left join accounts ta on ta.id = t.to_account_id
       left join businesses tb on tb.account_id = t.to_account_id
       left join wallets tw on tw.id = t.to_wallet_id
-     where true ${filter}
+     where true ${filter} ${inRange}
        ${cursor ? sql`and (t."timestamp", t.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
      order by t."timestamp" desc, t.id desc
      limit ${limit + 1}`;
@@ -88,9 +95,17 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
            (count(*) filter (where t.type = 'pay' and (t.tag_id is not null or t.pass_id is not null)))::int as taps,
            (count(*) filter (where t.type = 'fund'))::int as funds,
            (count(*) filter (where fw.type = 'agent' and t.type in ('send', 'pay')))::int as agents
-      from transactions t left join wallets fw on fw.id = t.from_wallet_id`;
+      from transactions t left join wallets fw on fw.id = t.from_wallet_id
+     where true ${inRange}`;
+
+  // Money moved by the completed transactions of the chosen filter and period.
+  const [tot] = await sql<{ n: number; v: bigint }[]>`
+    select count(*)::int as n, coalesce(sum(t.amount), 0) as v
+      from transactions t left join wallets fw on fw.id = t.from_wallet_id
+     where t.status = 'completed' ${filter} ${inRange}`;
   return {
     counts: c!,
+    totals: { completed_count: tot!.n, completed_volume: n(tot!.v) },
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       via: r.via, agent: r.agent, from: r.from_name, from_wallet: r.from_wallet, to: r.to_name, to_wallet: r.to_wallet,

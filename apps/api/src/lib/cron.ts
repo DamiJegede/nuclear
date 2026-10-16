@@ -14,6 +14,9 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
   const sql = connect(env);
   try {
     const swept = await sweep(sql);
+    // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
+    await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})
+              on conflict (key) do update set value = excluded.value`;
     return { ...(await ensureDay(sql, easternDate(new Date(scheduledTime)))), swept };
   } finally {
     await sql.end();

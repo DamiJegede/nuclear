@@ -14,8 +14,8 @@ const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g)
 const at = (y: number, m: number, d: number, h: number, min = 0) => Date.UTC(y, m - 1, d, h, min);
 const local = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
 const sql = connect(env);
-const setDay = (d: string) => q("update daily_reset set last_day = $1::date", [d]);
-const day = async () => (await q("select last_day::text d from daily_reset"))[0].d as string;
+const setDay = (d: string) => q("update system set value = $1 where key = 'daily_reset_day'", [d]);
+const day = async () => (await q("select value d from system where key = 'daily_reset_day'"))[0].d as string;
 
 // ---- program dates around daylight saving
 eq("04:00 UTC is the start of the New York day in summer, 05:00 UTC in winter", [easternDate(new Date(at(2026, 7, 15, 4))), easternDate(new Date(at(2026, 7, 15, 3, 59))), easternDate(new Date(at(2026, 1, 15, 5))), easternDate(new Date(at(2026, 1, 15, 4, 59)))], ["2026-07-15", "2026-07-14", "2026-01-15", "2026-01-14"]);
@@ -81,6 +81,9 @@ await setDay("2020-01-01");
 const burst = await Promise.all(Array.from({ length: 10 }, (_, i) => send("burst" + i, 10)));
 eq("ten simultaneous sends across the rollover: all succeed, the day is reset once, and spent_today is exactly what was sent since", [burst.every((r) => r.status === 201), await spent(), await day() === today], [true, 100, true]);
 
+// ---- the heartbeat and the table
+eq("the system table holds the reset day and, after any cron run, when the cron last ran; daily_reset is gone", [(await q("select key from system order by key")).map((r) => r.key), (await q("select to_regclass('daily_reset') as t"))[0].t], [["cron_last_run", "daily_reset_day"], null]);
+
 // ---- the entry point Cloudflare calls
 const worker = (await import("../src/index.ts")).default as any;
 await setDay("2026-03-07"); await q("update wallets set spent_today = 777 where id=$1", [wallet]);
@@ -92,5 +95,6 @@ pending = [];
 await worker.scheduled({ scheduledTime: at(2026, 3, 8, 5), cron: "0 5 * * *" }, env, { waitUntil: (p: Promise<unknown>) => pending.push(p) });
 await Promise.all(pending);
 eq("scheduled(): the 05:00 UTC run (00:00 EST) resets", [await spent(), await day()], [0, "2026-03-08"]);
+eq("scheduled() records the run time it was given", (await q("select value v from system where key = 'cron_last_run'"))[0].v, new Date(at(2026, 3, 8, 5)).toISOString());
 await sql.end();
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

@@ -69,9 +69,9 @@ eq("add-admin prints a 12-character uppercase Access ID and a 32-character acces
 
 const first = await signIn(ID.toLowerCase(), TOK, BASE);   // typed in lowercase on purpose
 if (isChallenge(first)) throw new Error("a brand-new admin should not need a code yet");
-eq("the portal client signs in (any case), and is told MFA is not set up", [typeof first.session_token, first.admin, first.mfa_enabled], ["string", { access_id: ID, name: "Jane Doe" }, false]);
+eq("the portal client signs in (any case), and is told MFA is not set up", [typeof first.session_token, first.admin, first.mfa_enabled], ["string", { access_id: ID, name: "Jane Doe", role: "admin" }, false]);
 const jane = createApi(first.session_token, BASE);
-eq("me() has the shape the portal reads", Object.keys(await jane.me()).sort(), ["access_id", "mfa_enabled", "name"]);
+eq("me() has the shape the portal reads", Object.keys(await jane.me()).sort(), ["access_id", "landing", "mfa_enabled", "name", "pages", "role"]);
 const needMfa = await jane.stats().catch((e) => e);
 eq("the data stays closed until two-step verification is set up (the portal's enrollment trigger)", [needMfa.status, needMfa.code], [403, "mfa_setup_required"]);
 const NEW = TOK;
@@ -86,7 +86,7 @@ eq("the same session now reaches the numbers", (await jane.stats()).scheme.balan
 
 // creating admins from the portal's client
 const rows = await jane.admins();
-eq("admins() has the shape the page reads", [rows.length, Object.keys(rows[0]!).sort()], [1, ["access_id", "created_at", "created_by", "id", "last_login_at", "locked", "mfa_enabled", "name", "status"]]);
+eq("admins() has the shape the page reads", [rows.length, Object.keys(rows[0]!).sort()], [1, ["access_id", "created_at", "created_by", "id", "last_login_at", "locked", "mfa_enabled", "name", "role", "status"]]);
 const nu = await jane.createAdmin("Created In Portal");
 eq("createAdmin returns credentials once, in the shape the panel shows", [Object.keys(nu).sort(), Object.keys(nu.credentials).sort(), nu.credentials.access_id.length, nu.credentials.access_token.length], [["admin", "credentials"], ["access_id", "access_token"], 12, 32]);
 const after = await jane.admins();
@@ -114,7 +114,7 @@ eq("the old field name is gone", (await fetch(BASE + "/v1/admin/login", { method
 
 // the second script
 const lst = await run("manage-admin.mjs", ["--list"]);
-eq("manage-admin --list shows both admins and the creator, without secrets", [new RegExp(`${ID}\\s+Jane Doe\\s+active, 2-step on`).test(lst.out), /Created In Portal.*added by/.test(lst.out), /scrypt|hash|secret|Q8-fJk2/i.test(lst.out)], [true, true, false]);
+eq("manage-admin --list shows both admins and the creator, without secrets", [new RegExp(`${ID}\\s+Jane Doe\\s+ADMIN, active, 2-step on`).test(lst.out), /Created In Portal.*added by/.test(lst.out), /scrypt|hash|secret|Q8-fJk2/i.test(lst.out)], [true, true, false]);
 const dis = await run("manage-admin.mjs", ["--access-id", ID.toLowerCase(), "--disable"]);
 eq("manage-admin --disable (ID typed in lowercase) blocks sign-in", [dis.code, (await signIn(ID, NEW, BASE).catch((e) => e)).status], [0, 401]);
 await run("manage-admin.mjs", ["--access-id", ID, "--enable"]);

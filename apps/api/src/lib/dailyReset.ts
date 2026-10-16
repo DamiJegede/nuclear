@@ -17,10 +17,10 @@ export type ResetResult = { reset: boolean; wallets: number; products: number };
  * number of requests at once: a second caller waits for the first to commit and then sees the new day.
  */
 export async function ensureDay(sql: Sql, day: string): Promise<ResetResult> {
-  const [cur] = await sql<{ last_day: string }[]>`select last_day::text from daily_reset`;
-  if (cur && cur.last_day >= day) return { reset: false, wallets: 0, products: 0 };    // the usual case: one cheap read
+  const [cur] = await sql<{ value: string }[]>`select value from system where key = 'daily_reset_day'`;
+  if (cur && cur.value >= day) return { reset: false, wallets: 0, products: 0 };    // the usual case: one cheap read
   return sql.begin(async (tx) => {
-    const won = await tx`update daily_reset set last_day = ${day}::date where last_day < ${day}::date returning last_day`;
+    const won = await tx`update system set value = ${day} where key = 'daily_reset_day' and value < ${day} returning value`;
     if (won.length === 0) return { reset: false, wallets: 0, products: 0 };
     const w = await tx`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
     const p = await tx`update products set sold_today = 0 where sold_today <> 0 returning id`;
