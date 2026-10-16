@@ -40,7 +40,7 @@ label input, label select { margin-top: 4px; color: var(--text); font-weight: 40
 .pad { padding: 16px; margin: 0; }
 
 .shell { min-height: 100vh; }
-.topbar { display: flex; align-items: center; gap: 20px; padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+.topbar { display: flex; align-items: center; gap: 20px; padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
 .topbar nav { display: flex; gap: 4px; flex: 1; }
 .brand { font-weight: 700; display: flex; gap: 6px; align-items: center; }
 .brand .mark { color: var(--accent); }
@@ -293,7 +293,6 @@ td.when { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 tr.fail-row { background: var(--fail-row); }
 td.status-col, th.status-col { text-align: right; }
 .fail-reason { margin-top: 4px; font-size: 12.5px; color: var(--fail-text); }
-.note-line { margin-top: 4px; font-size: 12.5px; }
 .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* User page */
@@ -320,3 +319,13 @@ td.status-col, th.status-col { text-align: right; }
 .thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: var(--bg); border: 1px solid var(--line); display: block; }
 .thumb-empty { display: grid; place-items: center; color: var(--muted); }
 .cell-flex { display: flex; align-items: center; gap: 10px; }
+
+/* Table cells never break a pill or a short note across lines */
+td .pill, td .muted:not(.note) { white-space: nowrap; }
+
+/* Refund rows light yellow, funding rows light green (failed stays pink) */
+:root { --refund-row: #fffbe6; --refund-done-row: #fffdf3; --fund-row: #effaf1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --refund-row: #2a2616; --refund-done-row: #1f1d14; --fund-row: #16261b; } }
+tr.refund-row { background: var(--refund-row); }
+tr.refund-done-row { background: var(--refund-done-row); }
+tr.fund-row { background: var(--fund-row); }

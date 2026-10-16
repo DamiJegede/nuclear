@@ -8,6 +8,10 @@ const KINDS: { kind: TxKind; label: string }[] = [
 ];
 
 // ---- periods (program days, America/New_York, so they match what the API counts) ---------------------
+/** Row tint: failed is pink; pending refunds light yellow, completed refunds a lighter yellow; funding (loads) light green. */
+export const rowTone = (type: string, status: string): string | undefined =>
+  status === "failed" ? "fail-row" : type === "refund" ? (status === "pending" ? "refund-row" : "refund-done-row") : type === "fund" ? "fund-row" : undefined;
+
 export type Period = "all" | "today" | "yesterday" | "7d" | "30d" | "month" | "last-month" | "custom";
 export const PERIODS: { value: Period; label: string }[] = [
   { value: "all", label: "All Time" }, { value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" },
@@ -35,13 +39,12 @@ export function periodRange(period: Period, custom: { from: string; to: string }
   }
 }
 
-/** Status pill; a failed row also shows the reason code, on its own line at the right; a pending refund says it is waiting. */
+/** Status pill; a failed row also shows the reason code, on its own line at the right; */
 export function StatusCell({ status, code }: { status: string; code: string | null }) {
   return (
     <>
       <span className={`pill ${status === "completed" ? "available" : status === "failed" ? "closed" : "pending"}`}>{status}</span>
       {status === "failed" && code && <div className="fail-reason">{code}</div>}
-      {status === "pending" && code && <div className="muted note-line">{code}</div>}
     </>
   );
 }
@@ -143,7 +146,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
               </thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={t.status === "failed" ? "fail-row" : undefined}>
+                  <tr key={t.id} className={rowTone(t.type, t.status)}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td>
                       <span className="pill">{t.type}</span>

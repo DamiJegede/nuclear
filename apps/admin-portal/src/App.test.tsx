@@ -1274,7 +1274,7 @@ describe("merchant support page", () => {
 
   const PENDING = { ...TXPAGE, counts: { all: 4, payments: 2, refunds: 1, pending: 1 }, transactions: [...TXPAGE.transactions, tx("p", "refund", "pending", 700, { status_code: "awaiting_approval", customer: "Ada" })] };
 
-  it("failed rows are tinted and show the reason code on its own line; pending refunds say they are waiting", async () => {
+  it("failed rows are tinted and show the reason code on its own line; pending refunds are light yellow without a code", async () => {
     const user = await open(api({ merchantTransactions: vi.fn().mockResolvedValue(PENDING) }));
     await user.click(tab("Transactions"));
     const failed = await screen.findByRole("row", { name: /Poor/ });
@@ -1284,7 +1284,8 @@ describe("merchant support page", () => {
     const pending = screen.getByRole("row", { name: /\$7\.00/ });
     expect(pending).not.toHaveClass("fail-row");
     expect(within(pending).queryByText(/Failure reason|insufficient/)).toBeNull();
-    expect(within(pending).getByText("awaiting_approval")).toBeInTheDocument();
+    expect(within(pending).queryByText("awaiting_approval")).toBeNull();
+    expect(pending).toHaveClass("refund-row");
   });
 
   it("an Admin approves a pending refund after a confirm; the lists and numbers refresh", async () => {

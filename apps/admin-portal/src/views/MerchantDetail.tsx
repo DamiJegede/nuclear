@@ -5,7 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
-import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
+import { PERIODS, StatusCell, periodRange, type Period, rowTone } from "./Transactions";
 
 export type MerchantTab = "details" | "terminals" | "staff" | "transactions" | "products" | "activity";
 export const MERCHANT_TABS: { value: MerchantTab; label: string }[] = [
@@ -173,7 +173,7 @@ function Terminals({ api, id, canAct, onError }: { api: Api; id: string; canAct:
           <table>
             <thead><tr>
               <th scope="col">Terminal</th><th scope="col">Refunds</th><th scope="col">Session</th><th scope="col">Orb</th>
-              <th scope="col" className="num">Payments</th><th scope="col" className="num">Volume</th><th scope="col">Last payment</th><th scope="col"><span className="sr-only">Actions</span></th>
+              <th scope="col" className="num">Volume</th><th scope="col">Last payment</th><th scope="col"><span className="sr-only">Actions</span></th>
             </tr></thead>
             <tbody>
               {data.map((t) => (
@@ -182,9 +182,8 @@ function Terminals({ api, id, canAct, onError }: { api: Api; id: string; canAct:
                   <td><span className={`pill ${t.allow_refunds ? "available" : "pending"}`}>{t.allow_refunds ? "allowed" : "needs approval"}</span></td>
                   <td><span className={`pill ${t.signed_in ? "available" : "closed"}`}>{t.signed_in ? "signed in" : "signed out"}</span></td>
                   <td>{t.orb ? <>{t.orb.model ?? "Orb"} <span className="muted note">{t.orb.uid} · v{t.orb.software ?? "?"}</span></> : <span className="muted">None paired</span>}</td>
-                  <td className="num">{int(t.payments)}</td>
                   <td className="num">{money(t.volume)}</td>
-                  <td>{when(t.last_payment_at)}</td>
+                  <td className="when">{when(t.last_payment_at)}</td>
                   <td className="actions">{canAct && t.signed_in && <button type="button" className="ghost" aria-label={`Sign out terminal ${t.name}`} onClick={() => { setError(null); setConfirm(t); }}>Sign Out</button>}</td>
                 </tr>
               ))}
@@ -365,7 +364,7 @@ function MerchantTransactions({ api, id, canAdmin, onChanged, onError }: { api: 
               </tr></thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={t.status === "failed" ? "fail-row" : undefined}>
+                  <tr key={t.id} className={rowTone(t.type, t.status)}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td><span className="pill">{t.type}</span>{t.via && <span className="pill via">{t.via}</span>}</td>
                     <td>{t.customer ?? "—"}</td>

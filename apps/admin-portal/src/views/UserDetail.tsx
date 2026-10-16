@@ -5,7 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
-import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
+import { PERIODS, StatusCell, periodRange, type Period, rowTone } from "./Transactions";
 
 export type UserTab = "details" | "wallets" | "transactions" | "tags" | "devices" | "funding" | "orders" | "activity";
 export const USER_TABS: { value: UserTab; label: string }[] = [
@@ -438,7 +438,7 @@ function UserTransactions({ api, id, onError }: { api: Api; id: string; onError:
               </tr></thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={t.status === "failed" ? "fail-row" : undefined}>
+                  <tr key={t.id} className={rowTone(t.type, t.status)}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td><span className="pill">{t.type}</span>{t.via && <span className="pill via">{t.via}</span>}{t.agent && <span className="pill via">agent</span>}</td>
                     <td>{t.counterparty ?? "—"}{t.reference && <span className="muted note">{t.reference}</span>}</td>
