@@ -1,4 +1,5 @@
 import { RULES, byIp, rateLimit } from "../lib/throttle";
+import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -90,5 +91,6 @@ devices.post("/:id/revoke", requireOwner, async (c) => {
     update devices set revoked_at = coalesce(revoked_at, now())
      where id = ${id.data} and account_id = ${accountId} returning id`;
   if (rows.length === 0) return c.json({ error: "not_found" }, 404);
+  await customerLog(c, accountId, null, "customer.device_revoked", { device_id: id.data });
   return c.body(null, 204);
 });

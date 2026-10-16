@@ -1,9 +1,10 @@
-import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { sessionGuard } from "../session";
-import { MAX_PER_ORDER, availableModels, getOrder, listOrders, orderJson, purchaseTags } from "../lib/shop";
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
+import { MAX_PER_ORDER, availableItems, availableModels, getOrder, listOrders, orderJson, purchase } from "../lib/shop";
+import { imageResponse, isImageFile, shopImageKey, tagImageKey } from "../lib/images";
 
 export const shop = new Hono<AppContext>();
 
@@ -21,19 +22,26 @@ shop.get("/models/:id", async (c) => {
   return m ? c.json({ model: m }) : c.json({ error: "not_found" }, 404);
 });
 
-// The uploaded photo. The URL carries a version (?v=), so it can be cached hard.
-shop.get("/models/:id/photo", async (c) => {
+// Our merchandise on sale (status available, stock left or not tracked).
+shop.get("/items", async (c) => c.json({ items: await availableItems(c.get("sql")) }));
+
+shop.get("/items/:id", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const [p] = await c.get("sql")<{ content_type: string; hex: string }[]>`
-    select content_type, encode(data, 'hex') as hex from tag_model_photos where model_id = ${id.data}`;
-  if (!p) return c.json({ error: "not_found" }, 404);
-  const bytes = new Uint8Array(p.hex.length / 2);
-  for (let k = 0; k < bytes.length; k++) bytes[k] = parseInt(p.hex.slice(k * 2, k * 2 + 2), 16);
-  return new Response(bytes, {
-    headers: { "content-type": p.content_type, "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" },
-  });
+  const [i] = await availableItems(c.get("sql"), id.data);
+  return i ? c.json({ item: i }) : c.json({ error: "not_found" }, 404);
 });
+
+// Uploaded pictures come from R2. The URL carries a version (?v=), so it can be cached hard.
+for (const [path, table, key] of [["models", "tag_models", tagImageKey], ["items", "shop", shopImageKey]] as const) {
+  shop.get(`/${path}/:id/photo`, async (c) => {
+    const id = uuid.safeParse(c.req.param("id"));
+    if (!id.success) return c.json({ error: "not_found" }, 404);
+    const [row] = await c.get("sql")<{ photo: string | null }[]>`select photo from ${c.get("sql")(table)} where id = ${id.data}`;
+    if (!isImageFile(row?.photo ?? null)) return c.json({ error: "not_found" }, 404);
+    return (await imageResponse(c.env, key(row!.photo!))) ?? c.json({ error: "not_found" }, 404);
+  });
+}
 
 // ---- Buying (the account holder's own session) ------------------------------------------------
 
@@ -42,7 +50,8 @@ shop.use("/orders/*", sessionGuard("owner"));
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const orderBody = z.object({
-  model_id: uuid,
+  model_id: uuid.optional(),                 // a band or card
+  item_id: uuid.optional(),                  // a merchandise item
   quantity: z.number().int().min(1).max(MAX_PER_ORDER),
   wallet_id: uuid.optional(),
   shipping: z.object({
@@ -50,19 +59,21 @@ const orderBody = z.object({
     city: text(80), region: text(80), postal_code: text(20),
     country: z.string().trim().toUpperCase().length(2),
   }),
-});
+}).refine((b) => (b.model_id === undefined) !== (b.item_id === undefined), { message: "model_id_or_item_id" });
 
-// Checkout: pay for bands/cards with wallet balance. Idempotency-Key required; a retry returns the same order.
+// Checkout: pay for a band/card (model_id) or a merchandise item (item_id) with wallet balance. Idempotency-Key
+// required; a retry returns the same order.
 shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
   if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
   const body = orderBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
 
-  const out = await purchaseTags(c.get("sql"), {
+  const out = await purchase(c.get("sql"), {
     accountId: c.get("auth").accountId,
     walletId: body.data.wallet_id ?? null,
-    modelId: body.data.model_id,
+    kind: body.data.item_id ? "shop" : "tag",
+    productId: (body.data.item_id ?? body.data.model_id)!,
     quantity: body.data.quantity,
     shipping: body.data.shipping,
     idempotencyKey: key,

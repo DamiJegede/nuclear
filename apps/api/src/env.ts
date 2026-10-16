@@ -1,5 +1,7 @@
 export interface Env {
   HYPERDRIVE: Hyperdrive;
+  /** R2 bucket for uploaded images (tag and shop pictures). */
+  IMAGES?: R2Bucket;
   /** HS256 secret for wallet magic-link JWTs. `wrangler secret put JWT_SECRET`; `.dev.vars` locally. */
   JWT_SECRET: string;
   /** Base URL used to build magic links. Defaults to https://app.nuclear.us */

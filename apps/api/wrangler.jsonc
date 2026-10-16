@@ -14,6 +14,8 @@
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },
+  // Uploaded images (tag and shop pictures). Created 2026-10-16: `wrangler r2 bucket create nuclear-images`.
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "nuclear-images" }],
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",

@@ -1563,3 +1563,70 @@ describe("user support page", () => {
     expect(window.location.pathname).toBe("/tags");
   });
 });
+
+describe("shop and audit log", () => {
+  const PAGES: Page[] = [...ALL_PAGES, "shop", "audit"];
+  const signed: SignedIn = { ...SIGNED, pages: PAGES };
+  const ITEM = { id: "i1", name: "Nuclear Tee", description: "Soft cotton", photo: null, price: 2500, currency: "USD", stock: 3, sold: 2, status: "available" as const, created_at: "2026-10-16T00:00:00Z", updated_at: "2026-10-16T00:00:00Z" };
+  const LOG = { id: "l1", actor_type: "admin" as const, actor_id: "a1", actor_label: "JANEDOE00001", action: "tag_model.created", target_type: "tag_model", target_id: "t1", target_label: "NEO Band", details: { price: 2999 }, ip: "1.2.3.4", created_at: "2026-10-16T12:00:00Z" };
+  async function open(a: Api, page: string) {
+    const user = await signIn(a, vi.fn().mockResolvedValue(signed));
+    await user.click(await screen.findByRole("link", { name: page }));
+    return user;
+  }
+
+  it("adds Shop and Logs to the navigation when the role has them", async () => {
+    await signIn(fakeApi({ shopItems: vi.fn().mockResolvedValue([]) }), vi.fn().mockResolvedValue(signed));
+    await screen.findByRole("article", { name: "Scheme balance" });
+    const links = within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent);
+    expect(links).toContain("Shop");
+    expect(links).toContain("Logs");
+  });
+
+  it("lists shop items with price, stock, sold and status, and adds an item with the price in cents", async () => {
+    const shopItems = vi.fn().mockResolvedValue([ITEM]);
+    const createShopItem = vi.fn().mockResolvedValue({ ...ITEM, id: "i2" });
+    const user = await open(fakeApi({ shopItems, createShopItem }), "Shop");
+    expect(window.location.pathname).toBe("/shop");
+    const row = await screen.findByRole("row", { name: /Nuclear Tee/ });
+    expect(row).toHaveTextContent("$25.00");
+    expect(row).toHaveTextContent("available");
+    expect(document.title).toBe("Shop · Nuclear Admin");
+    await user.click(screen.getByRole("button", { name: "Add Item" }));
+    await user.type(screen.getByLabelText("Name"), "Cap");
+    await user.type(screen.getByLabelText("Price (USD)"), "19.99");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add Item" }));
+    expect(await screen.findByText("Add a PNG image of the item.")).toBeInTheDocument();
+    expect(createShopItem).not.toHaveBeenCalled();
+  });
+
+  it("shows the audit log newest first and filters by who", async () => {
+    const logs = vi.fn().mockResolvedValue({ logs: [LOG], next_cursor: null });
+    const user = await open(fakeApi({ logs }), "Logs");
+    const row = await screen.findByRole("row", { name: /Tag created/ });
+    expect(row).toHaveTextContent("JANEDOE00001");
+    expect(row).toHaveTextContent("NEO Band");
+    expect(row).toHaveTextContent("price: 2999");
+    await user.selectOptions(screen.getByLabelText("Who"), "customer");
+    await waitFor(() => expect(logs).toHaveBeenLastCalledWith({ who: "customer" }, undefined));
+  });
+
+  it("shows an Activity tab on a user", async () => {
+    const UID = "0190cccc-dddd-7eee-8fff-aaaaaaaaaaaa";
+    const userActivity = vi.fn().mockResolvedValue({ logs: [{ ...LOG, actor_type: "customer", action: "customer.login", actor_label: "ada@example.com" }], next_cursor: null });
+    const a = fakeApi({
+      users: vi.fn().mockResolvedValue([{ id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 0, wallets: 1, agents: 0 }]),
+      user: vi.fn().mockResolvedValue({
+        id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", phone: null, status: "active", tier: "free", photo: null, created_at: "2026-10-01T00:00:00Z", login_locked: null,
+        balances: { balance: 0, pending: 0, credit_limit: 0, credit_spent: 0, earmarked: 0, shared: 0 },
+        stats: { sent: { count: 0, volume: 0 }, received: { count: 0, volume: 0 }, payments: { count: 0, volume: 0 }, loads: { count: 0, volume: 0 }, failed: 0, today: 0, last_activity_at: null, wallets: 1, agents: 0, tags: 0, devices: 0, orders: 0 },
+      } as any),
+      userActivity,
+    });
+    const user = await open(a, "Users");
+    await user.click(await screen.findByRole("link", { name: "Ada Lovelace" }));
+    await user.click(await screen.findByRole("tab", { name: /^Activity/ }));
+    expect(await screen.findByRole("row", { name: /Customer login/ })).toBeInTheDocument();
+    expect(userActivity).toHaveBeenCalledWith(UID, undefined);
+  });
+});

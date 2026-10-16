@@ -1,4 +1,5 @@
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
+import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -31,6 +32,7 @@ account.put("/account/handle", requireOwner, async (c) => {
       update accounts set handle = ${parsed.data.handle}
        where id = ${accountId} and status = 'active' returning handle`;
     if (!row) return c.json({ error: "not_found" }, 404);
+    await customerLog(c, accountId, null, "customer.handle_changed", { handle: row.handle });
     return c.json({ handle: row.handle });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") return c.json({ error: "handle_taken" }, 409);

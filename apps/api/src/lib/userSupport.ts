@@ -40,7 +40,7 @@ export async function userDetail(sql: Sql, id: string) {
            (select count(*) from wallets where account_id = ${id} and type = 'agent' and status <> 'closed')::int as agents,
            (select count(*) from tags t join wallets w on w.id = t.wallet_id where w.account_id = ${id})::int as tags,
            (select count(*) from devices where account_id = ${id} and revoked_at is null and session_expires_at > now())::int as devices,
-           (select count(*) from tag_orders where account_id = ${id})::int as orders`;
+           (select count(*) from orders where account_id = ${id})::int as orders`;
   const lock = u.email ? await peek(sql, `login:${u.email.toLowerCase()}`, RULES.loginFailures) : { blocked: false, retryAfter: 0 };
 
   return {
@@ -116,11 +116,11 @@ export async function userFunding(sql: Sql, id: string) {
 
 export async function userOrders(sql: Sql, id: string) {
   const rows = await sql<{
-    id: string; model_name: string; model_type: string; quantity: number; unit_price: bigint; total: bigint; status: string;
+    id: string; type: string; model_name: string; model_type: string | null; quantity: number; unit_price: bigint; total: bigint; status: string;
     shipping: { name?: string; city?: string; region?: string; country?: string }; created_at: Date;
   }[]>`
-    select id, model_name, model_type, quantity, unit_price, total, status, shipping, created_at
-      from tag_orders where account_id = ${id} order by created_at desc, id desc limit 100`;
+    select id, type, name as model_name, model_type, quantity, unit_price, total, status, shipping, created_at
+      from orders where account_id = ${id} order by created_at desc, id desc limit 100`;
   return rows.map((o) => ({ ...o, unit_price: n(o.unit_price), total: n(o.total) }));
 }
 

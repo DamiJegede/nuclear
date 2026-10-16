@@ -410,7 +410,7 @@ Claiming and managing: a tag is claimed by tapping it with a phone and sending t
 | id | Model primary key. |
 | type | band or card. |
 | name | Model name. |
-| photo | Reference image displayed in the app and sales store. |
+| photo | File name of the uploaded PNG in R2 (see Images), or NULL. |
 | currency | Sale currency code. |
 | price | Integer minor-unit sale price. |
 | country | Sale country/market; precise market behavior remains to be finalized. |
@@ -423,16 +423,19 @@ Claiming and managing: a tag is claimed by tapping it with a phone and sending t
 
 Preorders are final: no cancellations or returns. `sold` goes up when a store purchase completes (`POST /v1/shop/orders`), never beyond quantity; a tag is attached to the order at shipping and the customer then claims it by tapping.
 
-## tag_orders
+## orders
 
-One row per completed store purchase of bands/cards (migration 0010). Created only on success; a declined attempt is a failed purchase transaction with no order.
+One row per completed store purchase (migration 0010 as `tag_orders`, renamed and generalised by 0018). Created only on success; a declined attempt is a failed purchase transaction with no order. `type` says what was bought: `tag` (a band or card, `model_id`) or `shop` (merchandise, `shop_id`).
 
 | Field | Description |
 | --- | --- |
 | id | Primary key. |
+| type | `tag` (default) or `shop`. |
 | account_id, wallet_id | The buyer and the wallet that paid (the wallet must belong to the account). |
-| model_id | tag_models.id. |
-| model_name, model_type | Snapshots at purchase. |
+| model_id | tag_models.id; set for type `tag`, NULL for `shop`. |
+| shop_id | shop.id; set for type `shop`, NULL for `tag`. |
+| name | Snapshot of the model or item name at purchase. |
+| model_type | band or card (snapshot); only for type `tag`. |
 | quantity | 1-20. |
 | unit_price, total | Cents, snapshotted; total = unit_price x quantity. |
 | currency | Default USD. |
@@ -441,9 +444,17 @@ One row per completed store purchase of bands/cards (migration 0010). Created on
 | transaction_id | Unique foreign key to the purchase transaction. |
 | created_at, updated_at | Timestamps. |
 
-## tag_model_photos
+## shop
 
-An uploaded model photo (migration 0010): model_id (primary key, cascades), content_type (image/jpeg, image/png or image/webp), data (bytea, 1 byte to 256 KB; the admin portal resizes to a 256 x 256 PNG first; the upload route accepts PNG only) and updated_at. Served publicly at `/v1/shop/models/:id/photo?v=<updated_at epoch>`; tag_models.photo remains for an external URL and an upload takes precedence.
+Our own merchandise for sale (migration 0018): id, name, description, photo (the **file name** of the PNG in R2, `<id>-<epoch ms>.png`; the folder `shop/` and the public URL `/v1/shop/items/:id/photo` are rendered by the API), price (cents), currency, stock (NULL = not tracked), sold, status (pending, available or closed), created_at, updated_at. Items are bought with `POST /v1/shop/orders {item_id, ...}`, which creates an `orders` row of type `shop` and raises `sold` (and lowers `stock` when tracked). Managed in the admin portal's Shop page (Admin and Sales).
+
+## logs
+
+The audit trail (migration 0018), append-only (triggers refuse update, delete and truncate): id, actor_type (admin, operator, customer, agent or system), actor_id, actor_label (an admin's Access ID or a customer's email), action (for example `tag_model.created`, `admin.created`, `refund.approved`, `user.suspended`, `customer.login`), target_type, target_id, target_label, details (small JSON, never secrets), ip and created_at. Written for every admin action and for customer security events (sign-up, login and failed login, logout, handle change, device revoke, agent key rotate and revoke). Shown on the admin portal's Logs page (Admin) and as the Activity tab of a user or merchant. A log failure never blocks the action it describes.
+
+## Images
+
+Uploaded pictures live in the R2 bucket `nuclear-images` (binding `IMAGES`). tag_models.photo and shop.photo hold only the file name (`<id>-<epoch ms>.png`); the key is `tags/<file>` or `shop/<file>`, a new upload gets a new name and the old object is deleted, and the API serves them publicly with an immutable cache. PNG only, 256 KB at most (the admin portal resizes to 256 x 256).
 
 ## passes
 

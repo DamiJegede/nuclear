@@ -3,7 +3,7 @@
 export const ROLES = ["admin", "accounting", "sales", "support", "tags", "merchants"] as const;
 export type Role = (typeof ROLES)[number];
 
-export type Page = "overview" | "merchants" | "users" | "tags" | "admins" | "transactions";
+export type Page = "overview" | "merchants" | "users" | "tags" | "admins" | "transactions" | "shop" | "audit";
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: "Admin", accounting: "Accounting", sales: "Sales", support: "Support", tags: "Tags", merchants: "Merchants",
@@ -11,9 +11,9 @@ export const ROLE_LABEL: Record<Role, string> = {
 
 /** One line for the role picker: what the role can open. */
 export const ROLE_SUMMARY: Record<Role, string> = {
-  admin: "Everything, including Admins",
+  admin: "Everything, including Admins, Shop and Logs",
   accounting: "Overview and Transactions",
-  sales: "Users, Merchants and Tags (Tags read-only)",
+  sales: "Users, Merchants, Tags (read-only) and Shop",
   support: "Users and Transactions",
   tags: "Tags only",
   merchants: "Merchants only",

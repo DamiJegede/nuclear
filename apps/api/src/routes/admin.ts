@@ -4,13 +4,14 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
-import { MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { approvePending, rejectPending } from "../lib/refund";
-import { reset as resetThrottle } from "../lib/throttle";
+import { clientIp, reset as resetThrottle } from "../lib/throttle";
+import { adminLog, log } from "../lib/audit";
+import { deleteImage, isPng, itemPhotoUrl, modelPhotoUrl, newImageFile, putPng, tagImageKey, shopImageKey, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
-import { PHOTO_SQL } from "../lib/photo";
 import { systemStats } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
@@ -67,7 +68,10 @@ admin.post("/login", rateLimit("admin-login-ip", RULES.adminLoginIp, byIp), asyn
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const r = await login(c.get("sql"), body.data.access_id.toUpperCase(), body.data.access_token);
   // One answer for every failure: unknown id, wrong access token, disabled or locked.
-  if (r.ok === false) return c.json({ error: "invalid_credentials" }, 401);
+  if (r.ok === false) {
+    await log(c.get("sql"), { actor: { type: "admin", label: body.data.access_id.toUpperCase() }, action: "admin.login_failed", ip: clientIp(c) });
+    return c.json({ error: "invalid_credentials" }, 401);
+  }
   if (r.ok === "mfa") {
     return c.json({
       mfa_required: true,
@@ -75,6 +79,7 @@ admin.post("/login", rateLimit("admin-login-ip", RULES.adminLoginIp, byIp), asyn
       expires_in: MFA_CHALLENGE_SECONDS,
     });
   }
+  await log(c.get("sql"), { actor: { type: "admin", id: r.admin.id, label: r.admin.access_id }, action: "admin.login", target: { type: "admin", id: r.admin.id, label: r.admin.access_id }, ip: clientIp(c) });
   return c.json(sessionJson(r));
 });
 
@@ -88,7 +93,11 @@ admin.post("/login/mfa", rateLimit("admin-login-ip", RULES.adminLoginIp, byIp), 
   if (!adminId) return c.json({ error: "invalid_credentials" }, 401);
   const r = await completeMfa(c.get("sql"), c.env, adminId, body.data.code);
   if (r.ok === "unavailable") return c.json({ error: "mfa_unavailable" }, 503);
-  if (r.ok === false) return c.json({ error: "invalid_credentials" }, 401);
+  if (r.ok === false) {
+    await log(c.get("sql"), { actor: { type: "admin", id: adminId }, action: "admin.mfa_failed", target: { type: "admin", id: adminId }, ip: clientIp(c) });
+    return c.json({ error: "invalid_credentials" }, 401);
+  }
+  await log(c.get("sql"), { actor: { type: "admin", id: r.admin.id, label: r.admin.access_id }, action: "admin.login", target: { type: "admin", id: r.admin.id, label: r.admin.access_id }, details: { mfa: true }, ip: clientIp(c) });
   return c.json(sessionJson(r));
 });
 
@@ -151,6 +160,18 @@ admin.use("/wallets/*", requirePage("users"));
 admin.use("/transactions", requirePage("transactions"));
 admin.use("/admins", requirePage("admins"));
 admin.use("/admins/*", requirePage("admins"));
+/** Shop items: Admin and Sales may change them, everyone with the Shop page may look. */
+const shopAccess = async (c: any, next: any) => {
+  const a = c.get("adminAuth");
+  if (a.kind === "admin") {
+    if (!canSee(a.role, "shop")) return c.json({ error: "forbidden_role" }, 403);
+    if (c.req.method !== "GET" && !SHOP_WRITERS.includes(a.role)) return c.json({ error: "forbidden_role" }, 403);
+  }
+  await next();
+};
+admin.use("/shop-items", shopAccess);
+admin.use("/shop-items/*", shopAccess);
+admin.use("/logs", requirePage("audit"));
 admin.use("/tag-models", tagsAccess);
 admin.use("/tag-models/*", tagsAccess);
 
@@ -167,6 +188,7 @@ admin.post("/logout", async (c) => {
   const a = c.get("adminAuth");
   if (a.kind === "admin") {
     await c.get("sql")`update admin_sessions set revoked_at = now() where id = ${a.sessionId}`;
+    await adminLog(c, "admin.logout", { type: "admin", id: a.adminId, label: a.accessId });
   }
   return c.body(null, 204);
 });
@@ -201,6 +223,7 @@ admin.post("/mfa/enable", async (c) => {
     const status = r.error === "invalid_code" ? 401 : r.error === "already_enrolled" ? 409 : 400;
     return c.json({ error: r.error }, status);
   }
+  await adminLog(c, "admin.mfa_enabled", { type: "admin", id: a.adminId, label: a.accessId });
   return c.json({ recovery_codes: r.recoveryCodes });
 });
 
@@ -213,6 +236,7 @@ admin.post("/mfa/recovery-codes", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const r = await mfaNewRecoveryCodes(c.get("sql"), c.env, a.adminId, body.data.code);
   if ("error" in r) return c.json({ error: r.error }, r.error === "invalid_code" ? 401 : 400);
+  await adminLog(c, "admin.recovery_codes_regenerated", { type: "admin", id: a.adminId, label: a.accessId });
   return c.json({ recovery_codes: r.recoveryCodes });
 });
 
@@ -246,6 +270,7 @@ admin.post("/admins", requireStaff, async (c) => {
         insert into admins (access_id, name, role, access_token_hash, created_by)
         values (${accessId}, ${body.data.name}, ${body.data.role}, ${hash}, ${by.kind === "admin" ? by.adminId : null})
         returning id, access_id, name, role`;
+      await adminLog(c, "admin.created", { type: "admin", id: a!.id, label: a!.access_id }, { name: a!.name, role: a!.role });
       return c.json(
         {
           admin: { ...a, status: "active" },
@@ -281,13 +306,17 @@ admin.put("/admins/:id/role", async (c) => {
   const by = c.get("adminAuth");
   if (by.kind === "admin" && by.adminId === id.data) return c.json({ error: "cannot_change_own_role" }, 409);
   const sql = c.get("sql");
-  return sql.begin(async (tx) => {
+  let before: Role | null = null;
+  const res = await sql.begin(async (tx) => {
     const [cur] = await tx<{ role: Role }[]>`select role from admins where id = ${id.data} for no key update`;
     if (!cur) return c.json({ error: "not_found" }, 404);
+    before = cur.role;
     const [a] = await tx<{ id: string; access_id: string; name: string; role: Role; status: string }[]>`
       update admins set role = ${body.data.role} where id = ${id.data} returning id, access_id, name, role, status`;
     return c.json({ admin: a });
   });
+  if (res.status === 200) await adminLog(c, "admin.role_changed", { type: "admin", id: id.data, label: (await sql<{ access_id: string }[]>`select access_id from admins where id = ${id.data}`)[0]?.access_id }, { from: before, to: body.data.role });
+  return res;
 });
 
 const patchAdminBody = z
@@ -330,6 +359,10 @@ admin.patch("/admins/:id", requireOperator, async (c) => {
   }
   if (body.data.reset_access_token || body.data.reset_mfa || body.data.status === "disabled") await revokeSessions(sql, id.data);
   const [a] = await sql`select id, access_id, name, status from admins where id = ${id.data}`;
+  const t = { type: "admin", id: id.data, label: cur.access_id };
+  if (body.data.reset_access_token) await adminLog(c, "admin.token_reset", t);
+  if (body.data.status) await adminLog(c, body.data.status === "disabled" ? "admin.disabled" : "admin.enabled", t);
+  if (body.data.reset_mfa) await adminLog(c, "admin.mfa_reset", t);
   return c.json({ admin: a, ...(issued ? { credentials: { access_id: cur.access_id, access_token: issued } } : {}) });
 });
 
@@ -347,6 +380,7 @@ admin.post("/admins/:id/rotate-token", requireStaff, async (c) => {
   if (!a) return c.json({ error: "not_found" }, 404);
   const by = c.get("adminAuth");
   await revokeSessions(sql, a.id, by.kind === "admin" && by.adminId === a.id ? by.sessionId : undefined);
+  await adminLog(c, "admin.token_rotated", { type: "admin", id: a.id, label: a.access_id });
   return c.json({ admin: a, credentials: { access_id: a.access_id, access_token: issued } });
 });
 
@@ -436,6 +470,7 @@ for (const action of ["approve", "reject"] as const) {
       return r;
     });
     if (out.kind === "error") return c.json({ error: out.error }, out.status);
+    await adminLog(c, `refund.${action === "approve" ? "approved" : "rejected"}`, { type: "refund", id: rid.data }, { merchant_id: id.data, amount: Number(out.row.amount), status: out.row.status });
     return c.json({ refund: { id: out.row.id, status: out.row.status, status_code: out.row.status_code } }, 200);
   });
 }
@@ -449,8 +484,10 @@ admin.put("/merchants/:id/status", async (c) => {
   const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
-  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status <> 'closed' returning id, status`;
-  return rows.length ? c.json({ merchant: rows[0] }) : c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status <> 'closed' returning id, status, name`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, body.data.status === "suspended" ? "merchant.suspended" : "merchant.reactivated", { type: "merchant", id: id.data, label: rows[0]!.name });
+  return c.json({ merchant: { id: rows[0]!.id, status: rows[0]!.status } });
 });
 
 // ---- One person, for support ------------------------------------------------------------------------
@@ -502,6 +539,7 @@ admin.post("/users/:id/sign-out", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success || !(await userDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
   const rows = await c.get("sql")`update devices set revoked_at = now() where account_id = ${id.data} and revoked_at is null returning id`;
+  await adminLog(c, "user.signed_out", { type: "user", id: id.data, label: (await userDetail(c.get("sql"), id.data))?.name }, { sessions: rows.length });
   return c.json({ signed_out: rows.length });
 });
 admin.post("/users/:id/unlock-login", async (c) => {
@@ -511,14 +549,17 @@ admin.post("/users/:id/unlock-login", async (c) => {
   const u = await userDetail(c.get("sql"), id.data);
   if (!u) return c.json({ error: "not_found" }, 404);
   if (u.email) await resetThrottle(c.get("sql"), `login:${u.email.toLowerCase()}`);
+  await adminLog(c, "user.login_unlocked", { type: "user", id: id.data, label: u.name });
   return c.body(null, 204);
 });
 admin.post("/wallets/:id/revoke-key", async (c) => {
   const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const rows = await c.get("sql")`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data} and key_hash is not null returning id`;
-  return rows.length ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data} and key_hash is not null returning id, display_name, account_id`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "wallet.key_revoked", { type: "wallet", id: id.data, label: rows[0]!.display_name }, { account_id: rows[0]!.account_id });
+  return c.body(null, 204);
 });
 // Admin only: suspend or reactivate a person, or one of their wallets. A suspended account is refused on its
 // next request (sessions, wallets, agent keys alike); nothing is deleted.
@@ -528,8 +569,10 @@ admin.put("/users/:id/status", async (c) => {
   const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
-  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'C' and status <> 'closed' returning id, status`;
-  return rows.length ? c.json({ user: rows[0] }) : c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'C' and status <> 'closed' returning id, status, name`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, body.data.status === "suspended" ? "user.suspended" : "user.reactivated", { type: "user", id: id.data, label: rows[0]!.name });
+  return c.json({ user: { id: rows[0]!.id, status: rows[0]!.status } });
 });
 admin.put("/wallets/:id/status", async (c) => {
   const denied = roleGate(USER_ADMINS)(c); if (denied) return denied;
@@ -537,8 +580,10 @@ admin.put("/wallets/:id/status", async (c) => {
   const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
-  const rows = await c.get("sql")`update wallets w set status = ${body.data.status} from accounts a where w.id = ${id.data} and a.id = w.account_id and a.type = 'C' and w.status <> 'closed' returning w.id, w.status`;
-  return rows.length ? c.json({ wallet: rows[0] }) : c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update wallets w set status = ${body.data.status} from accounts a where w.id = ${id.data} and a.id = w.account_id and a.type = 'C' and w.status <> 'closed' returning w.id, w.status, w.display_name, w.account_id`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, body.data.status === "suspended" ? "wallet.suspended" : "wallet.reactivated", { type: "wallet", id: id.data, label: rows[0]!.display_name }, { account_id: rows[0]!.account_id });
+  return c.json({ wallet: { id: rows[0]!.id, status: rows[0]!.status } });
 });
 
 // Support action: sign a terminal out (clears its stored session, so its token stops working and the
@@ -548,8 +593,10 @@ admin.post("/terminals/:id/sign-out", async (c) => {
   if (a.kind === "admin" && !MERCHANT_WRITERS.includes(a.role)) return c.json({ error: "forbidden_role" }, 403);
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const rows = await c.get("sql")`update terminals set session_token_hash = null where id = ${id.data} returning id`;
-  return rows.length ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update terminals set session_token_hash = null where id = ${id.data} returning id, name, account_id`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "terminal.signed_out", { type: "terminal", id: id.data, label: rows[0]!.name }, { merchant_id: rows[0]!.account_id });
+  return c.body(null, 204);
 });
 
 const txQuery = z.object({
@@ -578,7 +625,6 @@ admin.get("/transactions", async (c) => {
 const modelBody = z.object({
   type: z.enum(["band", "card"]),
   name: z.string().trim().min(1).max(120),
-  photo: z.string().trim().max(2048).optional(),
   currency: z.string().trim().toUpperCase().length(3).default("USD"),
   price: amountOrZero,                                   // integer minor units (cents)
   country: z.string().trim().toUpperCase().length(2).optional(),
@@ -592,7 +638,7 @@ type ModelRow = {
   country: string | null; quantity: number; sold: number; limited: boolean; status: string; created_at: Date;
 };
 const modelJson = (m: ModelRow, extra: object = {}) => ({
-  id: m.id, type: m.type, name: m.name, photo: m.photo, currency: m.currency, price: n(m.price),
+  id: m.id, type: m.type, name: m.name, photo: modelPhotoUrl(m.id, m.photo), currency: m.currency, price: n(m.price),
   country: m.country, quantity: m.quantity, sold: m.sold, limited: m.limited, status: m.status,
   created_at: m.created_at, ...extra,
 });
@@ -605,21 +651,21 @@ admin.post("/tag-models", async (c) => {
   const sql = c.get("sql");
   const [m] = await sql<ModelRow[]>`
     insert into tag_models (type, name, photo, currency, price, country, quantity, limited, status)
-    values (${b.type}, ${b.name}, ${b.photo ?? null}, ${b.currency}, ${b.price.toString()},
+    values (${b.type}, ${b.name}, ${null}, ${b.currency}, ${b.price.toString()},
             ${b.country ?? null}, ${b.quantity}, ${b.limited}, ${b.status})
     returning ${sql.unsafe(M_COLS)}`;
+  await adminLog(c, "tag_model.created", { type: "tag_model", id: m!.id, label: m!.name }, { type: m!.type, price: Number(m!.price), quantity: m!.quantity });
   return c.json({ model: modelJson(m!) }, 201);
 });
 
 admin.get("/tag-models", async (c) => {
   const sql = c.get("sql");
   const rows = await sql<(ModelRow & { tags: number; unassigned: number })[]>`
-    select ${sql.unsafe(M_COLS.split(", ").filter((x) => x !== "photo").map((x) => "m." + x).join(", "))}, ${sql.unsafe(PHOTO_SQL)},
+    select ${sql.unsafe(M_COLS.split(", ").map((x) => "m." + x).join(", "))},
            count(t.id)::int as tags,
            (count(t.id) filter (where t.wallet_id is null))::int as unassigned
       from tag_models m left join tags t on t.model_id = m.id
-           left join tag_model_photos p on p.model_id = m.id
-     group by m.id, p.model_id, p.updated_at order by m.created_at, m.id`;
+     group by m.id order by m.created_at, m.id`;
   return c.json({ models: rows.map((m) => modelJson(m, { tags: m.tags, unassigned: m.unassigned })) });
 });
 
@@ -630,13 +676,13 @@ admin.get("/tag-models/:id", async (c) => {
   if (!id.success) return c.json({ error: "not_found" }, 404);
   const sql = c.get("sql");
   const [m] = await sql<(ModelRow & { tags: number; unassigned: number; activated: number; rank: number; models_total: number })[]>`
-    select ${sql.unsafe(M_COLS.split(", ").filter((x) => x !== "photo").map((x) => "m." + x).join(", "))}, ${sql.unsafe(PHOTO_SQL)},
+    select ${sql.unsafe(M_COLS.split(", ").map((x) => "m." + x).join(", "))},
            (select count(*) from tags t where t.model_id = m.id)::int as tags,
            (select count(*) from tags t where t.model_id = m.id and t.wallet_id is null)::int as unassigned,
            (select count(*) from tags t where t.model_id = m.id and t.wallet_id is not null)::int as activated,
            (1 + (select count(*) from tag_models o where o.sold > m.sold))::int as rank,
            (select count(*) from tag_models)::int as models_total
-      from tag_models m left join tag_model_photos p on p.model_id = m.id
+      from tag_models m
      where m.id = ${id.data}`;
   if (!m) return c.json({ error: "not_found" }, 404);
   return c.json({
@@ -667,7 +713,7 @@ admin.patch("/tag-models/:id", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
   const b = body.data;
   const sql = c.get("sql");
-  return sql.begin(async (tx) => {
+  const res = await sql.begin(async (tx) => {
     const [cur] = await tx<{ type: string; sold: number; tags: number }[]>`
       select m.type, m.sold, (select count(*) from tags t where t.model_id = m.id)::int as tags
         from tag_models m where m.id = ${id.data} for no key update`;
@@ -687,11 +733,11 @@ admin.patch("/tag-models/:id", async (c) => {
     const [m] = await tx<ModelRow[]>`select ${tx.unsafe(M_COLS)} from tag_models where id = ${id.data}`;
     return c.json({ model: modelJson(m!) });
   });
+  if (res.status === 200) await adminLog(c, "tag_model.updated", { type: "tag_model", id: id.data, label: (await sql<{ name: string }[]>`select name from tag_models where id = ${id.data}`)[0]?.name }, { fields: Object.keys(b) });
+  return res;
 });
 
-// Upload a model's photo: the raw PNG bytes (256 KB at most). The portal resizes to 256 x 256 first. Stored as hex through decode() so the driver never handles binary parameters.
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const MAX_PHOTO_BYTES = 262_144;
+// Upload a model's photo: the raw PNG bytes (256 KB at most). The portal resizes to 256 x 256 first. The bytes go to R2; tag_models.photo keeps the public path.
 admin.put("/tag-models/:id/photo", async (c) => {
   const id = z.string().uuid().safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
@@ -699,16 +745,16 @@ admin.put("/tag-models/:id/photo", async (c) => {
   if (type !== "image/png") return c.json({ error: "unsupported_image_type" }, 415);
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
-  if (bytes.length > MAX_PHOTO_BYTES) return c.json({ error: "image_too_large" }, 413);
-  if (bytes.length < 8 || !PNG_SIGNATURE.every((b, k) => bytes[k] === b)) return c.json({ error: "invalid_image" }, 400);
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  if (bytes.length > MAX_IMAGE_BYTES) return c.json({ error: "image_too_large" }, 413);
+  if (!isPng(bytes)) return c.json({ error: "invalid_image" }, 400);
   const sql = c.get("sql");
-  const done = await sql`
-    insert into tag_model_photos (model_id, content_type, data)
-    select ${id.data}, ${type}, decode(${hex}, 'hex') where exists (select 1 from tag_models where id = ${id.data})
-    on conflict (model_id) do update set content_type = excluded.content_type, data = excluded.data, updated_at = now()
-    returning model_id`;
-  if (done.length === 0) return c.json({ error: "not_found" }, 404);
+  const [m] = await sql<{ name: string; photo: string | null }[]>`select name, photo from tag_models where id = ${id.data}`;
+  if (!m) return c.json({ error: "not_found" }, 404);
+  const file = newImageFile(id.data);
+  if (!(await putPng(c.env, tagImageKey(file), bytes))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update tag_models set photo = ${file} where id = ${id.data}`;
+  if (m.photo) await deleteImage(c.env, tagImageKey(m.photo));
+  await adminLog(c, "tag_model.photo_uploaded", { type: "tag_model", id: id.data, label: m.name });
   return c.body(null, 204);
 });
 
@@ -769,6 +815,7 @@ admin.post("/tag-models/:id/tags", async (c) => {
     ? []
     : await sql<{ uid: string; model_id: string }[]>`select uid, model_id from tags where uid in ${sql(skipped as string[])}`;
 
+  if (inserted.length > 0) await adminLog(c, "tag_model.tags_imported", { type: "tag_model", id: model.id, label: model.name }, { inserted: inserted.length });
   return c.json(
     {
       model_id: model.id,
@@ -781,3 +828,109 @@ admin.post("/tag-models/:id/tags", async (c) => {
     201,
   );
 });
+
+// ---- Shop items (our merch) -------------------------------------------------------------------
+const ITEM_COLS = "id, name, description, photo, price, currency, stock, sold, status, created_at, updated_at";
+type ItemRow = { id: string; name: string; description: string | null; photo: string | null; price: bigint; currency: string; stock: number | null; sold: number; status: string; created_at: Date; updated_at: Date };
+const itemJson = (i: ItemRow) => ({ ...i, photo: itemPhotoUrl(i.id, i.photo), price: n(i.price) });
+const itemBody = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).nullable().optional(),
+  price: z.number().int().min(0).max(1_000_000_00),
+  currency: z.string().length(3).optional(),
+  stock: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  status: z.enum(["pending", "available", "closed"]).optional(),
+}).strict();
+
+admin.get("/shop-items", async (c) => {
+  const rows = await c.get("sql")<ItemRow[]>`select ${c.get("sql").unsafe(ITEM_COLS)} from shop order by created_at, id`;
+  return c.json({ items: rows.map(itemJson) });
+});
+
+admin.get("/shop-items/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const [i] = await c.get("sql")<ItemRow[]>`select ${c.get("sql").unsafe(ITEM_COLS)} from shop where id = ${id.data}`;
+  return i ? c.json({ item: itemJson(i) }) : c.json({ error: "not_found" }, 404);
+});
+
+admin.post("/shop-items", async (c) => {
+  const b = itemBody.safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const sql = c.get("sql");
+  const [i] = await sql<ItemRow[]>`
+    insert into shop (name, description, price, currency, stock, status)
+    values (${b.data.name}, ${b.data.description ?? null}, ${b.data.price}, ${(b.data.currency ?? "USD").toUpperCase()}, ${b.data.stock ?? null}, ${b.data.status ?? "pending"})
+    returning ${sql.unsafe(ITEM_COLS)}`;
+  await adminLog(c, "shop_item.created", { type: "shop_item", id: i!.id, label: i!.name }, { price: Number(i!.price), stock: i!.stock });
+  return c.json({ item: itemJson(i!) }, 201);
+});
+
+admin.patch("/shop-items/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const b = itemBody.partial().safeParse(await c.req.json().catch(() => null));
+  if (!b.success || Object.keys(b.data).length === 0) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql");
+  const [cur] = await sql<ItemRow[]>`select ${sql.unsafe(ITEM_COLS)} from shop where id = ${id.data}`;
+  if (!cur) return c.json({ error: "not_found" }, 404);
+  const d = b.data;
+  const [i] = await sql<ItemRow[]>`
+    update shop set name = ${d.name ?? cur.name},
+      description = ${d.description === undefined ? cur.description : d.description},
+      price = ${d.price ?? cur.price}, currency = ${d.currency ? d.currency.toUpperCase() : cur.currency},
+      stock = ${d.stock === undefined ? cur.stock : d.stock}, status = ${d.status ?? cur.status}
+     where id = ${id.data} returning ${sql.unsafe(ITEM_COLS)}`;
+  await adminLog(c, "shop_item.updated", { type: "shop_item", id: id.data, label: i!.name }, { fields: Object.keys(d) });
+  return c.json({ item: itemJson(i!) });
+});
+
+admin.put("/shop-items/:id/photo", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (type !== "image/png") return c.json({ error: "unsupported_image_type" }, 415);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
+  if (bytes.length > MAX_IMAGE_BYTES) return c.json({ error: "image_too_large" }, 413);
+  if (!isPng(bytes)) return c.json({ error: "invalid_image" }, 400);
+  const sql = c.get("sql");
+  const [m] = await sql<{ name: string; photo: string | null }[]>`select name, photo from shop where id = ${id.data}`;
+  if (!m) return c.json({ error: "not_found" }, 404);
+  const file = newImageFile(id.data);
+  if (!(await putPng(c.env, shopImageKey(file), bytes))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update shop set photo = ${file} where id = ${id.data}`;
+  if (m.photo) await deleteImage(c.env, shopImageKey(m.photo));
+  await adminLog(c, "shop_item.photo_uploaded", { type: "shop_item", id: id.data, label: m.name });
+  return c.body(null, 204);
+});
+
+// ---- Audit log --------------------------------------------------------------------------------
+type LogRow = { id: string; actor_type: string; actor_id: string | null; actor_label: string | null; action: string; target_type: string | null; target_id: string | null; target_label: string | null; details: unknown; ip: string | null; created_at: Date };
+const LOG_COLS = "id, actor_type, actor_id, actor_label, action, target_type, target_id, target_label, details, ip, created_at";
+
+/** Newest first, cursor `<ts>|<id>`. Optional filters: actor kind (`who=admin|customer|...`), `action` prefix, `q` on labels. */
+async function logPage(c: any, extra?: { accountId: string }) {
+  const sql = c.get("sql");
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 200);
+  const who = c.req.query("who");
+  const action = c.req.query("action");
+  const q = (c.req.query("q") ?? "").trim().slice(0, 80).replace(/[\\%_]/g, "\\$&");
+  const cur = (c.req.query("cursor") ?? "").split("|");
+  const cursor = cur.length === 2 && !Number.isNaN(Date.parse(cur[0]!)) && uuid.safeParse(cur[1]).success ? { ts: cur[0]!, id: cur[1]! } : null;
+  const rows = await sql<LogRow[]>`
+    select ${sql.unsafe(LOG_COLS)} from logs
+     where true
+       ${extra ? sql`and (target_id = ${extra.accountId} or actor_id = ${extra.accountId} or details->>'account_id' = ${extra.accountId} or details->>'merchant_id' = ${extra.accountId})` : sql``}
+       ${who ? sql`and actor_type = ${who}` : sql``}
+       ${action ? sql`and action like ${action.replace(/[\\%_]/g, "\\$&") + "%"}` : sql``}
+       ${q ? sql`and (coalesce(actor_label,'') ilike ${"%" + q + "%"} or coalesce(target_label,'') ilike ${"%" + q + "%"} or action ilike ${"%" + q + "%"})` : sql``}
+       ${cursor ? sql`and (created_at, id) < (${cursor.ts}::timestamptz, ${cursor.id}::uuid)` : sql``}
+     order by created_at desc, id desc limit ${limit + 1}`;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return c.json({ logs: page, next_cursor: rows.length > limit && last ? `${last.created_at.toISOString()}|${last.id}` : null });
+}
+admin.get("/logs", (c) => logPage(c));
+admin.get("/users/:id/activity", (c) => { const id = uuid.safeParse(c.req.param("id")); return id.success ? logPage(c, { accountId: id.data }) : c.json({ error: "not_found" }, 404); });
+admin.get("/merchants/:id/activity", (c) => { const id = uuid.safeParse(c.req.param("id")); return id.success ? logPage(c, { accountId: id.data }) : c.json({ error: "not_found" }, 404); });

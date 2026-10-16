@@ -1,4 +1,5 @@
 import { RULES, byIp, hit, peek, rateLimit, rateLimited, reset } from "../lib/throttle";
+import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -57,6 +58,7 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
         returning id, session_expires_at`;
       return { accountId, walletId: wallet!.id, device: dev! };
     });
+    await customerLog(c, result.accountId, b.email, "customer.signed_up", { type: b.type });
     return c.json(
       {
         account_id: result.accountId,
@@ -89,7 +91,8 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
     select id, password_hash, status from accounts where lower(email) = ${b.email}`;
   const ok = await verifyPassword(b.password, acct?.password_hash ?? DUMMY_HASH);
   if (!acct || !acct.password_hash || !ok || acct.status !== "active") {
-    await hit(sql, failKey, RULES.loginFailures);
+    const h = await hit(sql, failKey, RULES.loginFailures);
+    if (acct) await customerLog(c, acct.id, b.email, "customer.login_failed", { locked: !h.ok });
     return c.json({ error: "invalid_credentials" }, 401);
   }
   await reset(sql, failKey);
@@ -101,6 +104,7 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
     values (${acct.id}, ${b.platform ?? null}, ${b.push_token ?? null}, ${hash},
             now() + interval '90 days', now())
     returning id, session_expires_at`;
+  await customerLog(c, acct.id, b.email, "customer.login", { device_id: dev!.id });
   return c.json({
     account_id: acct.id,
     device_id: dev!.id,
@@ -110,7 +114,8 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
 });
 
 auth.post("/logout", requireDeviceSession, async (c) => {
-  const { deviceId } = c.get("auth");
+  const { deviceId, accountId } = c.get("auth");
+  await customerLog(c, accountId, null, "customer.logout", { device_id: deviceId });
   // revoked_at only; session_token_hash is never reset (would reopen redemption).
   await c.get("sql")`update devices set revoked_at = coalesce(revoked_at, now()) where id = ${deviceId}`;
   return c.body(null, 204);

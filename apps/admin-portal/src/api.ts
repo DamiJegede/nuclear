@@ -127,7 +127,7 @@ export type UserFunding = {
   banks: { id: string; last4: string; status: string; created_at: string }[];
   fundings: { id: string; amount: number; status: string; failure_code: string | null; last4: string | null; created_at: string; released_at: string | null; returned_at: string | null }[];
 };
-export type UserOrder = { id: string; model_name: string; model_type: string; quantity: number; unit_price: number; total: number; status: string; shipping: { city?: string; region?: string; country?: string }; created_at: string };
+export type UserOrder = { id: string; type: "tag" | "shop"; model_name: string; model_type: string | null; quantity: number; unit_price: number; total: number; status: string; shipping: { city?: string; region?: string; country?: string }; created_at: string };
 export type UserTxKind = "all" | "sends" | "received" | "payments" | "loads" | "refunds";
 export type UserTxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; direction: "in" | "out";
@@ -136,6 +136,18 @@ export type UserTxRow = {
 export type UserTxPage = {
   counts: Record<UserTxKind, number>; totals: { money_out: number; money_in: number }; transactions: UserTxRow[]; next_cursor: string | null;
 };
+
+export type ShopItem = {
+  id: string; name: string; description: string | null; photo: string | null; price: number; currency: string;
+  stock: number | null; sold: number; status: "pending" | "available" | "closed"; created_at: string; updated_at: string;
+};
+export type NewShopItem = { name: string; description?: string | null; price: number; stock?: number | null; status?: ShopItem["status"] };
+export type LogRow = {
+  id: string; actor_type: "admin" | "operator" | "customer" | "agent" | "system"; actor_id: string | null; actor_label: string | null;
+  action: string; target_type: string | null; target_id: string | null; target_label: string | null; details: Record<string, unknown>; ip: string | null; created_at: string;
+};
+export type LogPage = { logs: LogRow[]; next_cursor: string | null };
+export type LogFilter = { who?: string; action?: string; q?: string };
 
 /** One model with its provisioning and activation numbers. */
 export type TagDetail = TagModel & {
@@ -291,6 +303,14 @@ export function createApi(token: string, base: string = API_URL) {
     newRecoveryCodes: async (code: string) =>
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/recovery-codes", { code })).recovery_codes,
     stats: () => request<Stats>("GET", "/v1/admin/stats"),
+    shopItems: async () => (await request<{ items: ShopItem[] }>("GET", "/v1/admin/shop-items")).items.map(absolutePhoto),
+    createShopItem: async (i: NewShopItem) => (await request<{ item: ShopItem }>("POST", "/v1/admin/shop-items", i)).item,
+    updateShopItem: async (id: string, patch: Partial<NewShopItem>) => (await request<{ item: ShopItem }>("PATCH", `/v1/admin/shop-items/${encodeURIComponent(id)}`, patch)).item,
+    uploadShopItemPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/shop-items/${encodeURIComponent(id)}/photo`, photo),
+    /** The audit log, newest first. */
+    logs: (f: LogFilter = {}, cursor?: string) => request<LogPage>("GET", `/v1/admin/logs?limit=50${f.who ? `&who=${encodeURIComponent(f.who)}` : ""}${f.action ? `&action=${encodeURIComponent(f.action)}` : ""}${f.q ? `&q=${encodeURIComponent(f.q)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    userActivity: (id: string, cursor?: string) => request<LogPage>("GET", `/v1/admin/users/${encodeURIComponent(id)}/activity?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    merchantActivity: (id: string, cursor?: string) => request<LogPage>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/activity?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
     models: async () => (await request<{ models: TagModel[] }>("GET", "/v1/admin/tag-models")).models.map(absolutePhoto),
     model: async (id: string) => absolutePhoto((await request<{ model: TagDetail }>("GET", `/v1/admin/tag-models/${encodeURIComponent(id)}`)).model),
     updateModel: async (id: string, patch: Partial<NewModel>) =>

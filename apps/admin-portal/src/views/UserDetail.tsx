@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Api, DayRange, UserDetailData, UserDevice, UserFunding, UserOrder, UserTag, UserTxKind, UserTxPage, UserTxRow, UserWallet } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
+import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
 
-export type UserTab = "details" | "wallets" | "transactions" | "tags" | "devices" | "funding" | "orders";
+export type UserTab = "details" | "wallets" | "transactions" | "tags" | "devices" | "funding" | "orders" | "activity";
 export const USER_TABS: { value: UserTab; label: string }[] = [
   { value: "details", label: "Details" }, { value: "wallets", label: "Wallets" }, { value: "transactions", label: "Transactions" },
-  { value: "tags", label: "Tags" }, { value: "devices", label: "Devices" }, { value: "funding", label: "Funding" }, { value: "orders", label: "Orders" },
+  { value: "tags", label: "Tags" }, { value: "devices", label: "Devices" }, { value: "funding", label: "Funding" }, { value: "orders", label: "Orders" }, { value: "activity", label: "Activity" },
 ];
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "Never");
@@ -142,6 +143,7 @@ export function UserDetail({
           {tab === "devices" && <Devices api={api} id={id} onError={onError} />}
           {tab === "funding" && <Funding api={api} id={id} onError={onError} />}
           {tab === "orders" && <Orders api={api} id={id} onError={onError} />}
+          {tab === "activity" && <ActivityLog load={(cursor) => api.userActivity(id, cursor)} onError={onError} />}
         </>
       )}
     </section>
@@ -337,12 +339,12 @@ function Orders({ api, id, onError }: { api: Api; id: string; onError: (e: unkno
         : data.length === 0 ? <p className="muted pad">No store orders.</p>
         : (
           <table>
-            <thead><tr><th scope="col">Ordered</th><th scope="col">Tag</th><th scope="col" className="num">Quantity</th><th scope="col" className="num">Total</th><th scope="col">Ships to</th><th scope="col">Status</th></tr></thead>
+            <thead><tr><th scope="col">Ordered</th><th scope="col">Item</th><th scope="col" className="num">Quantity</th><th scope="col" className="num">Total</th><th scope="col">Ships to</th><th scope="col">Status</th></tr></thead>
             <tbody>
               {data.map((o) => (
                 <tr key={o.id}>
                   <td className="when">{when(o.created_at)}</td>
-                  <th scope="row">{o.model_name} <span className="pill via">{o.model_type}</span></th>
+                  <th scope="row">{o.model_name} <span className="pill via">{o.type === "tag" ? o.model_type : "merch"}</span></th>
                   <td className="num">{int(o.quantity)}</td>
                   <td className="num">{money(o.total)}</td>
                   <td>{[o.shipping.city, o.shipping.region, o.shipping.country].filter(Boolean).join(", ") || "—"}</td>

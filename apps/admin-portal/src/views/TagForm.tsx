@@ -135,12 +135,12 @@ export const CardIcon = () => (
 );
 
 /** Click-or-drag PNG upload. */
-function PhotoDrop({ preview, error, onFile }: { preview: string | null; error: string | null; onFile: (f: File | undefined) => void }) {
+export function PhotoDrop({ preview, error, onFile, label = "Tag Image (PNG only)" }: { preview: string | null; error: string | null; onFile: (f: File | undefined) => void; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   return (
     <div className="wide">
-      <span className="field-label">Tag Image (PNG only)</span>
+      <span className="field-label">{label}</span>
       <div
         className={over ? "dropzone over" : "dropzone"}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
@@ -150,7 +150,7 @@ function PhotoDrop({ preview, error, onFile }: { preview: string | null; error: 
         {preview ? <img src={preview} alt="Photo preview" width={96} height={96} /> : <span className="dz-icon" aria-hidden>⇪</span>}
         <span className="muted">{preview ? "Drop another PNG to replace it" : "Drag and drop a PNG here"}</span>
         <button type="button" className="ghost" onClick={() => input.current?.click()}>{preview ? "Replace Image" : "Select Image"}</button>
-        <input ref={input} type="file" accept="image/png" className="sr-only" aria-label="Tag Image" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+        <input ref={input} type="file" accept="image/png" className="sr-only" aria-label={label.replace(" (PNG only)", "")} onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       {error && <p className="error" role="alert">{error}</p>}
     </div>

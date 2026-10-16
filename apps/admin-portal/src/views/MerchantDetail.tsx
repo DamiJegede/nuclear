@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import type { Api, DayRange, MerchantDetailData, MerchantProduct, MerchantStaffRow, MerchantTerminal, MerchantTxKind, MerchantTxPage, MerchantTxRow } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
+import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
 
-export type MerchantTab = "details" | "terminals" | "staff" | "transactions" | "products";
+export type MerchantTab = "details" | "terminals" | "staff" | "transactions" | "products" | "activity";
 export const MERCHANT_TABS: { value: MerchantTab; label: string }[] = [
   { value: "details", label: "Details" }, { value: "terminals", label: "Terminals" }, { value: "staff", label: "Staff" },
-  { value: "transactions", label: "Transactions" }, { value: "products", label: "Products" },
+  { value: "transactions", label: "Transactions" }, { value: "products", label: "Products" }, { value: "activity", label: "Activity" },
 ];
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "Never");
@@ -111,6 +112,7 @@ export function MerchantDetail({
           {tab === "staff" && <Staff api={api} id={id} onError={onError} />}
           {tab === "transactions" && <MerchantTransactions api={api} id={id} canAdmin={canAdmin} onChanged={() => void load()} onError={onError} />}
           {tab === "products" && <Products api={api} id={id} onError={onError} />}
+          {tab === "activity" && <ActivityLog load={(cursor) => api.merchantActivity(id, cursor)} onError={onError} />}
         </>
       )}
     </section>

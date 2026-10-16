@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { customerLog } from "../lib/audit";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { LINK_TTL, newAgentKey, signWalletLink } from "../crypto";
@@ -260,6 +261,7 @@ wallets.post("/:id/key", requireOwner, async (c) => {
   const [w] = await sql<WalletRow[]>`
     update wallets set key_hash = ${k.hash}, key_hint = ${k.hint}, key_last_used_at = null
      where id = ${id.data} and account_id = ${accountId} returning ${sql.unsafe(COLS)}`;
+  await customerLog(c, accountId, null, "customer.agent_key_rotated", { account_id: accountId }, { type: "wallet", id: id.data });
   return c.json({ wallet: walletJson(w!), key: k.key }, 201);
 });
 
@@ -271,5 +273,6 @@ wallets.delete("/:id/key", requireOwner, async (c) => {
     update wallets set key_hash = null, key_hint = null, key_last_used_at = null
      where id = ${id.data} and account_id = ${accountId} returning id`;
   if (rows.length === 0) return c.json({ error: "not_found" }, 404);
+  await customerLog(c, accountId, null, "customer.agent_key_revoked", { account_id: accountId }, { type: "wallet", id: id.data });
   return c.body(null, 204);
 });

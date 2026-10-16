@@ -9,7 +9,14 @@ migrate();
 const adm = postgres("postgres://postgres@127.0.0.1:54340/nuclear", { max: 4, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const OP = "op-" + randomBytes(16).toString("hex");
-const env: any = { HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
+// A fake R2 bucket: put/get over a Map.
+const store = new Map<string, { bytes: Uint8Array; httpMetadata?: any }>();
+const IMAGES = {
+  delete: async (k: string) => { store.delete(k); },
+  put: async (k: string, v: Uint8Array, o?: any) => { store.set(k, { bytes: new Uint8Array(v), httpMetadata: o?.httpMetadata }); },
+  get: async (k: string) => { const e = store.get(k); return e ? { httpMetadata: e.httpMetadata, arrayBuffer: async () => e.bytes.buffer.slice(e.bytes.byteOffset, e.bytes.byteOffset + e.bytes.byteLength) } : null; },
+};
+const env: any = { IMAGES, HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
@@ -51,6 +58,11 @@ eq("the model now points at its photo path", /^\/v1\/shop\/models\/[0-9a-f-]+\/p
 const ph = await raw("GET", withPhoto.photo.split("?")[0]);
 eq("the photo is served publicly with its type, the same bytes and a long cache", [ph.status, ph.headers.get("content-type"), Array.from(new Uint8Array(await ph.arrayBuffer())), ph.headers.get("cache-control")], [200, "image/png", Array.from(png), "public, max-age=31536000, immutable"]);
 eq("admin list shows the photo path too", (await op("GET", "/v1/admin/tag-models")).json.models.find((m: any) => m.id === band.id).photo, withPhoto.photo);
+const stored = (await q("select photo from tag_models where id=$1", [band.id]))[0].photo;
+eq("the database keeps only the file name; the R2 key is rendered from a fixed prefix", [/^[0-9a-f-]{36}-\d+\.png$/.test(stored), store.has("tags/" + stored)], [true, true]);
+await new Promise((r) => setTimeout(r, 5));
+await raw("PUT", `/v1/admin/tag-models/${band.id}/photo`, { token: OP, type: "image/png", bytes: png });
+eq("a new upload gets a new file name and the old object is deleted", [(await q("select photo from tag_models where id=$1", [band.id]))[0].photo !== stored, store.has("tags/" + stored)], [true, false]);
 eq("no photo is 404", (await call("GET", `/v1/shop/models/${pending.id}/photo`)).status, 404);
 
 // ---- buying
@@ -65,7 +77,7 @@ eq("bad bodies are refused (quantity, shipping, country)", [
 const o1 = await order(A, "buy-1", { model_id: band.id, quantity: 2, shipping: SHIP });
 eq("a purchase creates a paid order with a price snapshot, total and normalised shipping", [o1.status, o1.json.order.status, o1.json.order.quantity, o1.json.order.unit_price, o1.json.order.total, o1.json.order.model.name, o1.json.order.shipping.country], [201, "paid", 2, 2999, 5998, "NEO Band", "GB"]);
 eq("the buyer's balance dropped and the model's sold count rose", [(await call("GET", "/v1/balance", { token: A })).json.balance, (await q("select sold from tag_models where id=$1", [band.id]))[0].sold], [10000 - 5998, 2]);
-eq("a retry with the same key returns the same order, charging once", [(await order(A, "buy-1", { model_id: band.id, quantity: 2, shipping: SHIP })).json.order.id === o1.json.order.id, (await q("select sold from tag_models where id=$1", [band.id]))[0].sold, (await q("select count(*)::int n from tag_orders"))[0].n], [true, 2, 1]);
+eq("a retry with the same key returns the same order, charging once", [(await order(A, "buy-1", { model_id: band.id, quantity: 2, shipping: SHIP })).json.order.id === o1.json.order.id, (await q("select sold from tag_models where id=$1", [band.id]))[0].sold, (await q("select count(*)::int n from orders"))[0].n], [true, 2, 1]);
 eq("the same key for a different purchase is a mismatch", (await order(A, "buy-1", { model_id: band.id, quantity: 1, shipping: SHIP })).json.error, "idempotency_mismatch");
 const ledger = await q("select bucket, direction, amount::int a, account_id is null as platform from ledger_entries where transaction_id = $1 order by line_no", [o1.json.order.transaction_id]);
 eq("the ledger posts buyer funded_balance debit and platform_clearing credit, balanced", ledger, [{ bucket: "funded_balance", direction: "debit", a: 5998, platform: false }, { bucket: "platform_clearing", direction: "credit", a: 5998, platform: true }]);
@@ -107,4 +119,28 @@ eq("editing needs admin credentials", (await call("PATCH", `/v1/admin/tag-models
 // ---- authority
 const link = (await call("POST", "/v1/wallets", { token: A, body: { display_name: "Kid", type: "person" } })).json;
 eq("activity labels the purchase", (await call("GET", "/v1/activity", { token: A })).json.items.some((i: any) => i.type === "purchase" && i.counterparty.display_name === "Nuclear store"), true);
+// ---- merchandise (shop table) and orders of type "shop"
+const mkItem = async (b: object) => (await op("POST", "/v1/admin/shop-items", b));
+const tee = (await mkItem({ name: "Nuclear Tee", description: "Soft cotton", price: 2500, stock: 3, status: "available" })).json.item;
+const draft = (await mkItem({ name: "Draft Hat", price: 1500 })).json.item;
+eq("a shop item is created pending by default; bad bodies are refused", [draft.status, (await mkItem({ name: "", price: 1 })).status, (await mkItem({ name: "x", price: -1 })).status], ["pending", 400, 400]);
+eq("public items list shows only available items with stock", [(await call("GET", "/v1/shop/items")).json.items.map((i: any) => i.name), (await call("GET", `/v1/shop/items/${draft.id}`)).status], [["Nuclear Tee"], 404]);
+await op("PUT", `/v1/admin/shop-items/${tee.id}/photo`, {});
+eq("an item photo goes to R2 and is served publicly", await (async () => { const r = await raw("PUT", `/v1/admin/shop-items/${tee.id}/photo`, { token: OP, type: "image/png", bytes: png }); const g = (await op("GET", `/v1/admin/shop-items/${tee.id}`)).json.item; const f = await raw("GET", g.photo.split("?")[0]); return [r.status, /^\/v1\/shop\/items\/[0-9a-f-]+\/photo\?v=\d+$/.test(g.photo), f.status, [...store.keys()].some((k) => k.startsWith(`shop/${tee.id}-`))]; })(), [204, true, 200, true]);
+const t1 = await order(A, "tee-1", { item_id: tee.id, quantity: 2, shipping: SHIP });
+eq("buying merch creates a shop order with a snapshot; stock and sold move", [t1.status, t1.json.order.type, t1.json.order.item.name, t1.json.order.total, (await q("select stock, sold from shop where id=$1", [tee.id]))[0]], [201, "shop", "Nuclear Tee", 5000, { stock: 1, sold: 2 }]);
+eq("tag orders are type tag, shop orders type shop", (await q("select type, count(*)::int n from orders group by type order by type")), [{ type: "shop", n: 1 }, { type: "tag", n: 3 }]);
+eq("merch: not enough stock, both ids, neither id", [(await order(A, "tee-2", { item_id: tee.id, quantity: 2, shipping: SHIP })).json.error, (await order(A, "tee-3", { item_id: tee.id, model_id: band.id, quantity: 1, shipping: SHIP })).status, (await order(A, "tee-4", { quantity: 1, shipping: SHIP })).status], ["not_enough_stock", 400, 400]);
+await order(A, "tee-5", { item_id: tee.id, quantity: 1, shipping: SHIP });
+eq("the last unit flips nothing wrong: item leaves the catalogue at zero stock", (await call("GET", "/v1/shop/items")).json.items.length, 0);
+eq("shop item admin: update and unknown", [(await op("PATCH", `/v1/admin/shop-items/${draft.id}`, { status: "available", stock: null })).json.item.status, (await op("PATCH", `/v1/admin/shop-items/00000000-0000-7000-8000-000000000000`, { name: "x" })).status], ["available", 404]);
+
+// ---- audit log
+const logs = (await op("GET", "/v1/admin/logs?limit=200")).json.logs;
+const acts = new Set(logs.map((l: any) => l.action));
+eq("admin actions and customer events are logged", ["tag_model.created", "tag_model.updated", "tag_model.photo_uploaded", "tag_model.tags_imported", "shop_item.created", "shop_item.updated", "shop_item.photo_uploaded", "customer.signed_up"].every((a) => acts.has(a)), true);
+eq("log rows are append-only", await (async () => { try { await q("update logs set action='x'"); return "updated"; } catch { return "refused"; } })(), "refused");
+eq("a log needs the audit page; filters work", [(await call("GET", "/v1/admin/logs")).status, (await op("GET", "/v1/admin/logs?who=customer")).json.logs.every((l: any) => l.actor_type === "customer"), (await op("GET", "/v1/admin/logs?action=shop_item.")).json.logs.length], [401, true, 4]);
+eq("a person's activity lists their own events", (await op("GET", `/v1/admin/users/${ada.account_id}/activity`)).json.logs.some((l: any) => l.action === "customer.signed_up"), true);
+
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

@@ -15,6 +15,8 @@ import { USER_TABS, UserDetail, type UserTab } from "./views/UserDetail";
 import { MERCHANT_TABS, MerchantDetail, type MerchantTab } from "./views/MerchantDetail";
 import { Transactions } from "./views/Transactions";
 import { Overview } from "./views/Overview";
+import { Shop } from "./views/Shop";
+import { AuditLog } from "./views/AuditLog";
 
 const KEY = "nuclear.admin.session";
 
@@ -27,11 +29,11 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "merchants" | "merchant" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "security";
+type View = "overview" | "merchants" | "merchant" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "shop" | "audit" | "security";
 type Route = { view: View; id?: string; tab?: MerchantTab | UserTab };
 
 // Each page has its own address, so the browser's back and forward buttons move between pages.
-const PATHS: Record<Exclude<View, "tag" | "merchant" | "user">, string> = { overview: "/", merchants: "/merchants", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", security: "/security" };
+const PATHS: Record<Exclude<View, "tag" | "merchant" | "user">, string> = { overview: "/", merchants: "/merchants", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", shop: "/shop", audit: "/audit", security: "/security" };
 const pathOf = (r: Route): string =>
   r.view === "tag" ? `/tags/${r.id}`
   : r.view === "merchant" ? `/merchants/${r.id}`
@@ -87,10 +89,10 @@ export function App({
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
 
   // Tab title per page. Sign-in, enrollment and the tag page set their own (undefined = leave it).
-  const TITLES: Record<Exclude<View, "tag" | "merchant" | "user">, string> = {
+  const TITLES: Record<Exclude<View, "tag" | "merchant" | "user" | "shop" | "audit">, string> = {
     overview: "Overview", merchants: "Merchants", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", security: "Security",
   };
-  usePageTitle(token && me?.mfa_enabled && view !== "tag" && view !== "merchant" && view !== "user" ? TITLES[view] : undefined);
+  usePageTitle(token && me?.mfa_enabled && view !== "tag" && view !== "merchant" && view !== "user" && view !== "shop" && view !== "audit" ? TITLES[view] : undefined);
 
   const clear = useCallback((why?: string) => {
     writeToken(null);
@@ -170,7 +172,7 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["transactions", "Transactions"]] as const).filter(([v]) => me.pages.includes(v)).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["audit", "Logs"]] as const).filter(([v]) => me.pages.includes(v)).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") || (v === "merchants" && view === "merchant") || (v === "users" && view === "user") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
@@ -197,6 +199,8 @@ export function App({
           <UserDetail api={api} id={route.id} tab={(route.tab as UserTab) ?? "details"} canAct={me.role === "admin" || me.role === "support"} canAdmin={me.role === "admin"}
             onTab={(t) => setView("user", false, route.id, t)} onBack={() => setView("users")} onError={onError} />
         )}
+        {view === "shop" && me.pages.includes("shop") && <Shop api={api} onError={onError} canWrite={me.role === "admin" || me.role === "sales"} />}
+        {view === "audit" && me.pages.includes("audit") && <AuditLog api={api} onError={onError} />}
         {view === "transactions" && me.pages.includes("transactions") && <Transactions api={api} onError={onError} />}
       </main>
     </div>

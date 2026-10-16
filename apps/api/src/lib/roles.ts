@@ -5,18 +5,21 @@
 export const ROLES = ["admin", "accounting", "sales", "support", "tags", "merchants"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const PAGES = ["overview", "merchants", "users", "tags", "admins", "transactions"] as const;
+export const PAGES = ["overview", "merchants", "users", "tags", "admins", "transactions", "shop", "audit"] as const;
 export type Page = (typeof PAGES)[number];
 
 /** Pages per role. Every role can also open its own Security page (its own two-step verification). */
 export const ROLE_PAGES: Record<Role, readonly Page[]> = {
   admin: PAGES,
   accounting: ["overview", "transactions"],
-  sales: ["users", "merchants", "tags"],
+  sales: ["users", "merchants", "tags", "shop"],
   support: ["users", "transactions"],
   tags: ["tags"],
   merchants: ["merchants"],
 };
+
+/** Shop items (our merch): Admin and Sales change them; the Audit Log is for Admin only (via the pages above). */
+export const SHOP_WRITERS: readonly Role[] = ["admin", "sales"];
 
 /** The page a role lands on after sign-in: its first. */
 export const landing = (role: Role): Page => ROLE_PAGES[role][0]!;
