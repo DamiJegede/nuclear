@@ -1360,7 +1360,7 @@ describe("user support page", () => {
   const UID = "0190cccc-dddd-7eee-8fff-aaaaaaaaaaaa";
   const UL = { id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 91000, wallets: 3, agents: 1 };
   const DETAIL = {
-    id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", phone: "555-0101", status: "active", tier: "free", created_at: "2026-10-01T00:00:00Z", login_locked: null,
+    id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", phone: "555-0101", status: "active", tier: "free", photo: null, created_at: "2026-10-01T00:00:00Z", login_locked: null,
     balances: { balance: 91000, pending: 500, credit_limit: 0, credit_spent: 0, earmarked: 19300, shared: 71700 },
     stats: { sent: { count: 2, volume: 2200 }, received: { count: 1, volume: 400 }, payments: { count: 2, volume: 3400 }, loads: { count: 1, volume: 100000 }, failed: 2, today: 5, last_activity_at: "2026-10-16T12:00:00Z", wallets: 3, agents: 1, tags: 1, devices: 3, orders: 1 },
   };
@@ -1399,8 +1399,29 @@ describe("user support page", () => {
     expect(bal).toHaveTextContent("$717.00 shared · $193.00 earmarked");
     expect(screen.getByRole("article", { name: "Money out" })).toHaveTextContent("$22.00 sent · $34.00 paid");
     expect(screen.getByRole("article", { name: "Activity" })).toHaveTextContent("2 failed attempts");
-    for (const t of ["ada@example.com", "555-0101", "@ada01", UID]) expect(screen.getByText(t)).toBeInTheDocument();
+    for (const t of ["ada@example.com", "555-0101", UID]) expect(screen.getByText(t)).toBeInTheDocument();
+    expect(screen.getAllByText("@ada01")).toHaveLength(2);                                      // on the profile card and in Details
     expect(screen.getByText("Normal")).toBeInTheDocument();
+  });
+
+  it("five top cards; the first is the person: a 96 x 96 photo (initials when there is none) with the handle and plan stacked under it", async () => {
+    await open(api());
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    const profile = screen.getByRole("article", { name: "Profile" });
+    expect(within(profile).getByRole("img", { name: "Ada Lovelace, no photo" })).toHaveTextContent("AL");
+    expect(within(profile).getByText("@ada01")).toBeInTheDocument();
+    expect(within(profile).getByText("free")).toBeInTheDocument();
+    expect(profile.firstElementChild).toHaveClass("avatar");                                      // photo first, then handle, then plan
+    expect(profile.children[1]).toHaveTextContent("@ada01");
+    expect(profile.children[2]).toHaveTextContent("free");
+    cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    await open(api({ user: vi.fn().mockResolvedValue({ ...DETAIL, photo: "https://img.example/ada.png", handle: null, tier: "plus" }) }));
+    const p2 = screen.getByRole("article", { name: "Profile" });
+    const img = within(p2).getByRole("img", { name: "Ada Lovelace's photo" });
+    expect(img).toHaveAttribute("src", "https://img.example/ada.png");
+    expect(img).toHaveAttribute("width", "96"); expect(img).toHaveAttribute("height", "96");
+    expect(within(p2).getByText("No handle")).toBeInTheDocument();
+    expect(within(p2).getByText("plus")).toBeInTheDocument();
   });
 
   it("Wallets: earmarked balance, limits, what each can do and the agent key hint; Revoke Key and Suspend behind confirms", async () => {

@@ -96,7 +96,12 @@ export function UserDetail({
         <p className="muted pad" role="status">Loading…</p>
       ) : (
         <>
-          <div className="grid merchant-stats">
+          <div className="grid merchant-stats five">
+            <article className="card profile-card" aria-label="Profile">
+              <Avatar name={u.name} photo={u.photo} />
+              <p className="profile-handle">{u.handle ? `@${u.handle}` : <span className="muted">No handle</span>}</p>
+              <p className="profile-plan"><span className="pill">{u.tier ?? "free"}</span></p>
+            </article>
             <article className="card" aria-label="Balance">
               <h2>Balance</h2><p className="big">{money(u.balances.balance)}</p>
               <p className="sub">{money(u.balances.shared)} shared · {money(u.balances.earmarked)} earmarked</p>
@@ -140,6 +145,15 @@ export function UserDetail({
       )}
     </section>
   );
+}
+
+/** A 96 x 96 photo; initials when there is none (or it is not an image address). */
+function Avatar({ name, photo }: { name: string; photo: string | null }) {
+  const isUrl = !!photo && /^(https?:)?\/\//.test(photo);
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+  return isUrl
+    ? <img className="avatar" src={photo!} alt={`${name}'s photo`} width={96} height={96} />
+    : <div className="avatar avatar-initials" role="img" aria-label={`${name}, no photo`}>{initials || "?"}</div>;
 }
 
 function Details({ u }: { u: UserDetailData }) {

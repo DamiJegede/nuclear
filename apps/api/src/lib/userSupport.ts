@@ -44,7 +44,7 @@ export async function userDetail(sql: Sql, id: string) {
   const lock = u.email ? await peek(sql, `login:${u.email.toLowerCase()}`, RULES.loginFailures) : { blocked: false, retryAfter: 0 };
 
   return {
-    id: u.id, name: u.name, handle: u.handle, email: u.email, phone: u.phone, status: u.status, tier: u.tier, created_at: u.created_at,
+    id: u.id, name: u.name, handle: u.handle, email: u.email, phone: u.phone, status: u.status, tier: u.tier, photo: u.photo, created_at: u.created_at,
     login_locked: lock.blocked ? { retry_after: lock.retryAfter } : null,
     balances: {
       balance: n(u.balance ?? 0n), pending: n(u.pending ?? 0n), credit_limit: n(u.credit_limit ?? 0n), credit_spent: n(u.credit_spent ?? 0n),

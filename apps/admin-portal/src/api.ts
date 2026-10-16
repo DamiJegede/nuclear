@@ -107,7 +107,7 @@ export type MerchantTxPage = {
 };
 
 export type UserDetailData = {
-  id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null; created_at: string;
+  id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null; photo: string | null; created_at: string;
   login_locked: { retry_after: number } | null;
   balances: { balance: number; pending: number; credit_limit: number; credit_spent: number; earmarked: number; shared: number };
   stats: {
