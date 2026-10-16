@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Credentials } from "../api";
-import { copyText, credentialsText, downloadText } from "../token";
+import { credentialsText, downloadText } from "../token";
+import { CopyButton } from "./CopyButton";
 
 /**
  * Freshly issued credentials, shown exactly once. The Access ID is always visible; the Access Token is
@@ -18,11 +19,8 @@ export function CredentialsPanel({
   doneLabel?: string;
 }) {
   const [saved, setSaved] = useState(false);
-  const [note, setNote] = useState<{ at: "id" | "token" | "download"; text: string } | null>(null);
+  const [note, setNote] = useState<{ at: "download"; text: string } | null>(null);
 
-  async function copy(at: "id" | "token", label: string, value: string) {
-    setNote({ at, text: (await copyText(value)) ? `${label} copied.` : `Couldn't copy the ${label.toLowerCase()}. Select it and copy by hand.` });
-  }
   function download() {
     const ok = downloadText(
       `nuclear-admin-${credentials.access_id}.txt`,
@@ -39,11 +37,11 @@ export function CredentialsPanel({
       <dl className="cred-list">
         <div>
           <dt>Access ID</dt>
-          <dd><code data-testid="access-id">{credentials.access_id}</code> <button type="button" className="ghost small" onClick={() => void copy("id", "Access ID", credentials.access_id)}>Copy</button>{note?.at === "id" && <span className="muted note" role="status">{note.text}</span>}</dd>
+          <dd><code data-testid="access-id">{credentials.access_id}</code> <CopyButton className="ghost small" value={credentials.access_id} /></dd>
         </div>
         <div>
           <dt>Access Token</dt>
-          <dd><code data-testid="access-token" className="token" aria-label="Access Token (hidden)">{"•".repeat(32)}</code> <button type="button" className="ghost small" onClick={() => void copy("token", "Access Token", credentials.access_token)}>Copy</button>{note?.at === "token" && <span className="muted note" role="status">{note.text}</span>}</dd>
+          <dd><code data-testid="access-token" className="token" aria-label="Access Token (hidden)">{"•".repeat(32)}</code> <CopyButton className="ghost small" value={credentials.access_token} /></dd>
         </div>
       </dl>
       <div className="row">

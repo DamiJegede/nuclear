@@ -98,8 +98,8 @@ export function Admins({ api, onError }: { api: Api; onError: (e: unknown) => vo
               <p>Replace <strong>{rotation.admin.name}</strong>'s Access Token? The current one stops working straight away and any sessions they have are signed out. The new token is shown once.</p>
               {rotateError && <p className="error" role="alert">{rotateError}</p>}
               <div className="modal-actions">
-                <button type="button" className="ghost" disabled={rotating} onClick={() => setRotation(null)}>Cancel</button>
                 <button type="button" disabled={rotating} onClick={() => void rotate(rotation.admin)}>{rotating ? "Rotating…" : "Confirm rotate"}</button>
+                <button type="button" className="ghost" disabled={rotating} onClick={() => setRotation(null)}>Cancel</button>
               </div>
             </>
           )}

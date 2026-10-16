@@ -22,7 +22,7 @@ const STATS: Stats = {
 };
 
 const MODEL: TagModel = {
-  id: "m1", type: "band", name: "NEO Band Lite", photo: null, currency: "USD", price: 2999, country: null,
+  id: "0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee", type: "band", name: "NEO Band Lite", photo: null, currency: "USD", price: 2999, country: null,
   quantity: 1000, sold: 12, limited: false, status: "pending", created_at: new Date().toISOString(), tags: 800, unassigned: 790,
 };
 
@@ -43,6 +43,9 @@ function fakeApi(over: Partial<Api> = {}): Api {
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
+    model: vi.fn().mockResolvedValue(undefined),
+    updateModel: vi.fn(),
+    provisionTags: vi.fn(),
     mfaSetup: vi.fn().mockResolvedValue(SETUP),
     mfaEnable: vi.fn().mockResolvedValue(CODES),
     newRecoveryCodes: vi.fn().mockResolvedValue(CODES),
@@ -263,6 +266,10 @@ describe("overview", () => {
   });
 });
 
+const DETAIL = { ...MODEL, tags: 600, unassigned: 480, activated: 120, pending: 400, rank: 1, models_total: 3 };
+const dialog = () => screen.getByRole("dialog");
+const PNG = () => new File(["x"], "band.png", { type: "image/png" });
+
 describe("tags page", () => {
   async function openModels(api: Api) {
     const user = await signIn(api);
@@ -270,14 +277,14 @@ describe("tags page", () => {
     await user.click(screen.getByRole("link", { name: "Tags" }));
     return user;
   }
+  const addCard = () => screen.findByRole("button", { name: "Add Tag" });
 
-  it("shows each model as a card with name, sold / quantity and type", async () => {
+  it("shows each tag as a card with name, sold / quantity and type", async () => {
     await openModels(fakeApi());
     const card = (await screen.findByRole("heading", { name: "NEO Band Lite" })).closest("li")!;
-    expect(within(card).getByText("12")).toBeInTheDocument();
     expect(card).toHaveTextContent("12 / 1,000 sold");
     expect(within(card).getByText("BAND")).toBeInTheDocument();
-    expect(within(screen.getByRole("list", { name: "Tag models" })).getByRole("button", { name: "Add model" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Tags" })).getByRole("button", { name: "Add Tag" })).toBeInTheDocument();
   });
 
   it("gives every page its own history entry, so back and forward work", async () => {
@@ -295,72 +302,170 @@ describe("tags page", () => {
     await screen.findByRole("heading", { name: "Tags" });
   });
 
-  it("starts new models as pending and sends the price in cents", async () => {
-    const createModel = vi.fn().mockResolvedValue({ ...MODEL, name: "NEO Band Pro" });
-    const user = await openModels(fakeApi({ createModel }));
-    await user.click(await screen.findByRole("button", { name: "Add model" }));
-    expect(screen.getByLabelText("Status")).toHaveValue("pending");
-    await user.type(screen.getByLabelText("Name"), "NEO Band Pro");
-    await user.type(screen.getByLabelText("Price (USD)"), "49.99");
-    await user.type(screen.getByLabelText("Quantity"), "250");
-    await user.click(screen.getByLabelText("Limited edition"));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
-    await waitFor(() => expect(createModel).toHaveBeenCalledTimes(1));
-    expect(createModel).toHaveBeenCalledWith({ type: "band", name: "NEO Band Pro", price: 4999, quantity: 250, limited: true, status: "pending" });
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  it("opens the Add a Tag modal with the type as two cards, uppercase statuses, a Limited Edition switch and a PNG-only image", async () => {
+    const user = await openModels(fakeApi());
+    await user.click(await addCard());
+    const d = within(dialog());
+    expect(d.getByRole("heading", { name: "Add a Tag" })).toBeInTheDocument();
+    expect(d.getByRole("radio", { name: "Band" })).toBeChecked();
+    await user.click(d.getByRole("radio", { name: "Card" }));
+    expect(d.getByRole("radio", { name: "Card" })).toBeChecked();
+    expect(d.getAllByRole("option").map((o) => o.textContent)).toEqual(["PENDING", "PREORDER", "AVAILABLE", "CLOSED"]);
+    expect(d.getByRole("switch", { name: "Limited Edition" })).not.toBeChecked();
+    expect(d.getByRole("button", { name: "Select Image" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Tag Image")).toHaveAttribute("accept", "image/png");
+    const zone = d.getByText("Drag and drop a PNG here").parentElement!;
+    zone.dispatchEvent(Object.assign(new Event("drop", { bubbles: true, cancelable: true }), { dataTransfer: { files: [new File(["x"], "a.jpg", { type: "image/jpeg" })] } }));
+    expect(await d.findByText("Only PNG images are accepted.")).toBeInTheDocument();
+    expect(d.getAllByRole("button").map((b) => b.textContent).slice(-2)).toEqual(["Add Tag", "Cancel"]);
   });
 
-  it("takes the photo as an upload, resized, and sends it after the model is created", async () => {
+  it("adds a tag as pending, sending the price in cents, then uploads the image", async () => {
     URL.createObjectURL = vi.fn(() => "blob:preview"); URL.revokeObjectURL = vi.fn();
     const createModel = vi.fn().mockResolvedValue({ ...MODEL, id: "m-new", name: "NEO Band Pro" });
     const uploadModelPhoto = vi.fn().mockResolvedValue(null);
     const user = await openModels(fakeApi({ createModel, uploadModelPhoto }));
-    await user.click(await screen.findByRole("button", { name: "Add model" }));
-    expect(screen.queryByLabelText(/Photo URL/)).toBeNull();
+    await user.click(await addCard());
+    expect(screen.getByLabelText("Status")).toHaveValue("pending");
     await user.type(screen.getByLabelText("Name"), "NEO Band Pro");
     await user.type(screen.getByLabelText("Price (USD)"), "49.99");
     await user.type(screen.getByLabelText("Quantity"), "250");
-    await user.upload(screen.getByLabelText(/Photo \(optional/), new File(["x"], "band.png", { type: "image/png" }));
-    expect(await screen.findByAltText("Photo preview")).toBeInTheDocument();
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
+    await user.click(screen.getByRole("switch", { name: "Limited Edition" }));
+    await user.upload(screen.getByLabelText("Tag Image"), PNG());
+    await screen.findByAltText("Photo preview");
+    await user.click(within(dialog()).getByRole("button", { name: "Add Tag" }));
+    await waitFor(() => expect(createModel).toHaveBeenCalledWith({ type: "band", name: "NEO Band Pro", price: 4999, quantity: 250, limited: true, status: "pending" }));
     await waitFor(() => expect(uploadModelPhoto).toHaveBeenCalledWith("m-new", expect.any(Blob)));
-    expect(createModel).toHaveBeenCalledWith(expect.not.objectContaining({ photo: expect.anything() }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("validates before calling the API", async () => {
     const createModel = vi.fn();
     const user = await openModels(fakeApi({ createModel }));
-    await user.click(await screen.findByRole("button", { name: "Add model" }));
-    const dialog = screen.getByRole("dialog", { name: "Add a model" });
-    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Give the model a name.");
+    await user.click(await addCard());
+    const d = within(dialog());
+    await user.click(d.getByRole("button", { name: "Add Tag" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Give the tag a name.");
     await user.type(screen.getByLabelText("Name"), "X");
     await user.type(screen.getByLabelText("Price (USD)"), "29.999");
-    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
+    await user.click(d.getByRole("button", { name: "Add Tag" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter the price in dollars");
     await user.clear(screen.getByLabelText("Price (USD)"));
     await user.type(screen.getByLabelText("Price (USD)"), "10");
     await user.type(screen.getByLabelText("Quantity"), "-3");
-    await user.click(within(dialog).getByRole("button", { name: "Add model" }));
+    await user.click(d.getByRole("button", { name: "Add Tag" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Quantity must be a whole number.");
+    await user.clear(screen.getByLabelText("Quantity"));
+    await user.type(screen.getByLabelText("Quantity"), "5");
+    await user.click(d.getByRole("button", { name: "Add Tag" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Add a PNG image of the tag.");
     expect(createModel).not.toHaveBeenCalled();
   });
 
-  it("shows an error when the API refuses the model", async () => {
+  it("shows an error when the API refuses the tag", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:preview"); URL.revokeObjectURL = vi.fn();
     const createModel = vi.fn().mockRejectedValue(new ApiError(400, "invalid_request"));
     const user = await openModels(fakeApi({ createModel }));
-    await user.click(await screen.findByRole("button", { name: "Add model" }));
+    await user.click(await addCard());
     await user.type(screen.getByLabelText("Name"), "X");
     await user.type(screen.getByLabelText("Price (USD)"), "1");
     await user.type(screen.getByLabelText("Quantity"), "1");
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add model" }));
+    await user.upload(screen.getByLabelText("Tag Image"), PNG());
+    await screen.findByAltText("Photo preview");
+    await user.click(within(dialog()).getByRole("button", { name: "Add Tag" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The API rejected those details");
   });
 
-  it("with no models, the Add Model card is all there is", async () => {
+  it("with no tags, the Add Tag card is all there is", async () => {
     await openModels(fakeApi({ models: vi.fn().mockResolvedValue([]) }));
-    expect(await screen.findByRole("button", { name: "Add model" })).toBeInTheDocument();
+    expect(await addCard()).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+});
+
+describe("tag page", () => {
+  async function openTag(api: Api) {
+    const user = await signIn(api);
+    await screen.findByRole("article", { name: "Scheme balance" });
+    await user.click(screen.getByRole("link", { name: "Tags" }));
+    await user.click(await screen.findByRole("link", { name: /NEO Band Lite/ }));
+    await screen.findByRole("group", { name: "Sales Ranking" });
+    return user;
+  }
+  const detailApi = (extra: Partial<Api> = {}) => fakeApi({ model: vi.fn().mockResolvedValue(DETAIL), ...extra } as Partial<Api>);
+
+  it("opens from a card at its own address, with a static copy of the card, ranking, activation and pending", async () => {
+    await openTag(detailApi());
+    expect(window.location.pathname).toBe(`/tags/${MODEL.id}`);
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Tags" })).toHaveClass("active");
+    const stat = (n: string) => screen.getByRole("group", { name: n });
+    expect(stat("Sales Ranking")).toHaveTextContent("#1");
+    expect(stat("Sales Ranking")).toHaveTextContent("of 3 tags");
+    expect(stat("Activated")).toHaveTextContent("120");
+    expect(screen.getByRole("button", { name: "Provision Tags" })).toHaveTextContent("400");
+    expect(screen.getByRole("button", { name: "Provision Tags" })).toHaveTextContent("PENDING · 600 of 1,000 loaded");
+    expect(screen.getByLabelText("NEO Band Lite")).toHaveClass("static");   // the unselectable card
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("works with back, forward and a direct visit", async () => {
+    const user = await openTag(detailApi());
+    act(() => { window.history.back(); });
+    await screen.findByRole("list", { name: "Tags" });
+    act(() => { window.history.forward(); });
+    await screen.findByRole("group", { name: "Sales Ranking" });
+    cleanup();
+    window.history.replaceState(null, "", `/tags/${MODEL.id}`);
+    sessionStorage.setItem(TOKEN_KEY, "t");
+    render(<App makeApi={() => detailApi()} signIn={vi.fn()} />);
+    expect(await screen.findByRole("group", { name: "Sales Ranking" })).toBeInTheDocument();
+  });
+
+  it("edits the tag in the same modal, titled Edit Tag, filled with the current values", async () => {
+    const updateModel = vi.fn().mockResolvedValue(MODEL);
+    const user = await openTag(detailApi({ updateModel }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const d = within(dialog());
+    expect(d.getByRole("heading", { name: "Edit Tag" })).toBeInTheDocument();
+    expect(d.getByLabelText("Name")).toHaveValue("NEO Band Lite");
+    expect(d.getByLabelText("Price (USD)")).toHaveValue("29.99");
+    expect(d.getByLabelText("Quantity")).toHaveValue("1000");
+    await user.clear(d.getByLabelText("Name"));
+    await user.type(d.getByLabelText("Name"), "NEO Band Lite 2");
+    await user.click(d.getByRole("button", { name: "Save Changes" }));   // no new image needed when editing
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith(MODEL.id, { type: "band", name: "NEO Band Lite 2", price: 2999, quantity: 1000, limited: false, status: "pending" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("explains the API's refusals when editing", async () => {
+    const updateModel = vi.fn().mockRejectedValue(new ApiError(409, "quantity_below_sold"));
+    const user = await openTag(detailApi({ updateModel }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(within(dialog()).getByRole("button", { name: "Save Changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("can't be lower than the number already sold");
+  });
+
+  it("provisions tags from a CSV: shows what it found, loads it, and reports the new pending count", async () => {
+    const provisionTags = vi.fn().mockResolvedValue({ requested: 3, inserted: 3, duplicates_in_request: 0, already_existing: [] });
+    const user = await openTag(detailApi({ provisionTags }));
+    await user.click(screen.getByRole("button", { name: "Provision Tags" }));
+    const d = within(dialog());
+    expect(d.getByText(/600 of 1,000 provisioned, 400 pending/)).toBeInTheDocument();
+    expect(d.getByRole("button", { name: "Load Tags" })).toBeDisabled();
+    const csv = new File(["uid,batch\n04AE42EAAF12A0,B1\n04AE42EAAF12A1,B1\n04ae42eaaf12a0,B1\n04AE42EAAF12A2,B1\n"], "uids.csv", { type: "text/csv" });
+    await user.upload(screen.getByLabelText("UID File"), csv);
+    expect(await d.findByText(/3 UIDs found, 1 repeated, 6 other values ignored/)).toBeInTheDocument();
+    await user.click(d.getByRole("button", { name: "Load 3 Tags" }));
+    await waitFor(() => expect(provisionTags).toHaveBeenCalledWith(MODEL.id, ["04AE42EAAF12A0", "04AE42EAAF12A1", "04AE42EAAF12A2"]));
+    expect(await d.findByText(/tags loaded for NEO Band Lite/)).toBeInTheDocument();
+    expect(d.getByText(/603 of 1,000 provisioned, 397 pending/)).toBeInTheDocument();
+  });
+
+  it("refuses a file with no UIDs in it", async () => {
+    const user = await openTag(detailApi());
+    await user.click(screen.getByRole("button", { name: "Provision Tags" }));
+    await user.upload(screen.getByLabelText("UID File"), new File(["nothing,here\n"], "x.csv", { type: "text/csv" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No UIDs found");
   });
 });
 
@@ -601,7 +706,7 @@ describe("rotating an Access Token", () => {
     expect(rotateAccessToken).not.toHaveBeenCalled();
   });
 
-  it("cannot be dismissed by Escape while the new token is on screen, and the copy note sits by its button", async () => {
+  it("cannot be dismissed by Escape while the new token is on screen, and the Copy button turns into Copied", async () => {
     const rotateAccessToken = vi.fn().mockResolvedValue({ admin: { id: "a1", access_id: NEW.access_id, name: "Nuclear Admin" }, credentials: NEW });
     const user = await open(fakeApi({ admins: vi.fn().mockResolvedValue(ROWS), rotateAccessToken }));
     await user.click(await screen.findByRole("button", { name: "Rotate Access Token for Nuclear Admin" }));
@@ -610,8 +715,8 @@ describe("rotating an Access Token", () => {
     await user.keyboard("{Escape}");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Copy" })[1]!);
-    const note = await screen.findByText("Access Token copied.");
-    expect(note.previousElementSibling).toHaveTextContent("Copy");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();   // the button itself says so
+    expect(screen.queryByText(/copied\./i)).toBeNull();                                  // no separate notice
     await user.click(screen.getByLabelText("I have saved these credentials"));
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).toBeNull();

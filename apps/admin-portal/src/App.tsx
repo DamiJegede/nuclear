@@ -7,6 +7,7 @@ import { Admins } from "./views/Admins";
 import { Login } from "./views/Login";
 import { MfaEnroll, Security } from "./views/Mfa";
 import { Tags } from "./views/Tags";
+import { TagDetail } from "./views/TagDetail";
 import { Overview } from "./views/Overview";
 
 const KEY = "nuclear.admin.session";
@@ -20,13 +21,17 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "tags" | "admins" | "security";
+type View = "overview" | "tags" | "tag" | "admins" | "security";
+type Route = { view: View; id?: string };
 
 // Each page has its own address, so the browser's back and forward buttons move between pages.
-const PATHS: Record<View, string> = { overview: "/", tags: "/tags", admins: "/admins", security: "/security" };
-const viewFromPath = (path: string): View => {
+const PATHS: Record<Exclude<View, "tag">, string> = { overview: "/", tags: "/tags", admins: "/admins", security: "/security" };
+const pathOf = (r: Route): string => (r.view === "tag" ? `/tags/${r.id}` : PATHS[r.view]);
+const routeFromPath = (path: string): Route => {
   const clean = path.replace(/\/+$/, "") || "/";
-  return (Object.keys(PATHS) as View[]).find((v) => PATHS[v] === clean) ?? "overview";
+  const tag = /^\/tags\/([0-9a-fA-F-]{36})$/.exec(clean);
+  if (tag) return { view: "tag", id: tag[1]! };
+  return { view: ((Object.keys(PATHS) as (keyof typeof PATHS)[]).find((v) => PATHS[v] === clean) ?? "overview") };
 };
 
 export function App({
@@ -40,16 +45,18 @@ export function App({
 }) {
   const [token, setToken] = useState<string | null>(readToken);
   const [me, setMe] = useState<AdminMe | null>(null);
-  const [view, setViewState] = useState<View>(() => viewFromPath(window.location.pathname));
+  const [route, setRoute] = useState<Route>(() => routeFromPath(window.location.pathname));
+  const view = route.view;
 
-  const setView = useCallback((v: View, replace = false) => {
-    const path = PATHS[v];
+  const setView = useCallback((v: View, replace = false, id?: string) => {
+    const r: Route = { view: v, ...(id ? { id } : {}) };
+    const path = pathOf(r);
     if (window.location.pathname !== path) window.history[replace ? "replaceState" : "pushState"](null, "", path);
-    setViewState(v);
+    setRoute(r);
   }, []);
 
   useEffect(() => {
-    const onPop = () => setViewState(viewFromPath(window.location.pathname));
+    const onPop = () => setRoute(routeFromPath(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -125,7 +132,7 @@ export function App({
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
           {([["overview", "Overview"], ["tags", "Tags"], ["admins", "Admins"]] as const).map(([v, label]) => (
-            <a key={v} href={PATHS[v]} className={view === v ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
+            <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
         </nav>
@@ -138,7 +145,8 @@ export function App({
       </header>
       <main>
         {view === "overview" && <Overview api={api} onError={onError} />}
-        {view === "tags" && <Tags api={api} onError={onError} />}
+        {view === "tags" && <Tags api={api} onError={onError} open={(id) => setView("tag", false, id)} />}
+        {view === "tag" && route.id && <TagDetail api={api} id={route.id} onBack={() => setView("tags")} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
         {view === "admins" && <Admins api={api} onError={onError} />}
       </main>

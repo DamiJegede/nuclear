@@ -49,6 +49,15 @@ export type TagModel = {
   unassigned?: number;
 };
 
+/** One model with its provisioning and activation numbers. */
+export type TagDetail = TagModel & {
+  tags: number; unassigned: number; activated: number; pending: number; rank: number; models_total: number;
+};
+
+export type ProvisionResult = {
+  requested: number; inserted: number; duplicates_in_request: number; already_existing: { uid: string; model_id: string }[];
+};
+
 export type NewModel = {
   type: "band" | "card";
   name: string;
@@ -133,6 +142,9 @@ export type Api = ReturnType<typeof createApi>;
 /** Calls made as a signed-in admin. The session token is held by the caller, never logged. */
 export function createApi(token: string, base: string = API_URL) {
   const request = <T>(method: string, path: string, body?: unknown) => send<T>(base, token, method, path, body);
+  // Uploaded photos come back as API paths; make them absolute so the page can show them.
+  const absolutePhoto = <M extends { photo: string | null }>(m: M): M =>
+    ({ ...m, photo: m.photo && m.photo.startsWith("/") ? base.replace(/\/$/, "") + m.photo : m.photo });
   return {
     me: () => request<AdminMe>("GET", "/v1/admin/me"),
     logout: () => request<null>("POST", "/v1/admin/logout"),
@@ -149,9 +161,13 @@ export function createApi(token: string, base: string = API_URL) {
     newRecoveryCodes: async (code: string) =>
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/recovery-codes", { code })).recovery_codes,
     stats: () => request<Stats>("GET", "/v1/admin/stats"),
-    // Uploaded photos come back as API paths; make them absolute so the page can show them.
-    models: async () => (await request<{ models: TagModel[] }>("GET", "/v1/admin/tag-models")).models
-      .map((m) => ({ ...m, photo: m.photo && m.photo.startsWith("/") ? base.replace(/\/$/, "") + m.photo : m.photo })),
+    models: async () => (await request<{ models: TagModel[] }>("GET", "/v1/admin/tag-models")).models.map(absolutePhoto),
+    model: async (id: string) => absolutePhoto((await request<{ model: TagDetail }>("GET", `/v1/admin/tag-models/${encodeURIComponent(id)}`)).model),
+    updateModel: async (id: string, patch: Partial<NewModel>) =>
+      (await request<{ model: TagModel }>("PATCH", `/v1/admin/tag-models/${encodeURIComponent(id)}`, patch)).model,
+    /** Loads a supplier's UIDs as unassigned tags for a model. */
+    provisionTags: (id: string, uids: string[]) =>
+      request<ProvisionResult>("POST", `/v1/admin/tag-models/${encodeURIComponent(id)}/tags`, { uids }),
     /** Uploads the (already resized) photo for a model. */
     uploadModelPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/tag-models/${encodeURIComponent(id)}/photo`, photo),
     createModel: async (m: NewModel) => (await request<{ model: TagModel }>("POST", "/v1/admin/tag-models", m)).model,

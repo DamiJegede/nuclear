@@ -30,7 +30,7 @@ admin.use(
       const allowed = (c.env.ADMIN_ORIGINS ?? "").split(",").map((o: string) => o.trim()).filter(Boolean);
       return allowed.includes(origin) ? origin : null;
     },
-    allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
     allowHeaders: ["authorization", "content-type"],
     maxAge: 600,
   }),
@@ -348,18 +348,84 @@ admin.get("/tag-models", async (c) => {
   return c.json({ models: rows.map((m) => modelJson(m, { tags: m.tags, unassigned: m.unassigned })) });
 });
 
-// Upload a model's photo: the raw image bytes (JPEG, PNG or WebP, 256 KB at most). The portal resizes
-// to 256 x 256 first. Stored as hex through decode() so the driver never handles binary parameters.
-const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+// One model with its provisioning and activation numbers and its sales rank (1 = best seller; models
+// with the same sold count share a rank).
+admin.get("/tag-models/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const sql = c.get("sql");
+  const [m] = await sql<(ModelRow & { tags: number; unassigned: number; activated: number; rank: number; models_total: number })[]>`
+    select ${sql.unsafe(M_COLS.split(", ").filter((x) => x !== "photo").map((x) => "m." + x).join(", "))}, ${sql.unsafe(PHOTO_SQL)},
+           (select count(*) from tags t where t.model_id = m.id)::int as tags,
+           (select count(*) from tags t where t.model_id = m.id and t.wallet_id is null)::int as unassigned,
+           (select count(*) from tags t where t.model_id = m.id and t.wallet_id is not null)::int as activated,
+           (1 + (select count(*) from tag_models o where o.sold > m.sold))::int as rank,
+           (select count(*) from tag_models)::int as models_total
+      from tag_models m left join tag_model_photos p on p.model_id = m.id
+     where m.id = ${id.data}`;
+  if (!m) return c.json({ error: "not_found" }, 404);
+  return c.json({
+    model: modelJson(m, {
+      tags: m.tags, unassigned: m.unassigned, activated: m.activated,
+      pending: Math.max(0, m.quantity - m.tags), rank: m.rank, models_total: m.models_total,
+    }),
+  });
+});
+
+const patchModelBody = z.object({
+  type: z.enum(["band", "card"]),
+  name: z.string().trim().min(1).max(120),
+  currency: z.string().trim().toUpperCase().length(3),
+  price: amountOrZero,
+  country: z.string().trim().toUpperCase().length(2).nullable(),
+  quantity: z.number().int().min(0).max(10_000_000),
+  limited: z.boolean(),
+  status: z.enum(["pending", "preorder", "available", "closed"]),
+}).partial().refine((b) => Object.keys(b).length > 0, { message: "empty" });
+
+// Edit a model. Quantity cannot drop below what is already sold; the type is fixed once tags are
+// loaded or units sold. Price changes never touch past orders (they carry a snapshot).
+admin.patch("/tag-models/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const body = patchModelBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const b = body.data;
+  const sql = c.get("sql");
+  return sql.begin(async (tx) => {
+    const [cur] = await tx<{ type: string; sold: number; tags: number }[]>`
+      select m.type, m.sold, (select count(*) from tags t where t.model_id = m.id)::int as tags
+        from tag_models m where m.id = ${id.data} for no key update`;
+    if (!cur) return c.json({ error: "not_found" }, 404);
+    if (b.quantity !== undefined && b.quantity < cur.sold) return c.json({ error: "quantity_below_sold" }, 409);
+    if (b.type !== undefined && b.type !== cur.type && (cur.sold > 0 || cur.tags > 0)) return c.json({ error: "type_locked" }, 409);
+    await tx`
+      update tag_models set
+        type = coalesce(${b.type ?? null}, type), name = coalesce(${b.name ?? null}, name),
+        currency = coalesce(${b.currency ?? null}, currency),
+        price = coalesce(${b.price === undefined ? null : b.price.toString()}::bigint, price),
+        country = case when ${b.country !== undefined} then ${b.country ?? null} else country end,
+        quantity = coalesce(${b.quantity ?? null}::int, quantity),
+        limited = coalesce(${b.limited ?? null}::boolean, limited),
+        status = coalesce(${b.status ?? null}, status), updated_at = now()
+       where id = ${id.data}`;
+    const [m] = await tx<ModelRow[]>`select ${tx.unsafe(M_COLS)} from tag_models where id = ${id.data}`;
+    return c.json({ model: modelJson(m!) });
+  });
+});
+
+// Upload a model's photo: the raw PNG bytes (256 KB at most). The portal resizes to 256 x 256 first. Stored as hex through decode() so the driver never handles binary parameters.
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const MAX_PHOTO_BYTES = 262_144;
 admin.put("/tag-models/:id/photo", async (c) => {
   const id = z.string().uuid().safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-  if (!PHOTO_TYPES.includes(type)) return c.json({ error: "unsupported_image_type" }, 415);
+  if (type !== "image/png") return c.json({ error: "unsupported_image_type" }, 415);
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
   if (bytes.length > MAX_PHOTO_BYTES) return c.json({ error: "image_too_large" }, 413);
+  if (bytes.length < 8 || !PNG_SIGNATURE.every((b, k) => bytes[k] === b)) return c.json({ error: "invalid_image" }, 400);
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   const sql = c.get("sql");
   const done = await sql`

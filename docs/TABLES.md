@@ -426,7 +426,7 @@ One row per completed store purchase of bands/cards (migration 0010). Created on
 
 ## tag_model_photos
 
-An uploaded model photo (migration 0010): model_id (primary key, cascades), content_type (image/jpeg, image/png or image/webp), data (bytea, 1 byte to 256 KB; the admin portal resizes to 256 x 256 JPEG first) and updated_at. Served publicly at `/v1/shop/models/:id/photo?v=<updated_at epoch>`; tag_models.photo remains for an external URL and an upload takes precedence.
+An uploaded model photo (migration 0010): model_id (primary key, cascades), content_type (image/jpeg, image/png or image/webp), data (bytea, 1 byte to 256 KB; the admin portal resizes to a 256 x 256 PNG first; the upload route accepts PNG only) and updated_at. Served publicly at `/v1/shop/models/:id/photo?v=<updated_at epoch>`; tag_models.photo remains for an external URL and an upload takes precedence.
 
 ## passes
 

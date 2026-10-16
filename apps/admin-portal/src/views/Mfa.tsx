@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, type AdminMe, type Api, type MfaSetup } from "../api";
+import { CopyButton } from "./CopyButton";
 
 /** Groups of four, easier to read and type: "ABCD EFGH …". */
 export const groupSecret = (s: string): string => s.replace(/(.{4})/g, "$1 ").trim();
@@ -21,12 +22,8 @@ export function Qr({ value }: { value: string }) {
 /** The ten single-use codes, shown once. The person must confirm they have saved them. */
 export function RecoveryCodes({ codes, onDone, label = "Continue" }: { codes: string[]; onDone: () => void; label?: string }) {
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
   const text = codes.join("\n");
 
-  async function copy() {
-    try { await navigator.clipboard.writeText(text); setCopied(true); } catch { setCopied(false); }
-  }
   function download() {
     try {
       const url = URL.createObjectURL(new Blob([`Nuclear Admin recovery codes\nEach works once.\n\n${text}\n`], { type: "text/plain" }));
@@ -48,7 +45,7 @@ export function RecoveryCodes({ codes, onDone, label = "Continue" }: { codes: st
         {codes.map((c) => <li key={c}><code>{c}</code></li>)}
       </ul>
       <div className="row">
-        <button type="button" className="ghost" onClick={() => void copy()}>{copied ? "Copied" : "Copy"}</button>
+        <CopyButton value={text} />
         <button type="button" className="ghost" onClick={download}>Download</button>
       </div>
       <label className="check"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I have saved these codes</label>

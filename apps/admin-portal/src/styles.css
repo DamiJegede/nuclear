@@ -173,3 +173,57 @@ button, a.tab { text-transform: capitalize; }
 .pill, .status-text, .model-type { text-transform: uppercase; letter-spacing: 0.04em; }
 input[type="file"] { height: auto; padding: 8px 10px; }
 .photo-preview { width: 96px; height: 96px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); }
+
+/* Add Model form */
+.field-label { display: block; font-weight: 500; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+fieldset.choice-field { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.choice-field legend { font-weight: 500; font-size: 13px; color: var(--muted); padding: 0; margin-bottom: 6px; }
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.choice, .toggle-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; color: var(--text); transition: background 0.15s, color 0.15s; }
+.choice { position: relative; display: grid; justify-items: center; gap: 6px; padding: 16px 12px; font-weight: 600; font-size: 15px; margin: 0; }
+.choice input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.choice:has(input:checked), .toggle-card:has(input:checked) { background: #ffffff; color: #14181f; border-color: #ffffff; }
+.choice:has(input:focus-visible), .toggle-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle-card { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 14px; height: 40px; margin: 0; align-self: end; }
+.modal-form .fields .toggle-card { height: 40px; padding: 0 14px; }
+.toggle-text { display: flex; align-items: baseline; gap: 8px; font-size: 15px; }
+.toggle-text strong { font-weight: 600; }
+.toggle-text small { display: none; }
+.toggle-card input { position: absolute; opacity: 0; inset: 0; margin: 0; width: 100%; height: 100%; cursor: pointer; }
+.switch { flex: none; width: 38px; height: 22px; border-radius: 99px; background: var(--line); position: relative; transition: background 0.15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #ffffff; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.toggle-card:has(input:checked) .switch { background: #14181f; }
+.toggle-card:has(input:checked) .switch::after { transform: translateX(16px); }
+.dropzone { display: grid; justify-items: center; gap: 8px; padding: 18px; border: 2px dashed var(--line); border-radius: var(--radius); text-align: center; transition: border-color 0.15s, background 0.15s; }
+.dropzone.over { border-color: var(--accent); background: var(--bg); }
+.dropzone img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.dz-icon { font-size: 30px; color: var(--muted); line-height: 1; }
+.choice { grid-auto-flow: column; justify-content: center; align-items: center; gap: 10px; padding: 10px 12px; height: 52px; }
+
+/* Tag cards are links; the detail page shows a static card beside stat and action cards */
+.model-card:has(.model-link) { padding: 0; }
+.model-link { display: grid; gap: 8px; justify-items: center; padding: 16px; color: inherit; text-decoration: none; width: 100%; height: 100%; border-radius: var(--radius); }
+.model-card.static { user-select: none; -webkit-user-select: none; cursor: default; }
+.model-card.static:hover { background: var(--surface); color: var(--text); }
+.model-card.static:hover .model-count-label { color: var(--muted); }
+.model-card.static:hover .model-type { background: transparent; color: inherit; border-color: var(--line); }
+.model-card.static:hover .model-photo-empty { background: var(--bg); }
+a.crumb { color: var(--muted); text-decoration: none; }
+a.crumb:hover { color: var(--text); }
+.tag-detail { display: grid; grid-template-columns: minmax(256px, 320px) 1fr; gap: 16px; align-items: start; }
+.tag-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.model-card.stat { min-height: 180px; align-content: center; text-align: center; font: inherit; color: var(--text); }
+.stat-label { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat-value { font-size: 44px; line-height: 1; font-weight: 700; }
+.stat-sub { font-size: 13px; color: var(--muted); }
+button.model-card.action { cursor: pointer; }
+.model-card.action:hover .stat-label, .model-card.action:hover .stat-sub { color: #5a6472; }
+@media (max-width: 760px) { .tag-detail { grid-template-columns: 1fr; } }
+/* Tag page: action cards turn white with dark content on hover; the stat cards match the tag card's height */
+button.model-card.action:hover { background: #ffffff; color: #14181f; }
+button.model-card.action:hover .stat-value, button.model-card.action:hover svg { color: #14181f; }
+button.model-card.action:hover .stat-label, button.model-card.action:hover .stat-sub { color: #5a6472; }
+.model-card.action .stat-sub { text-transform: none; }
+.tag-detail { align-items: stretch; }
+.tag-stats { grid-template-rows: repeat(2, minmax(0, 1fr)); height: 100%; }
+.model-card.stat { min-height: 0; height: 100%; }
