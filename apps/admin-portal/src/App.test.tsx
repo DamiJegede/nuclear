@@ -12,7 +12,7 @@ const STATS: Stats = {
   as_of: new Date().toISOString(),
   scheme: { balance: 15000, consumer_balance: 12100, merchant_balance: 2900, merchant_debt: 0, pending: 900, credit_outstanding: 400, credit_limit: 1000 },
   reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true },
-  users: { total: 1234, active: 1200, suspended: 30, closed: 4, new_7d: 56, new_30d: 200 },
+  users: { total: 1234, active: 1200, suspended: 30, closed: 4, new_today: 7, new_7d: 56, new_30d: 200, wallets: 1890 },
   merchants: { total: 42, active: 40, transacting: 31, terminals: 55 },
   payments: {
     sent: v(10, 150000), tapped: v(2000, 5000000), in_app: v(300, 900000), agents: v(25, 40000), merchant_payments: v(2300, 5900000),
@@ -207,11 +207,14 @@ describe("overview", () => {
     const card = (name: string) => within(screen.getByRole("article", { name }));
     expect(await screen.findByRole("article", { name: "Scheme balance" })).toBeInTheDocument();
     expect(card("Scheme balance").getByText("$150.00")).toBeInTheDocument();
-    expect(card("Scheme balance").getByText(/Consumers \$121\.00 · Merchants \$29\.00/)).toBeInTheDocument();
+    expect(card("Scheme balance").getByText("Consumers $121.00")).toBeInTheDocument();
+    expect(card("Scheme balance").getByText("Merchants $29.00")).toBeInTheDocument();
     expect(card("Users").getByText("1,234")).toBeInTheDocument();
-    expect(card("Users").getByText(/1,200 active · 56 new in 7 days/)).toBeInTheDocument();
+    expect(card("Users").getByText("1,200 active · 7 new today")).toBeInTheDocument();
+    expect(card("Users").getByText("1,890 wallets")).toBeInTheDocument();
     expect(card("Merchants").getByText("42")).toBeInTheDocument();
-    expect(card("Merchants").getByText(/31 taking payments · 55 terminals/)).toBeInTheDocument();
+    expect(card("Merchants").getByText("31 accepting payments")).toBeInTheDocument();
+    expect(card("Merchants").getByText("55 terminals")).toBeInTheDocument();
     expect(card("Payments processed").getByText("$60,500.00")).toBeInTheDocument();
     expect(card("Payments processed").getByText(/2,310 payments, lifetime/)).toBeInTheDocument();
   });

@@ -31,7 +31,7 @@ export type SystemStats = {
     ledger_balanced: boolean;
     earmarks_within_balances: boolean;
   };
-  users: { total: number; active: number; suspended: number; closed: number; new_7d: number; new_30d: number };
+  users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
   payments: {
     /** Wallet-to-wallet sends. */
@@ -79,11 +79,17 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       select w.account_id from wallets w join balances b on b.account_id = w.account_id
        where w.balance is not null group by w.account_id, b.balance having sum(w.balance) > b.balance) x`;
 
+  // Wallets of consumer accounts that are not closed (default, person and agent wallets).
+  const [wal] = await sql<{ n: number }[]>`
+    select count(*)::int as n from wallets w join accounts a on a.id = w.account_id
+     where a.type = 'C' and w.status <> 'closed'`;
+
   const [acc] = await sql<Record<string, number>[]>`
     select (count(*) filter (where type = 'C'))::int as users,
            (count(*) filter (where type = 'C' and status = 'active'))::int as users_active,
            (count(*) filter (where type = 'C' and status = 'suspended'))::int as users_suspended,
            (count(*) filter (where type = 'C' and status = 'closed'))::int as users_closed,
+           (count(*) filter (where type = 'C' and created_at >= (date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ})))::int as users_today,
            (count(*) filter (where type = 'C' and created_at >= now() - interval '7 days'))::int as users_7d,
            (count(*) filter (where type = 'C' and created_at >= now() - interval '30 days'))::int as users_30d,
            (count(*) filter (where type = 'B'))::int as merchants,
@@ -150,7 +156,8 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,
-      closed: acc!.users_closed!, new_7d: acc!.users_7d!, new_30d: acc!.users_30d!,
+      closed: acc!.users_closed!, new_today: acc!.users_today!, new_7d: acc!.users_7d!, new_30d: acc!.users_30d!,
+      wallets: wal!.n,
     },
     merchants: {
       total: acc!.merchants!, active: acc!.merchants_active!,

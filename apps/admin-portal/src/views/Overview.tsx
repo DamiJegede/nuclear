@@ -75,17 +75,20 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
         <article className="card hero" aria-label="Scheme balance">
           <h2>Scheme balance</h2>
           <p className="big">{money(stats.scheme.balance)}</p>
-          <p className="sub">Consumers {money(stats.scheme.consumer_balance)} · Merchants {money(stats.scheme.merchant_balance)}</p>
+          <p className="sub">Consumers {money(stats.scheme.consumer_balance)}</p>
+          <p className="sub">Merchants {money(stats.scheme.merchant_balance)}</p>
         </article>
         <article className="card" aria-label="Users">
           <h2>Users</h2>
           <p className="big">{int(stats.users.total)}</p>
-          <p className="sub">{int(stats.users.active)} active · {int(stats.users.new_7d)} new in 7 days</p>
+          <p className="sub">{int(stats.users.active)} active · {int(stats.users.new_today)} new today</p>
+          <p className="sub">{int(stats.users.wallets)} {stats.users.wallets === 1 ? "wallet" : "wallets"}</p>
         </article>
         <article className="card" aria-label="Merchants">
           <h2>Merchants</h2>
           <p className="big">{int(stats.merchants.total)}</p>
-          <p className="sub">{int(stats.merchants.transacting)} taking payments · {int(stats.merchants.terminals)} terminals</p>
+          <p className="sub">{int(stats.merchants.transacting)} accepting payments</p>
+          <p className="sub">{int(stats.merchants.terminals)} {stats.merchants.terminals === 1 ? "terminal" : "terminals"}</p>
         </article>
         <article className="card" aria-label="Payments processed">
           <h2>Payments processed</h2>

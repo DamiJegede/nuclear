@@ -19,7 +19,7 @@ export type Stats = {
     ledger_balanced: boolean;
     earmarks_within_balances: boolean;
   };
-  users: { total: number; active: number; suspended: number; closed: number; new_7d: number; new_30d: number };
+  users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
   payments: {
     sent: Vol;
