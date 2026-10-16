@@ -1151,7 +1151,7 @@ describe("merchant support page", () => {
   const ML = { id: MID, name: "Cafe Nero", handle: "nero", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 3800, terminals: 2, payments: 3, volume: 4200 };
   const DETAIL = {
     id: MID, name: "Cafe Nero", legal_name: "Nero Holdings LLC", handle: "nero", status: "active", email: "cafe@example.com", phone: "555-0100", created_at: "2026-10-01T00:00:00Z", website: "https://nero.example",
-    address: { line: null, city: "Springfield", state: "NY", post_code: "10001", country: "US" }, bank: { last4: "4321", status: "active" }, balance: 3800,
+    photo: null, tier: "free", address: { line: null, city: "Springfield", state: "NY", post_code: "10001", country: "US" }, bank: { last4: "4321", status: "active" }, balance: 3800,
     stats: { payments: { count: 3, volume: 4200, today: { count: 2, volume: 3000 }, declined: 1 }, refunds: { count: 1, volume: 400 }, pending_refunds: { count: 1, volume: 700 }, customers: 2, last_payment_at: "2026-10-16T12:00:00Z", terminals: 2, staff: 1, products: 2 },
   };
   const TERMS = [
@@ -1187,11 +1187,28 @@ describe("merchant support page", () => {
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Merchants" })).toHaveClass("active");
   });
 
+  it("five top cards; the first is the business: a 96 x 96 photo (initials when none) with the handle and plan stacked under it", async () => {
+    await open(api());
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    const profile = screen.getByRole("article", { name: "Profile" });
+    expect(within(profile).getByRole("img", { name: "Cafe Nero, no photo" })).toHaveTextContent("CN");
+    expect(profile.children[1]).toHaveTextContent("@nero");
+    expect(profile.children[2]).toHaveTextContent("free");
+    cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    await open(api({ merchant: vi.fn().mockResolvedValue({ ...DETAIL, photo: "https://img.example/nero.png", handle: null, tier: "plus" }) }));
+    const p2 = screen.getByRole("article", { name: "Profile" });
+    const img = within(p2).getByRole("img", { name: "Cafe Nero's photo" });
+    expect(img).toHaveAttribute("src", "https://img.example/nero.png");
+    expect(img).toHaveAttribute("width", "96");
+    expect(within(p2).getByText("No handle")).toBeInTheDocument();
+  });
+
   it("Details shows the business, contact, address, payout bank (last four only) and IDs", async () => {
     await open(api());
     const d = screen.getByRole("tab", { name: "Details" });
     expect(d).toHaveAttribute("aria-selected", "true");
-    for (const t of ["Nero Holdings LLC", "@nero", "cafe@example.com", "555-0100", "Springfield, NY · 10001 · US", "https://nero.example", MID]) expect(screen.getByText(t)).toBeInTheDocument();
+    for (const t of ["Nero Holdings LLC", "cafe@example.com", "555-0100", "Springfield, NY · 10001 · US", "https://nero.example", MID]) expect(screen.getByText(t)).toBeInTheDocument();
+    expect(screen.getAllByText("@nero")).toHaveLength(2);                                       // the profile card and Details
     expect(screen.getByText(/•••• 4321/)).toBeInTheDocument();
   });
 
@@ -1402,6 +1419,13 @@ describe("user support page", () => {
     for (const t of ["ada@example.com", "555-0101", UID]) expect(screen.getByText(t)).toBeInTheDocument();
     expect(screen.getAllByText("@ada01")).toHaveLength(2);                                      // on the profile card and in Details
     expect(screen.getByText("Normal")).toBeInTheDocument();
+  });
+
+  it("Details no longer repeats the plan (it is on the profile card) but keeps the handle", async () => {
+    await open(api());
+    expect(screen.queryByText("Plan", { selector: "dt" })).toBeNull();
+    expect(screen.getByText("Handle", { selector: "dt" })).toBeInTheDocument();
+    expect(screen.getAllByText("@ada01")).toHaveLength(2);
   });
 
   it("five top cards; the first is the person: a 96 x 96 photo (initials when there is none) with the handle and plan stacked under it", async () => {

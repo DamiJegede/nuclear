@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Api, DayRange, MerchantDetailData, MerchantProduct, MerchantStaffRow, MerchantTerminal, MerchantTxKind, MerchantTxPage, MerchantTxRow } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
+import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
 
@@ -70,7 +71,12 @@ export function MerchantDetail({
         <p className="muted pad" role="status">Loading…</p>
       ) : (
         <>
-          <div className="grid merchant-stats">
+          <div className="grid merchant-stats five">
+            <article className="card profile-card" aria-label="Profile">
+              <Avatar name={m.name} photo={m.photo} />
+              <p className="profile-handle">{m.handle ? `@${m.handle}` : <span className="muted">No handle</span>}</p>
+              <p className="profile-plan"><span className="pill">{m.tier ?? "free"}</span></p>
+            </article>
             <article className="card" aria-label="Balance">
               <h2>Balance</h2><p className="big">{money(m.balance)}</p><p className="sub">What the platform owes this merchant</p>
             </article>

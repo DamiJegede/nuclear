@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Api, DayRange, UserDetailData, UserDevice, UserFunding, UserOrder, UserTag, UserTxKind, UserTxPage, UserTxRow, UserWallet } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
+import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, periodRange, type Period } from "./Transactions";
 
@@ -147,15 +148,6 @@ export function UserDetail({
   );
 }
 
-/** A 96 x 96 photo; initials when there is none (or it is not an image address). */
-function Avatar({ name, photo }: { name: string; photo: string | null }) {
-  const isUrl = !!photo && /^(https?:)?\/\//.test(photo);
-  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
-  return isUrl
-    ? <img className="avatar" src={photo!} alt={`${name}'s photo`} width={96} height={96} />
-    : <div className="avatar avatar-initials" role="img" aria-label={`${name}, no photo`}>{initials || "?"}</div>;
-}
-
 function Details({ u }: { u: UserDetailData }) {
   const row = (k: string, v: ReactNode) => <div><dt>{k}</dt><dd>{v || <span className="muted">—</span>}</dd></div>;
   return (
@@ -165,7 +157,6 @@ function Details({ u }: { u: UserDetailData }) {
         {row("Handle", u.handle ? `@${u.handle}` : null)}
         {row("Email", u.email)}
         {row("Phone", u.phone)}
-        {row("Plan", u.tier)}
         {row("Joined", day(u.created_at))}
         {row("Pending loads", money(u.balances.pending))}
         {row("Sign-in", u.login_locked ? `Locked, retry in about ${Math.ceil(u.login_locked.retry_after / 60)} min` : "Normal")}
