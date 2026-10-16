@@ -1,7 +1,7 @@
 import type { Sql } from "../db";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
-import type { DayRange } from "./adminLists";
+import { party, type DayRange } from "./adminLists";
 
 /** Read-only views of one merchant for the support team. Everything comes from existing tables. */
 
@@ -125,7 +125,8 @@ export async function merchantTransactions(
   const rows = await sql<{
     id: string; type: string; status: string; status_code: string | null; amount: bigint; ts: Date; ts_key: string;
     via: string | null; reference: string | null; terminal: string | null; customer: string | null; approver: string | null;
-    related: string | null;
+    related: string | null; from_name: string | null; to_name: string | null;
+    from_id: string | null; from_type: string | null; from_photo: string | null; to_id: string | null; to_type: string | null; to_photo: string | null;
   }[]>`
     select t.id, t.type, t.status, t.status_code, t.amount, t."timestamp" as ts,
            to_char(t."timestamp" at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as ts_key,
@@ -133,7 +134,9 @@ export async function merchantTransactions(
            t.reference, tm.name as terminal,
            case when t.type = 'pay' then fa.name else ta.name end as customer,
            coalesce(ap.name, case when t.provider_reference like 'admin:%' then 'Admin ' || substr(t.provider_reference, 7) when t.provider_reference = 'operator' then 'Operator' end) as approver,
-           t.related_transaction_id as related
+           t.related_transaction_id as related,
+           fa.name as from_name, ta.name as to_name,
+           fa.id as from_id, fa.type as from_type, fa.photo as from_photo, ta.id as to_id, ta.type as to_type, ta.photo as to_photo
       from transactions t
       left join terminals tm on tm.id = t.terminal_id
       left join accounts fa on fa.id = t.from_account_id
@@ -162,6 +165,7 @@ export async function merchantTransactions(
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       via: r.via, reference: r.reference, terminal: r.terminal, customer: r.customer, approved_by: r.approver, refund_of: r.related,
+      from: r.from_name, to: r.to_name, from_party: party(r.from_id, r.from_type, r.from_photo), to_party: party(r.to_id, r.to_type, r.to_photo),
     })),
     next_cursor: rows.length > limit && last ? `${last.ts_key}|${last.id}` : null,
   };

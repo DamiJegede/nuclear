@@ -65,7 +65,10 @@ export type TxKind = "all" | "sends" | "taps" | "funds" | "agents";
 export type TxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
   via: "tap" | "pass" | "app" | null; agent: boolean; from: string | null; from_wallet: string | null; to: string | null; to_wallet: string | null;
+  from_party: TxParty | null; to_party: TxParty | null;
 };
+/** One side of a transaction: opens the user or merchant page; the photo is set only when there is an image. */
+export type TxParty = { id: string; kind: "user" | "merchant"; photo: string | null };
 export type TxPage = {
   counts: Record<TxKind, number>;
   totals: { completed_count: number; completed_volume: number };
@@ -99,6 +102,7 @@ export type MerchantTxKind = "all" | "payments" | "refunds" | "pending";
 export type MerchantTxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
   via: "tap" | "pass" | "app" | null; reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null;
+  from: string | null; to: string | null; from_party: TxParty | null; to_party: TxParty | null;
 };
 export type MerchantTxPage = {
   counts: Record<MerchantTxKind, number>;
@@ -132,6 +136,7 @@ export type UserTxKind = "all" | "sends" | "received" | "payments" | "loads" | "
 export type UserTxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; direction: "in" | "out";
   via: "tap" | "pass" | "app" | null; counterparty: string | null; wallet: string | null; agent: boolean; reference: string | null;
+  from: string | null; to: string | null; from_party: TxParty | null; to_party: TxParty | null;
 };
 export type UserTxPage = {
   counts: Record<UserTxKind, number>; totals: { money_out: number; money_in: number }; transactions: UserTxRow[]; next_cursor: string | null;

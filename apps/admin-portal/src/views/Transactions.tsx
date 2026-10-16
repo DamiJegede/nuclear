@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import type { Api, DayRange, TxKind, TxPage, TxRow } from "../api";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { Api, DayRange, TxKind, TxPage, TxParty, TxRow } from "../api";
+import { Avatar } from "./Avatar";
 import { int, money } from "../format";
 
 const KINDS: { kind: TxKind; label: string }[] = [
@@ -39,12 +40,12 @@ export function periodRange(period: Period, custom: { from: string; to: string }
   }
 }
 
-/** Status pill; a failed row also shows the reason code, on its own line at the right; */
-export function StatusCell({ status, code }: { status: string; code: string | null }) {
+/** Status pill; with `showCode` a failed row also prints its reason code under it (the main Transactions page shows it in the opened row instead). */
+export function StatusCell({ status, code, showCode = false }: { status: string; code?: string | null; showCode?: boolean }) {
   return (
     <>
       <span className={`pill ${status === "completed" ? "available" : status === "failed" ? "closed" : "pending"}`}>{status}</span>
-      {status === "failed" && code && <div className="fail-reason">{code}</div>}
+      {showCode && status === "failed" && code && <div className="fail-reason">{code}</div>}
     </>
   );
 }
@@ -55,7 +56,59 @@ const pill = (status: string) => (
 const party = (name: string | null, wallet: string | null) =>
   name ? <>{name}{wallet && wallet !== name ? <span className="muted note">{wallet}</span> : null}</> : "—";
 
-export function Transactions({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+/** The line under an opened row: sender > receiver, each a link to their page when the viewer may open it. */
+function Party({ name, party, open }: { name: string | null; party: TxParty | null; open?: (id: string) => void }) {
+  const label = name ?? "—";
+  return (
+    <span className="tx-party">
+      <Avatar small name={label} photo={party?.photo ?? null} />
+      {party && open
+        ? <a href={`/${party.kind === "merchant" ? "merchants" : "users"}/${party.id}`} onClick={(e) => { e.preventDefault(); open(party.id); }}>{label}</a>
+        : <span>{label}</span>}
+    </span>
+  );
+}
+
+type TxLike = { id: string; type: string; status: string; status_code: string | null; from: string | null; to: string | null; from_party: TxParty | null; to_party: TxParty | null };
+
+/**
+ * A transaction row that opens on click (or Enter) to show, across all columns, `Transaction ID: <id> • STATUS › reason`
+ * and `sender › receiver` with small photos linking to their pages. The photos are built only after the first open.
+ * Clicks on buttons and links inside the row do not toggle it.
+ */
+export function TxRowPair({ tx, cols, openUser, openMerchant, children }: {
+  tx: TxLike; cols: number; openUser?: (id: string) => void; openMerchant?: (id: string) => void; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [seen, setSeen] = useState(false);
+  const toggle = () => { setSeen(true); setOpen((o) => !o); };
+  const tone = rowTone(tx.type, tx.status) ?? "";
+  return (
+    <>
+      <tr className={`${tone} tx-row`} tabIndex={0} aria-expanded={open}
+        onClick={(e) => { if (!(e.target as HTMLElement).closest("button, a")) toggle(); }}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); toggle(); } }}>
+        {children}
+      </tr>
+      <tr className={`${tone} tx-detail${open ? " open" : ""}`} aria-hidden={!open}>
+        <td colSpan={cols}>
+          <div className="tx-collapse"><div className="tx-inner">
+            <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}</p>
+            {seen && (
+              <p className="tx-parties">
+                <Party name={tx.type === "fund" ? "Bank" : tx.from} party={tx.from_party} open={tx.from_party?.kind === "merchant" ? openMerchant : openUser} />
+                <span className="tx-arrow" aria-hidden>›</span>
+                <Party name={tx.to} party={tx.to_party} open={tx.to_party?.kind === "merchant" ? openMerchant : openUser} />
+              </p>
+            )}
+          </div></div>
+        </td>
+      </tr>
+    </>
+  );
+}
+
+export function Transactions({ api, onError, openUser, openMerchant }: { api: Api; onError: (e: unknown) => void; openUser?: (id: string) => void; openMerchant?: (id: string) => void }) {
   const [kind, setKind] = useState<TxKind>("all");
   const [period, setPeriod] = useState<Period>("all");
   const [custom, setCustom] = useState({ from: "", to: "" });
@@ -146,7 +199,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
               </thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={rowTone(t.type, t.status)}>
+                  <TxRowPair key={t.id} tx={t} cols={6} openUser={openUser} openMerchant={openMerchant}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td>
                       <span className="pill">{t.type}</span>
@@ -156,8 +209,8 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
                     <td>{party(t.from, t.from_wallet)}</td>
                     <td>{party(t.to, t.to_wallet)}</td>
                     <td className="num">{money(t.amount)}</td>
-                    <td className="status-col"><StatusCell status={t.status} code={t.status_code} /></td>
-                  </tr>
+                    <td className="status-col"><StatusCell status={t.status} /></td>
+                  </TxRowPair>
                 ))}
               </tbody>
             </table>

@@ -43,6 +43,7 @@ const all = (await op("/v1/admin/transactions")).json;
 eq("all transactions with a count per filter card", [all.transactions.length, all.counts], [3, { all: 3, sends: 2, taps: 0, funds: 1, agents: 1 }]);
 const sends = (await op("/v1/admin/transactions?kind=sends")).json;
 eq("sends", sends.transactions.map((t: any) => [t.type, t.amount, t.from, t.from_wallet, t.to, t.agent]), [["send", 300, "Ada Lovelace", "Agent Smith", "Bob Builder", true], ["send", 500, "Ada Lovelace", "Ada Lovelace", "Bob Builder", false]]);
+eq("each side carries a link target (user or merchant) and no photo unless it is an image address", sends.transactions.map((t: any) => [t.from_party?.kind, t.to_party?.kind, t.from_party?.photo, typeof t.from_party?.id]), [["user", "user", null, "string"], ["user", "user", null, "string"]]);
 eq("funds", (await op("/v1/admin/transactions?kind=funds")).json.transactions.map((t: any) => [t.type, t.amount, t.status]), [["fund", 10000, "completed"]]);
 eq("agents: activity from agent wallets only", (await op("/v1/admin/transactions?kind=agents")).json.transactions.map((t: any) => [t.amount, t.from_wallet, t.agent]), [[300, "Agent Smith", true]]);
 eq("taps: none yet", (await op("/v1/admin/transactions?kind=taps")).json.transactions.length, 0);

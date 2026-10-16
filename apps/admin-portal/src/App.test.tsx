@@ -918,17 +918,43 @@ describe("merchants, users and transactions", () => {
     expect(await screen.findByText("agent")).toBeInTheDocument();
   });
 
-  it("the full list tints failed rows and shows the reason code on its own line", async () => {
+  it("the full list tints failed rows and keeps the reason out of the row", async () => {
     const transactions = vi.fn().mockResolvedValue({ counts: { all: 2, sends: 2, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 1, completed_volume: 100 },
       transactions: [
-        { id: "ok", type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob" },
-        { id: "bad", type: "send", status: "failed", status_code: "wallet_balance_exceeded", amount: 500, timestamp: "2026-10-16T09:00:00Z", via: null, agent: true, from: "Eve", from_wallet: "Agent", to: "Bob", to_wallet: "Bob" },
+        { id: "ok", type: "send", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T10:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Bob", to_wallet: "Bob", from_party: null, to_party: null },
+        { id: "bad", type: "send", status: "failed", status_code: "wallet_balance_exceeded", amount: 500, timestamp: "2026-10-16T09:00:00Z", via: null, agent: true, from: "Eve", from_wallet: "Agent", to: "Bob", to_wallet: "Bob", from_party: null, to_party: null },
       ], next_cursor: null });
     await go(fakeApi({ transactions }), "Transactions");
     const bad = await screen.findByRole("row", { name: /Eve/ });
     expect(bad).toHaveClass("fail-row");
-    expect(within(bad).getByText("wallet_balance_exceeded")).toHaveClass("fail-reason");
+    expect(within(bad).queryByText("wallet_balance_exceeded")).toBeNull();
     expect(screen.getByRole("row", { name: /Ada/ })).not.toHaveClass("fail-row");
+  });
+
+  it("opens a row to show the transaction id, status and reason, and sender > receiver with photos loaded only then", async () => {
+    const photo = "https://img.example/ada.png";
+    const transactions = vi.fn().mockResolvedValue({ counts: { all: 2, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 0, completed_volume: 0 },
+      transactions: [
+        { id: "tx-1", type: "refund", status: "pending", status_code: "awaiting_approval", amount: 400, timestamp: "2026-10-16T09:00:00Z", via: null, agent: false, from: "Harbor Pizza", from_wallet: null, to: "Hana Silva", to_wallet: "Hana Silva",
+          from_party: { id: "0190aaaa-0000-7000-8000-000000000001", kind: "merchant", photo: null }, to_party: { id: "0190aaaa-0000-7000-8000-000000000002", kind: "user", photo } },
+        { id: "tx-2", type: "purchase", status: "completed", status_code: null, amount: 100, timestamp: "2026-10-16T08:00:00Z", via: null, agent: false, from: "Ada", from_wallet: "Ada", to: "Nuclear store", to_wallet: null,
+          from_party: { id: "0190aaaa-0000-7000-8000-000000000003", kind: "user", photo: null }, to_party: null },
+      ], next_cursor: null });
+    const merchant = vi.fn().mockResolvedValue(undefined);
+    const user = await go(fakeApi({ transactions, merchant }), "Transactions");
+    const row = await screen.findByRole("row", { name: /Harbor Pizza/ });
+    expect(document.querySelector("img")).toBeNull();                       // nothing loads before a row is opened
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    await user.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("tx-1")).toBeInTheDocument();
+    expect(screen.getByText("PENDING")).toBeInTheDocument();
+    expect(screen.getByText("awaiting_approval")).toBeInTheDocument();
+    expect(document.querySelector(`img[src="${photo}"]`)).not.toBeNull();
+    expect(document.querySelectorAll("img").length).toBe(1);                // the sender has no photo: initials
+    expect(screen.getByRole("link", { name: "Hana Silva" })).toHaveAttribute("href", "/users/0190aaaa-0000-7000-8000-000000000002");
+    await user.click(screen.getByRole("link", { name: "Harbor Pizza" }));
+    expect(window.location.pathname).toBe("/merchants/0190aaaa-0000-7000-8000-000000000001");
   });
 
   it("loads more transactions with the cursor", async () => {
@@ -1262,7 +1288,9 @@ describe("merchant support page", () => {
     const user = await open(api({ merchantTransactions }));
     await user.click(tab("Transactions"));
     await screen.findByRole("row", { name: /Poor/ });
-    expect(screen.getByRole("row", { name: /Poor/ })).toHaveTextContent("insufficient_balance");
+    expect(screen.getByRole("row", { name: /Poor/ })).not.toHaveTextContent("insufficient_balance");
+    await user.click(screen.getByRole("row", { name: /Poor/ }));
+    expect(screen.getByText("insufficient_balance")).toHaveClass("tx-code");
     expect(screen.getByRole("row", { name: /refund/ })).toHaveTextContent("approved by Sam Staff");
     expect(screen.getByRole("status")).toHaveTextContent("2 payments · $35.00");
     expect(merchantTransactions).toHaveBeenLastCalledWith(MID, "all", undefined, {});
@@ -1279,7 +1307,7 @@ describe("merchant support page", () => {
     await user.click(tab("Transactions"));
     const failed = await screen.findByRole("row", { name: /Poor/ });
     expect(failed).toHaveClass("fail-row");
-    expect(within(failed).getByText("insufficient_balance")).toHaveClass("fail-reason");
+    expect(within(failed).queryByText("insufficient_balance")).toBeNull();
     expect(screen.getByRole("row", { name: /2,500|\$25\.00/ })).not.toHaveClass("fail-row");
     const pending = screen.getByRole("row", { name: /\$7\.00/ });
     expect(pending).not.toHaveClass("fail-row");
@@ -1475,7 +1503,9 @@ describe("user support page", () => {
     await user.click(tab("Transactions"));
     const failed = await screen.findByRole("row", { name: /Kid/ });
     expect(failed).toHaveClass("fail-row");
-    expect(within(failed).getByText("send_not_allowed")).toHaveClass("fail-reason");
+    expect(within(failed).queryByText("send_not_allowed")).toBeNull();
+    await user.click(failed);
+    expect(screen.getByText("send_not_allowed")).toHaveClass("tx-code");
     expect(screen.getByText("+$4.00")).toHaveClass("amount-in");
     expect(screen.getByText("−$15.00")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("$15.00 out · $4.00 in");

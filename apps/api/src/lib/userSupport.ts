@@ -2,7 +2,7 @@ import type { Sql } from "../db";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
 import { peek, RULES } from "./throttle";
-import type { DayRange } from "./adminLists";
+import { party, type DayRange } from "./adminLists";
 
 /** Read-only views of one consumer for the support team. Everything comes from existing tables. */
 
@@ -148,6 +148,8 @@ export async function userTransactions(
   const rows = await sql<{
     id: string; type: string; status: string; status_code: string | null; amount: bigint; ts: Date; ts_key: string;
     direction: string; via: string | null; counterparty: string | null; wallet: string | null; agent: boolean; reference: string | null;
+    from_name: string | null; to_name: string | null;
+    from_id: string | null; from_type: string | null; from_photo: string | null; to_id: string | null; to_type: string | null; to_photo: string | null;
   }[]>`
     select t.id, t.type, t.status, t.status_code, t.amount, t."timestamp" as ts,
            to_char(t."timestamp" at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as ts_key,
@@ -158,7 +160,11 @@ export async function userTransactions(
                 when t.from_account_id = ${id} then coalesce(tb.display_name, ta.name) else coalesce(fb.display_name, fa.name) end as counterparty,
            case when t.from_account_id = ${id} then fw.display_name else tw.display_name end as wallet,
            coalesce((case when t.from_account_id = ${id} then fw.type else tw.type end) = 'agent', false) as agent,
-           t.reference
+           t.reference,
+           case when t.type = 'fund' then 'Bank' else coalesce(fb.display_name, fa.name) end as from_name,
+           case when t.type = 'purchase' then 'Nuclear store' else coalesce(tb.display_name, ta.name) end as to_name,
+           case when t.type = 'fund' then null else fa.id end as from_id, fa.type as from_type, fa.photo as from_photo,
+           case when t.type = 'purchase' then null else ta.id end as to_id, ta.type as to_type, ta.photo as to_photo
       from transactions t
       left join accounts fa on fa.id = t.from_account_id left join businesses fb on fb.account_id = t.from_account_id
       left join accounts ta on ta.id = t.to_account_id left join businesses tb on tb.account_id = t.to_account_id
@@ -188,6 +194,7 @@ export async function userTransactions(
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       direction: r.direction, via: r.via, counterparty: r.counterparty, wallet: r.wallet, agent: r.agent, reference: r.reference,
+      from: r.from_name, to: r.to_name, from_party: party(r.from_id, r.from_type, r.from_photo), to_party: party(r.to_id, r.to_type, r.to_photo),
     })),
     next_cursor: rows.length > limit && last ? `${last.ts_key}|${last.id}` : null,
   };

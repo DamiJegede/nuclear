@@ -77,6 +77,8 @@ eq("orders: model, quantity, total, status and where it ships (city, not the ful
 
 // ---- transactions
 const all = (await op(`/v1/admin/users/${U}/transactions`)).json;
+eq("each row names both sides and links them (user or merchant); the bank and the store have no link", all.transactions.every((t: any) => "from" in t && "to" in t && (t.from_party === null || ["user", "merchant"].includes(t.from_party.kind)) && (t.to_party === null || ["user", "merchant"].includes(t.to_party.kind))) && all.transactions.some((t: any) => t.from_party?.kind === "user" || t.to_party?.kind === "user"), true);
+eq("a load comes from the bank (named, no link)", all.transactions.filter((t: any) => t.type === "fund").every((t: any) => t.from === "Bank" && t.from_party === null && t.to_party?.id === U), true);
 eq("transactions: everything the account took part in; someone else's failure and a pending refund request are not shown; counts per filter", [all.transactions.length, all.counts], [9, { all: 9, sends: 3, received: 1, payments: 3, loads: 1, refunds: 1 }]);
 const kinds = await Promise.all(["sends", "received", "payments", "loads", "refunds"].map(async (k) => (await op(`/v1/admin/users/${U}/transactions?kind=${k}`)).json.transactions.map((t: any) => `${t.type}:${t.status}`).sort().join(",")));
 eq("kinds: sends (including the failed one), received, payments (pay and the store purchase), loads, refunds", kinds, ["send:completed,send:completed,send:failed", "send:completed", "pay:completed,pay:completed,purchase:completed", "fund:completed", "refund:completed"]);

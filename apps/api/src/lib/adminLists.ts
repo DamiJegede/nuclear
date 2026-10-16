@@ -42,12 +42,17 @@ export async function userList(sql: Sql, q: string | null) {
   return rows.map((r) => ({ ...r, balance: n(r.balance) }));
 }
 
+/** Who is on one side of a transaction: a link target for the portal (user or merchant) and a photo only when it is an image address. */
+export const party = (id: string | null, type: string | null, photo: string | null) =>
+  id && type ? { id, kind: type === "B" ? "merchant" : "user", photo: photo && /^https?:\/\//.test(photo) ? photo : null } : null;
+
 export type TxKind = "all" | "sends" | "taps" | "funds" | "agents";
 export const TX_KINDS: TxKind[] = ["all", "sends", "taps", "funds", "agents"];
 
 type TxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: bigint; ts: Date; ts_key: string;
   via: string | null; agent: boolean; from_name: string | null; from_wallet: string | null; to_name: string | null; to_wallet: string | null;
+  from_id: string | null; from_type: string | null; from_photo: string | null; to_id: string | null; to_type: string | null; to_photo: string | null;
 };
 
 /** The transaction feed for the admin portal, newest first, with a count per filter card. */
@@ -74,7 +79,9 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
            coalesce(fw.type = 'agent', false) as agent,
            coalesce(fb.display_name, fa.name) as from_name, fw.display_name as from_wallet,
            case when t.type = 'purchase' then 'Nuclear store' else coalesce(tb.display_name, ta.name) end as to_name,
-           tw.display_name as to_wallet
+           tw.display_name as to_wallet,
+           case when t.type = 'fund' then null else fa.id end as from_id, fa.type as from_type, fa.photo as from_photo,
+           case when t.type = 'purchase' then null else ta.id end as to_id, ta.type as to_type, ta.photo as to_photo
       from transactions t
       left join accounts fa on fa.id = t.from_account_id
       left join businesses fb on fb.account_id = t.from_account_id
@@ -109,6 +116,7 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       via: r.via, agent: r.agent, from: r.from_name, from_wallet: r.from_wallet, to: r.to_name, to_wallet: r.to_wallet,
+      from_party: party(r.from_id, r.from_type, r.from_photo), to_party: party(r.to_id, r.to_type, r.to_photo),
     })),
     next_cursor: rows.length > limit && last ? `${last.ts_key}|${last.id}` : null,
   };

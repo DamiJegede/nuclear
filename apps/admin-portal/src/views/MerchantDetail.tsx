@@ -5,7 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
-import { PERIODS, StatusCell, periodRange, type Period, rowTone } from "./Transactions";
+import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
 
 export type MerchantTab = "details" | "terminals" | "staff" | "transactions" | "products" | "activity";
 export const MERCHANT_TABS: { value: MerchantTab; label: string }[] = [
@@ -19,8 +19,8 @@ const statusPill = (s: string) => <span className={`pill ${s === "active" || s =
 
 /** One merchant, for support: numbers on top, then tabs for details, terminals, staff, transactions and products. */
 export function MerchantDetail({
-  api, id, tab, canAct, canAdmin = false, onTab, onBack, onError,
-}: { api: Api; id: string; tab: MerchantTab; canAct: boolean; canAdmin?: boolean; onTab: (t: MerchantTab) => void; onBack: () => void; onError: (e: unknown) => void }) {
+  api, id, tab, canAct, canAdmin = false, openUser, openMerchant, onTab, onBack, onError,
+}: { api: Api; id: string; tab: MerchantTab; canAct: boolean; canAdmin?: boolean; openUser?: (id: string) => void; openMerchant?: (id: string) => void; onTab: (t: MerchantTab) => void; onBack: () => void; onError: (e: unknown) => void }) {
   const [m, setM] = useState<MerchantDetailData | null>(null);
   const [failed, setFailed] = useState(false);
   const [suspending, setSuspending] = useState(false);
@@ -110,7 +110,7 @@ export function MerchantDetail({
           {tab === "details" && <Details m={m} />}
           {tab === "terminals" && <Terminals api={api} id={id} canAct={canAct} onError={onError} />}
           {tab === "staff" && <Staff api={api} id={id} onError={onError} />}
-          {tab === "transactions" && <MerchantTransactions api={api} id={id} canAdmin={canAdmin} onChanged={() => void load()} onError={onError} />}
+          {tab === "transactions" && <MerchantTransactions api={api} id={id} canAdmin={canAdmin} openUser={openUser} openMerchant={openMerchant} onChanged={() => void load()} onError={onError} />}
           {tab === "products" && <Products api={api} id={id} onError={onError} />}
           {tab === "activity" && <ActivityLog load={(cursor) => api.merchantActivity(id, cursor)} onError={onError} />}
         </>
@@ -269,7 +269,7 @@ const MKINDS: { kind: MerchantTxKind; label: string }[] = [
   { kind: "all", label: "All" }, { kind: "payments", label: "Payments" }, { kind: "refunds", label: "Refunds" }, { kind: "pending", label: "Awaiting Approval" },
 ];
 
-function MerchantTransactions({ api, id, canAdmin, onChanged, onError }: { api: Api; id: string; canAdmin: boolean; onChanged: () => void; onError: (e: unknown) => void }) {
+function MerchantTransactions({ api, id, canAdmin, openUser, openMerchant, onChanged, onError }: { api: Api; id: string; canAdmin: boolean; openUser?: (id: string) => void; openMerchant?: (id: string) => void; onChanged: () => void; onError: (e: unknown) => void }) {
   const [kind, setKind] = useState<MerchantTxKind>("all");
   const [period, setPeriod] = useState<Period>("all");
   const [custom, setCustom] = useState({ from: "", to: "" });
@@ -364,14 +364,14 @@ function MerchantTransactions({ api, id, canAdmin, onChanged, onError }: { api: 
               </tr></thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={rowTone(t.type, t.status)}>
+                  <TxRowPair key={t.id} tx={t} cols={canAdmin ? 8 : 7} openUser={openUser} openMerchant={openMerchant}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td><span className="pill">{t.type}</span>{t.via && <span className="pill via">{t.via}</span>}</td>
                     <td>{t.customer ?? "—"}</td>
                     <td>{t.terminal ?? "—"}</td>
                     <td>{t.reference ?? "—"}{t.approved_by && <span className="muted note">approved by {t.approved_by}</span>}</td>
                     <td className="num">{money(t.amount)}</td>
-                    <td className="status-col"><StatusCell status={t.status} code={t.status_code} /></td>
+                    <td className="status-col"><StatusCell status={t.status} /></td>
                     {canAdmin && (
                       <td className="actions">
                         {t.type === "refund" && t.status === "pending" && (
@@ -382,7 +382,7 @@ function MerchantTransactions({ api, id, canAdmin, onChanged, onError }: { api: 
                         )}
                       </td>
                     )}
-                  </tr>
+                  </TxRowPair>
                 ))}
               </tbody>
             </table>

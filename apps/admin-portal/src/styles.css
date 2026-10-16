@@ -329,3 +329,24 @@ td .pill, td .muted:not(.note) { white-space: nowrap; }
 tr.refund-row { background: var(--refund-row); }
 tr.refund-done-row { background: var(--refund-done-row); }
 tr.fund-row { background: var(--fund-row); }
+
+/* Transactions page: click a row to open its details underneath, across all columns */
+tr.tx-row { cursor: pointer; }
+tr.tx-row:focus-visible { outline: 2px solid var(--pop-bg, currentColor); outline-offset: -2px; }
+tr.tx-detail td { padding-top: 0; padding-bottom: 0; border-bottom-width: 0; text-align: left; }
+tr.tx-detail.open td { border-bottom-width: 1px; }
+.tx-collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.22s ease; }
+tr.tx-detail.open .tx-collapse { grid-template-rows: 1fr; }
+.tx-inner { overflow: hidden; min-height: 0; }
+.tx-line { margin: 0; padding: 4px 0 0; font-size: 13px; color: var(--muted); }
+tr.tx-detail:not(.open) .tx-line { padding-top: 0; }
+.tx-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; color: var(--text); }
+.tx-status { font-weight: 600; letter-spacing: 0.04em; }
+.tx-parties { margin: 0; padding: 8px 0 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tx-party { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.tx-party a { color: var(--text); text-decoration: none; }
+.tx-party a:hover { text-decoration: underline; }
+.tx-arrow { color: var(--muted); font-size: 18px; }
+.avatar.sm { width: 32px; height: 32px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .tx-collapse { transition: none; } }
+tr.tx-detail:not(.open) .tx-inner { visibility: hidden; transition: visibility 0s 0.22s; }

@@ -191,17 +191,17 @@ export function App({
         {view === "admins" && me.pages.includes("admins") && <Admins api={api} me={me} onError={onError} />}
         {view === "merchants" && me.pages.includes("merchants") && <Merchants api={api} onError={onError} open={(mid) => setView("merchant", false, mid, "details")} />}
         {view === "merchant" && route.id && me.pages.includes("merchants") && (
-          <MerchantDetail api={api} id={route.id} tab={(route.tab as MerchantTab) ?? "details"} canAct={me.role === "admin" || me.role === "merchants"} canAdmin={me.role === "admin"}
+          <MerchantDetail api={api} id={route.id} tab={(route.tab as MerchantTab) ?? "details"} canAct={me.role === "admin" || me.role === "merchants"} canAdmin={me.role === "admin"} openUser={me.pages.includes("users") ? (uid) => setView("user", false, uid, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (mid) => setView("merchant", false, mid, "details") : undefined}
             onTab={(t) => setView("merchant", false, route.id, t)} onBack={() => setView("merchants")} onError={onError} />
         )}
         {view === "users" && me.pages.includes("users") && <Users api={api} onError={onError} open={(uid) => setView("user", false, uid, "details")} />}
         {view === "user" && route.id && me.pages.includes("users") && (
-          <UserDetail api={api} id={route.id} tab={(route.tab as UserTab) ?? "details"} canAct={me.role === "admin" || me.role === "support"} canAdmin={me.role === "admin"}
+          <UserDetail api={api} id={route.id} tab={(route.tab as UserTab) ?? "details"} canAct={me.role === "admin" || me.role === "support"} canAdmin={me.role === "admin"} openUser={me.pages.includes("users") ? (uid) => setView("user", false, uid, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (mid) => setView("merchant", false, mid, "details") : undefined}
             onTab={(t) => setView("user", false, route.id, t)} onBack={() => setView("users")} onError={onError} />
         )}
         {view === "shop" && me.pages.includes("shop") && <Shop api={api} onError={onError} canWrite={me.role === "admin" || me.role === "sales"} />}
         {view === "audit" && me.pages.includes("audit") && <AuditLog api={api} onError={onError} />}
-        {view === "transactions" && me.pages.includes("transactions") && <Transactions api={api} onError={onError} />}
+        {view === "transactions" && me.pages.includes("transactions") && <Transactions api={api} onError={onError} openUser={me.pages.includes("users") ? (id) => setView("user", false, id, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (id) => setView("merchant", false, id, "details") : undefined} />}
       </main>
     </div>
   );

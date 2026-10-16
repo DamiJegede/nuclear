@@ -5,7 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
-import { PERIODS, StatusCell, periodRange, type Period, rowTone } from "./Transactions";
+import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
 
 export type UserTab = "details" | "wallets" | "transactions" | "tags" | "devices" | "funding" | "orders" | "activity";
 export const USER_TABS: { value: UserTab; label: string }[] = [
@@ -20,8 +20,8 @@ const statusPill = (s: string) => pill(s, s === "active" || s === "completed" ||
 
 /** One person, for support: numbers on top, tabs for details, wallets, transactions, tags, devices, funding and orders. */
 export function UserDetail({
-  api, id, tab, canAct, canAdmin = false, onTab, onBack, onError,
-}: { api: Api; id: string; tab: UserTab; canAct: boolean; canAdmin?: boolean; onTab: (t: UserTab) => void; onBack: () => void; onError: (e: unknown) => void }) {
+  api, id, tab, canAct, canAdmin = false, openUser, openMerchant, onTab, onBack, onError,
+}: { api: Api; id: string; tab: UserTab; canAct: boolean; canAdmin?: boolean; openUser?: (id: string) => void; openMerchant?: (id: string) => void; onTab: (t: UserTab) => void; onBack: () => void; onError: (e: unknown) => void }) {
   const [u, setU] = useState<UserDetailData | null>(null);
   const [failed, setFailed] = useState(false);
   const [dialog, setDialog] = useState<"suspend" | "sign-out" | "unlock" | null>(null);
@@ -138,7 +138,7 @@ export function UserDetail({
 
           {tab === "details" && <Details u={u} />}
           {tab === "wallets" && <Wallets api={api} id={id} canAct={canAct} canAdmin={canAdmin} onChanged={() => void load()} onError={onError} />}
-          {tab === "transactions" && <UserTransactions api={api} id={id} onError={onError} />}
+          {tab === "transactions" && <UserTransactions api={api} id={id} openUser={openUser} openMerchant={openMerchant} onError={onError} />}
           {tab === "tags" && <Tags api={api} id={id} onError={onError} />}
           {tab === "devices" && <Devices api={api} id={id} onError={onError} />}
           {tab === "funding" && <Funding api={api} id={id} onError={onError} />}
@@ -316,7 +316,7 @@ function Funding({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
                     <td className="num">{money(f.amount)}</td>
                     <td>{f.last4 ? `•••• ${f.last4}` : "—"}</td>
                     <td className="when">{f.released_at ? when(f.released_at) : "—"}{f.returned_at && <span className="muted note">returned {when(f.returned_at)}</span>}</td>
-                    <td className="status-col"><StatusCell status={f.status} code={f.failure_code} /></td>
+                    <td className="status-col"><StatusCell status={f.status} code={f.failure_code} showCode /></td>
                   </tr>
                 ))}
               </tbody>
@@ -363,7 +363,7 @@ const UKINDS: { kind: UserTxKind; label: string }[] = [
   { kind: "payments", label: "Payments" }, { kind: "loads", label: "Loads" }, { kind: "refunds", label: "Refunds" },
 ];
 
-function UserTransactions({ api, id, onError }: { api: Api; id: string; onError: (e: unknown) => void }) {
+function UserTransactions({ api, id, openUser, openMerchant, onError }: { api: Api; id: string; openUser?: (id: string) => void; openMerchant?: (id: string) => void; onError: (e: unknown) => void }) {
   const [kind, setKind] = useState<UserTxKind>("all");
   const [period, setPeriod] = useState<Period>("all");
   const [custom, setCustom] = useState({ from: "", to: "" });
@@ -438,14 +438,14 @@ function UserTransactions({ api, id, onError }: { api: Api; id: string; onError:
               </tr></thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} className={rowTone(t.type, t.status)}>
+                  <TxRowPair key={t.id} tx={t} cols={6} openUser={openUser} openMerchant={openMerchant}>
                     <td className="when">{new Date(t.timestamp).toLocaleString()}</td>
                     <td><span className="pill">{t.type}</span>{t.via && <span className="pill via">{t.via}</span>}{t.agent && <span className="pill via">agent</span>}</td>
                     <td>{t.counterparty ?? "—"}{t.reference && <span className="muted note">{t.reference}</span>}</td>
                     <td>{t.wallet ?? "—"}</td>
                     <td className="num"><span className={t.direction === "in" ? "amount-in" : ""}>{t.direction === "in" ? "+" : "−"}{money(t.amount)}</span></td>
-                    <td className="status-col"><StatusCell status={t.status} code={t.status_code} /></td>
-                  </tr>
+                    <td className="status-col"><StatusCell status={t.status} /></td>
+                  </TxRowPair>
                 ))}
               </tbody>
             </table>
