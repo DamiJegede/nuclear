@@ -6,6 +6,11 @@ export interface Env {
   APP_URL?: string;
   /** "true" enables POST /v1/sandbox/fundings (simulated bank load). Never enable in live. */
   SANDBOX_FUNDING?: string;
+  /**
+   * Bearer token for /v1/admin/* (tag models and supplier band imports). Unset = the admin routes
+   * answer 404. `wrangler secret put ADMIN_API_TOKEN`; `.dev.vars` locally.
+   */
+  ADMIN_API_TOKEN?: string;
   /** Program daily associated-value cap in cents (draft target $2,000). Configurable until finalized. */
   DAILY_VALUE_CAP_CENTS?: string;
   /**

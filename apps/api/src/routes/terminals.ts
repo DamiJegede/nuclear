@@ -11,7 +11,8 @@ const uuid = z.string().uuid();
 const nameSchema = z.string().trim().min(1).max(80);
 
 type TerminalRow = { id: string; account_id: string; name: string; allow_refunds: boolean; created_at: Date; updated_at: Date };
-type OrbRow = { id: string; model: string; software: string; account_id: string | null; terminal_id: string | null };
+type OrbRow = { id: string; uid: string; model: string; software: string; account_id: string | null; terminal_id: string | null };
+const orbJson = (o: OrbRow) => ({ id: o.id, uid: o.uid, model: o.model, software: o.software });
 
 const terminalJson = (t: TerminalRow, orb: OrbRow | null) => ({
   id: t.id,
@@ -19,7 +20,7 @@ const terminalJson = (t: TerminalRow, orb: OrbRow | null) => ({
   allow_refunds: t.allow_refunds,
   created_at: t.created_at,
   updated_at: t.updated_at,
-  orb: orb ? { id: orb.id, model: orb.model, software: orb.software } : null,
+  orb: orb ? orbJson(orb) : null,
 });
 
 /**
@@ -37,36 +38,58 @@ async function issueTerminalSession(
   return { token, expires: expiresAt };
 }
 
+/** An Orb's UID is its MAC address: 12 hex characters, any separators, case-insensitive. */
+export const orbUid = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/[:\-\s]/g, "").toUpperCase())
+  .refine((v) => /^[0-9A-F]{12}$/.test(v), { message: "invalid_orb_uid" });
+
+const claimBody = z.object({
+  uid: orbUid,
+  model: z.string().trim().min(1).max(64),
+  software: z.string().trim().min(1).max(64),
+});
+
+type Claim = z.infer<typeof claimBody>;
+
 /**
- * Pair an Orb to a terminal. The Orb leaves any previous terminal of the same account; an Orb owned
- * by a different account cannot be paired; an unassigned Orb is claimed by this account. A terminal
- * holds one Orb, so any Orb it already had is unpaired (and stays with the account).
+ * Claim and pair an Orb to a terminal. An Orb the system has never seen registers itself here (the
+ * terminal read its UID, model and firmware over BLE); an unassigned one is claimed by this account;
+ * one owned by a different account cannot be paired. Pairing moves the Orb off any previous terminal
+ * of the account, and a terminal holds one Orb, so its previous Orb is unpaired (and stays owned).
+ * The reported firmware version is recorded.
  */
 export async function pairOrb(
   sql: Sql,
   accountId: string,
   terminalId: string,
-  orbId: string,
+  c: Claim,
 ): Promise<{ error: string; status: 404 | 409 } | { orb: OrbRow }> {
-  const result = await sql.begin(async (tx): Promise<{ error: string; status: 404 | 409 } | { orb: OrbRow }> => {
+  type R = { error: string; status: 404 | 409 } | { orb: OrbRow };
+  const result = (await sql.begin(async (tx): Promise<R> => {
     const [t] = await tx<{ id: string }[]>`
       select id from terminals where id = ${terminalId} and account_id = ${accountId} for no key update`;
     if (!t) return { error: "terminal_not_found", status: 404 };
 
+    // Register on first sight; a concurrent first claim of the same UID loses the insert race.
+    await tx`
+      insert into orbs (uid, model, software) values (${c.uid}, ${c.model}, ${c.software})
+      on conflict (uid) do nothing`;
     const [o] = await tx<OrbRow[]>`
-      select id, model, software, account_id, terminal_id from orbs where id = ${orbId} for no key update`;
+      select id, uid, model, software, account_id, terminal_id from orbs where uid = ${c.uid} for no key update`;
     if (!o) return { error: "orb_not_found", status: 404 };
     if (o.account_id !== null && o.account_id !== accountId) {
       return { error: "orb_assigned_to_another_account", status: 409 };
     }
 
-    await tx`update orbs set terminal_id = null where terminal_id = ${terminalId} and id <> ${orbId}`;
+    await tx`update orbs set terminal_id = null where terminal_id = ${terminalId} and id <> ${o.id}`;
     const [paired] = await tx<OrbRow[]>`
-      update orbs set account_id = ${accountId}, terminal_id = ${terminalId}
-       where id = ${orbId} returning id, model, software, account_id, terminal_id`;
+      update orbs set account_id = ${accountId}, terminal_id = ${terminalId}, software = ${c.software}
+       where id = ${o.id} returning id, uid, model, software, account_id, terminal_id`;
     return { orb: paired! };
-  });
-  return result as { error: string; status: 404 | 409 } | { orb: OrbRow };
+  })) as R;
+  return result;
 }
 
 async function unpairOrb(sql: Sql, accountId: string, terminalId: string): Promise<boolean> {
@@ -78,7 +101,7 @@ async function unpairOrb(sql: Sql, accountId: string, terminalId: string): Promi
 
 async function orbFor(sql: Sql, terminalId: string): Promise<OrbRow | null> {
   const [o] = await sql<OrbRow[]>`
-    select id, model, software, account_id, terminal_id from orbs where terminal_id = ${terminalId}`;
+    select id, uid, model, software, account_id, terminal_id from orbs where terminal_id = ${terminalId}`;
   return o ?? null;
 }
 
@@ -117,15 +140,15 @@ terminals.post("/", async (c) => {
 
 terminals.get("/", async (c) => {
   const { accountId } = c.get("auth");
-  const rows = await c.get("sql")<(TerminalRow & { orb_id: string | null; orb_model: string | null; orb_software: string | null })[]>`
+  const rows = await c.get("sql")<(TerminalRow & { orb_id: string | null; orb_uid: string | null; orb_model: string | null; orb_software: string | null })[]>`
     select t.id, t.account_id, t.name, t.allow_refunds, t.created_at, t.updated_at,
-           o.id as orb_id, o.model as orb_model, o.software as orb_software
+           o.id as orb_id, o.uid as orb_uid, o.model as orb_model, o.software as orb_software
       from terminals t left join orbs o on o.terminal_id = t.id
      where t.account_id = ${accountId}
      order by t.created_at, t.id`;
   return c.json({
     terminals: rows.map((r) =>
-      terminalJson(r, r.orb_id ? { id: r.orb_id, model: r.orb_model!, software: r.orb_software!, account_id: accountId, terminal_id: r.id } : null),
+      terminalJson(r, r.orb_id ? { id: r.orb_id, uid: r.orb_uid!, model: r.orb_model!, software: r.orb_software!, account_id: accountId, terminal_id: r.id } : null),
     ),
   });
 });
@@ -179,16 +202,15 @@ terminals.post("/:id/revoke", async (c) => {
   return c.body(null, 204);
 });
 
-const orbBody = z.object({ orb_id: uuid });
 
 terminals.put("/:id/orb", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
-  const body = orbBody.safeParse(await c.req.json().catch(() => null));
+  const body = claimBody.safeParse(await c.req.json().catch(() => null));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  if (!body.success) return c.json({ error: "invalid_request" }, 400);
-  const r = await pairOrb(c.get("sql"), c.get("auth").accountId, id.data, body.data.orb_id);
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const r = await pairOrb(c.get("sql"), c.get("auth").accountId, id.data, body.data);
   if ("error" in r) return c.json({ error: r.error }, r.status);
-  return c.json({ orb: { id: r.orb.id, model: r.orb.model, software: r.orb.software } });
+  return c.json({ orb: orbJson(r.orb) });
 });
 
 terminals.delete("/:id/orb", async (c) => {
@@ -215,12 +237,25 @@ terminalSelf.get("/", async (c) => {
 });
 
 terminalSelf.put("/orb", async (c) => {
-  const body = orbBody.safeParse(await c.req.json().catch(() => null));
+  const body = claimBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const { accountId, terminalId } = c.get("terminal");
+  const r = await pairOrb(c.get("sql"), accountId, terminalId, body.data);
+  if ("error" in r) return c.json({ error: r.error }, r.status);
+  return c.json({ orb: orbJson(r.orb) });
+});
+
+// The terminal reports the paired Orb's current firmware (read over BLE) after an update.
+terminalSelf.patch("/orb", async (c) => {
+  const body = z.object({ software: z.string().trim().min(1).max(64) }).safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const { accountId, terminalId } = c.get("terminal");
-  const r = await pairOrb(c.get("sql"), accountId, terminalId, body.data.orb_id);
-  if ("error" in r) return c.json({ error: r.error }, r.status);
-  return c.json({ orb: { id: r.orb.id, model: r.orb.model, software: r.orb.software } });
+  const [o] = await c.get("sql")<OrbRow[]>`
+    update orbs set software = ${body.data.software}
+     where terminal_id = ${terminalId} and account_id = ${accountId}
+    returning id, uid, model, software, account_id, terminal_id`;
+  if (!o) return c.json({ error: "no_orb_paired" }, 404);
+  return c.json({ orb: orbJson(o) });
 });
 
 terminalSelf.delete("/orb", async (c) => {
@@ -370,7 +405,19 @@ export const orbs = new Hono<AppContext>();
 orbs.use("*", requireSession, requireOwner);
 orbs.get("/", async (c) => {
   const rows = await c.get("sql")<OrbRow[]>`
-    select id, model, software, account_id, terminal_id from orbs
+    select id, uid, model, software, account_id, terminal_id from orbs
      where account_id = ${c.get("auth").accountId} order by created_at, id`;
-  return c.json({ orbs: rows.map((o) => ({ id: o.id, model: o.model, software: o.software, terminal_id: o.terminal_id })) });
+  return c.json({ orbs: rows.map((o) => ({ ...orbJson(o), terminal_id: o.terminal_id })) });
+});
+
+// Release an Orb (sold, returned, replaced): it leaves this account and its terminal, and can then
+// be claimed by whoever next pairs it.
+orbs.post("/:id/release", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`
+    update orbs set account_id = null, terminal_id = null
+     where id = ${id.data} and account_id = ${c.get("auth").accountId} returning id`;
+  if (rows.length === 0) return c.json({ error: "not_found" }, 404);
+  return c.body(null, 204);
 });

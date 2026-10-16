@@ -4,7 +4,7 @@ Updated October 13, 2026. Working schema consolidation; not an applied database 
 
 ## Current decisions
 
-The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, for nineteen in total (migrations 0001 to 0005). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
+The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, for nineteen in total (migrations 0001 to 0006). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
 
 Confirmed refinements: accounts.handle after type (nullable, set or changed later only by the primary account's own session; 4-12 alphanumeric, unique index); password_hash; owner-issued five-minute wallet magic links and devices, with no member_account_id; businesses.account_id primary key; bank_accounts.last4 and provider_account_id without verified_at; separate account-wide balance plus approved credit; sends use funded balance only, merchant payments may also use approved credit; no pending-funding availability; spent_today counts successful sends/payments and resets at midnight Eastern; nullable tags.transaction_limit; inline business address; refund/adjustment types; transactions.status_code; explicit endpoint foreign keys; failed funding attempts remain in fundings.
 
@@ -128,7 +128,8 @@ An Orb NFC reader unit. Unassigned units belong to no account.
 
 | Field | Description |
 | --- | --- |
-| id | Primary key identifying the Orb unit. |
+| id | Primary key identifying the Orb unit; a generated UUID, separate from uid. |
+| uid | The Orb's own hardware UID, its MAC address, normalized to 12 uppercase hex characters (no separators); unique. Added by migration 0006, so it is the last column. |
 | model | Hardware model. |
 | software | Installed firmware/software version. |
 | account_id | Nullable foreign key to the owning type-B accounts.id; NULL means unassigned. |
@@ -136,7 +137,7 @@ An Orb NFC reader unit. Unassigned units belong to no account.
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
-A terminal assignment requires an owning account, and the terminal must belong to that same account (composite foreign key on terminal_id + account_id). Only business accounts may own Orbs. A terminal holds at most one Orb (unique on terminal_id). Pairing an Orb to a terminal unpairs it from its previous terminal and unpairs any Orb the target terminal already held; an Orb owned by a different account cannot be paired, and an unassigned Orb is claimed by the pairing account.
+A terminal assignment requires an owning account, and the terminal must belong to that same account (composite foreign key on terminal_id + account_id). Only business accounts may own Orbs. Orbs register themselves the first time they are claimed: the terminal reads the Orb's uid, model and firmware over BLE and sends them with the claim, so no Orb rows are pre-loaded. A terminal holds at most one Orb (unique on terminal_id). Pairing an Orb to a terminal unpairs it from its previous terminal and unpairs any Orb the target terminal already held; an Orb owned by a different account cannot be paired, and an unassigned Orb is claimed by the pairing account.
 
 ## staff
 
@@ -347,7 +348,7 @@ Source of truth for physical tags only, including inventory and current wallet a
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
-Counter comparison and update are atomic: verify the proof first and accept only a greater incoming value; initialize NULL on the first consumed proof. The tag's current model determines band/card type. No pass UUIDs live here. A verified UID alone does not authorize payment without the proof, active wallet authority and applicable limits.
+Claiming and managing: a tag is claimed by tapping it with a phone and sending the URL, which burns the proof; it must be unassigned (wallet_id NULL), and it is assigned to one of the claimer's active wallets. After that it is managed by its tag id: rename, lock, set transaction_limit, move to another wallet of the same account, or reset (clears wallet_id, label, locked and transaction_limit; keeps uid, counter and history). A delegated wallet device may only lock its own wallet's tags. Counter comparison and update are atomic: verify the proof first and accept only a greater incoming value; initialize NULL on the first consumed proof. The tag's current model determines band/card type. No pass UUIDs live here. A verified UID alone does not authorize payment without the proof, active wallet authority and applicable limits.
 
 ## tag_models
 
