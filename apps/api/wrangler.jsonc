@@ -8,6 +8,9 @@
   "observability": { "enabled": true },
   "triggers": { "crons": ["0 4 * * *", "0 5 * * *"] },
   "vars": {
+    // Browser origins allowed to call /v1/admin/* (comma-separated). Add the admin portal's real URL
+    // (the hosted one is already listed). The operator token is still required on every call.
+    "ADMIN_ORIGINS": "http://localhost:5173,https://nuclear-admin.a-space.workers.dev",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },

@@ -1,8 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
+import { systemStats } from "../lib/stats";
 
 // Operator endpoints: define tag models and import a supplier's band/card UIDs. Not account
 // sessions: a single operator bearer token (ADMIN_API_TOKEN). With no token configured the whole
@@ -11,6 +13,22 @@ import { amountOrZero, n } from "../lib/money";
 export const admin = new Hono<AppContext>();
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
+
+// The admin portal is a browser app on its own origin. Only origins listed in ADMIN_ORIGINS
+// (comma-separated) get CORS headers; with none configured, browsers are refused. This runs before
+// the token check so preflight requests (which carry no token) succeed.
+admin.use(
+  "*",
+  cors({
+    origin: (origin, c) => {
+      const allowed = (c.env.ADMIN_ORIGINS ?? "").split(",").map((o: string) => o.trim()).filter(Boolean);
+      return allowed.includes(origin) ? origin : null;
+    },
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["authorization", "content-type"],
+    maxAge: 600,
+  }),
+);
 
 admin.use("*", async (c, next) => {
   const expected = c.env.ADMIN_API_TOKEN;
@@ -22,6 +40,10 @@ admin.use("*", async (c, next) => {
 });
 
 const uuid = z.string().uuid();
+
+// ---- System snapshot --------------------------------------------------------------------------
+
+admin.get("/stats", async (c) => c.json(await systemStats(c.get("sql"))));
 
 // ---- Tag models -------------------------------------------------------------------------------
 

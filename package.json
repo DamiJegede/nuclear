@@ -9,6 +9,9 @@
     "api:deploy": "npm run deploy -w @nuclear/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "add-model": "node scripts/add-model.mjs",
-    "add-bands": "node scripts/add-bands.mjs"
+    "add-bands": "node scripts/add-bands.mjs",
+    "admin:dev": "npm run dev -w @nuclear/admin-portal",
+    "admin:build": "npm run build -w @nuclear/admin-portal",
+    "admin:test": "npm run test -w @nuclear/admin-portal"
   }
 }

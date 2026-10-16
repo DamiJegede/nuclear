@@ -11,6 +11,8 @@ export interface Env {
    * answer 404. `wrangler secret put ADMIN_API_TOKEN`; `.dev.vars` locally.
    */
   ADMIN_API_TOKEN?: string;
+  /** Browser origins allowed to call /v1/admin/* (comma-separated), e.g. the admin portal's URL. */
+  ADMIN_ORIGINS?: string;
   /** Program daily associated-value cap in cents (draft target $2,000). Configurable until finalized. */
   DAILY_VALUE_CAP_CENTS?: string;
   /**
