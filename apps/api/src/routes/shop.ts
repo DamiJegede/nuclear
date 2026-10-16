@@ -1,3 +1,4 @@
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -52,7 +53,7 @@ const orderBody = z.object({
 });
 
 // Checkout: pay for bands/cards with wallet balance. Idempotency-Key required; a retry returns the same order.
-shop.post("/orders", async (c) => {
+shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
   if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
   const body = orderBody.safeParse(await c.req.json().catch(() => null));

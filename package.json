@@ -16,6 +16,8 @@
     "admin:build": "npm run build -w @nuclear/admin-portal",
     "admin:test": "npm run test -w @nuclear/admin-portal",
     "add-admin": "node scripts/add-admin.mjs",
-    "manage-admin": "node scripts/manage-admin.mjs"
+    "manage-admin": "node scripts/manage-admin.mjs",
+    "test:api": "npm run test -w @nuclear/api --",
+    "test:admin": "npm run test -w @nuclear/admin-portal"
   }
 }

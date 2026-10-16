@@ -1,3 +1,4 @@
+import { RULES, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -37,7 +38,7 @@ const body = z.object({
 });
 
 // Wallet -> wallet send. Funded balance only; atomic, idempotent (Idempotency-Key required).
-transfers.post("/", async (c) => {
+transfers.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("auth")?.kind === "agent" ? c.get("auth").walletId : null)), async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
   if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
   const parsed = body.safeParse(await c.req.json().catch(() => null));

@@ -71,6 +71,10 @@ No spend_date or member_account_id field. A wallet is a spending identity/permis
 
 Audit trail of earmark changes (migration 0011): id, wallet_id and account_id (composite foreign key, so the wallet must belong to the account), amount (signed, never 0: positive = set aside, negative = returned to the shared funds), balance_after (NULL = released), device_id (the owner session that made the change, nullable) and created_at.
 
+## throttles
+
+Rate-limit counters (migration 0014): key (primary key, for example `login:ada@example.com`, `ip:...`, `agent:<wallet id>`), count and window_start (the window starts at the key's first hit and a hit after it ends starts a new one). The daily job deletes rows older than a day. Not exposed through any endpoint.
+
 ## devices
 
 Combined device registration and current session; no separate sessions table. Session kinds: owner (wallet_id NULL) and wallet (wallet_id set). Merchant terminals are not devices; their sessions live on terminals. account_id identifies the primary funds owner for delegated access, not a separate recipient account.

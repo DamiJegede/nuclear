@@ -1,3 +1,4 @@
+import { RULES, byIp, hit, peek, rateLimit, rateLimited, reset } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -29,7 +30,7 @@ const loginBody = z.object({
 const DUMMY_HASH =
   "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-auth.post("/signup", async (c) => {
+auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
   const parsed = signupBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.flatten() }, 400);
   const b = parsed.data;
@@ -72,18 +73,26 @@ auth.post("/signup", async (c) => {
   }
 });
 
-auth.post("/login", async (c) => {
+auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
   const parsed = loginBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
   const b = parsed.data;
   const sql = c.get("sql");
 
+  // Wrong passwords are counted per email (known or not, so the answer reveals nothing); after five in
+  // 15 minutes the email is locked until the window ends, even for the right password.
+  const failKey = `login:${b.email}`;
+  const lock = await peek(sql, failKey, RULES.loginFailures);
+  if (lock.blocked) return rateLimited(c, lock.retryAfter);
+
   const [acct] = await sql<{ id: string; password_hash: string | null; status: string }[]>`
     select id, password_hash, status from accounts where lower(email) = ${b.email}`;
   const ok = await verifyPassword(b.password, acct?.password_hash ?? DUMMY_HASH);
   if (!acct || !acct.password_hash || !ok || acct.status !== "active") {
+    await hit(sql, failKey, RULES.loginFailures);
     return c.json({ error: "invalid_credentials" }, 401);
   }
+  await reset(sql, failKey);
 
   const { token, hash } = newSessionToken();
   const [dev] = await sql<{ id: string; session_expires_at: Date }[]>`

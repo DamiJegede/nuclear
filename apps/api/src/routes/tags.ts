@@ -1,3 +1,4 @@
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -74,7 +75,7 @@ const claimBody = z.object({
 
 type ClaimResult = { error: string; status: 404 | 409 } | { tag: TagView; replayed: boolean };
 
-tags.post("/claim", requireOwner, async (c) => {
+tags.post("/claim", requireOwner, rateLimit("claim", RULES.tagClaim, byAccount), async (c) => {
   const body = claimBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
   const { accountId } = c.get("auth");

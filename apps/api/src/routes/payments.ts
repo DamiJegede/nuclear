@@ -1,3 +1,4 @@
+import { RULES, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -117,7 +118,7 @@ const confirmBody = z
   .refine((b) => oneOf(b), { message: "checkout_id_or_amount_or_items" })
   .refine((b) => b.checkout_id !== undefined || b.terminal_id !== undefined, { message: "terminal_id_required" });
 
-payments.post("/", async (c) => {
+payments.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("auth")?.kind === "agent" ? c.get("auth").walletId : null)), async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
   if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
   const body = confirmBody.safeParse(await c.req.json().catch(() => null));

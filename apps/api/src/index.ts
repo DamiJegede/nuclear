@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppContext, Env } from "./env";
 import { connect } from "./db";
-import { easternHour, resetDailyCounters } from "./lib/ledger";
+import { dailyJobs } from "./lib/cron";
 import { withDb } from "./session";
 import { account } from "./routes/account";
 import { admin } from "./routes/admin";
@@ -68,10 +68,8 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // Cron fires at 04:00 and 05:00 UTC; only the run that lands on 00:00 Eastern (DST-aware) resets.
+  // Cron fires at 04:00 and 05:00 UTC; see lib/cron.ts for which run resets the daily counters.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    if (easternHour(new Date(event.scheduledTime)) !== 0) return;
-    const sql = connect(env);
-    ctx.waitUntil(resetDailyCounters(sql).finally(() => sql.end()));
+    ctx.waitUntil(dailyJobs(event.scheduledTime, env));
   },
 } satisfies ExportedHandler<Env>;

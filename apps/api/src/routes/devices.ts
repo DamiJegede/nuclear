@@ -1,3 +1,4 @@
+import { RULES, byIp, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -10,7 +11,7 @@ const uuid = z.string().uuid();
 
 // Redeem is unauthenticated: the one-time link JWT is the credential.
 // Explicit POST (never GET) so message-preview fetches cannot consume the link.
-devices.post("/redeem", async (c) => {
+devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => {
   const body = z
     .object({
       token: z.string().min(20).max(2048),

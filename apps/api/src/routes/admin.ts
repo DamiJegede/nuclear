@@ -1,3 +1,4 @@
+import { RULES, byIp, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -52,7 +53,7 @@ const sessionJson = (r: Session) => ({
 
 // Step one: access ID and access token. With MFA enrolled the answer is a short-lived challenge
 // instead of a session.
-admin.post("/login", async (c) => {
+admin.post("/login", rateLimit("admin-login-ip", RULES.adminLoginIp, byIp), async (c) => {
   const body = loginBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const r = await login(c.get("sql"), body.data.access_id.toUpperCase(), body.data.access_token);
@@ -71,7 +72,7 @@ admin.post("/login", async (c) => {
 // Step two: the 6-digit authenticator code, or one recovery code.
 const mfaLoginBody = z.object({ mfa_token: z.string().min(20).max(2048), code: z.string().trim().min(6).max(32) });
 
-admin.post("/login/mfa", async (c) => {
+admin.post("/login/mfa", rateLimit("admin-login-ip", RULES.adminLoginIp, byIp), async (c) => {
   const body = mfaLoginBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const adminId = await verifyMfaChallenge(c.env.JWT_SECRET, body.data.mfa_token);

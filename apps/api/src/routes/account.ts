@@ -1,3 +1,4 @@
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -85,7 +86,7 @@ account.get("/balance", async (c) => {
 
 // Find a recipient's default wallet by exact email. Open product decision (recipient lookup);
 // returns display data only and 404s for anything not an active consumer account.
-account.post("/recipients/lookup", async (c) => {
+account.post("/recipients/lookup", rateLimit("lookup-email", RULES.lookupEmail, byAccount), async (c) => {
   const parsed = z
     .object({ email: z.string().trim().toLowerCase().email().max(254) })
     .safeParse(await c.req.json().catch(() => null));

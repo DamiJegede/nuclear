@@ -1,3 +1,4 @@
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import type { AppContext } from "../env";
 import { handleSchema } from "../lib/handle";
@@ -8,7 +9,7 @@ handles.use("*", requireSession);
 
 // Resolve a handle to its account id plus the default wallet (the send target).
 // Authenticated only; inactive and unknown handles are indistinguishable (404).
-handles.get("/:handle", async (c) => {
+handles.get("/:handle", rateLimit("lookup-handle", RULES.lookupHandle, byAccount), async (c) => {
   const h = handleSchema.safeParse(c.req.param("handle"));
   if (!h.success) return c.json({ error: "not_found" }, 404);
 

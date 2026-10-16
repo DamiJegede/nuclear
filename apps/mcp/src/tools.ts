@@ -36,7 +36,7 @@ function key(v: unknown): string {
 /** Turns an API answer into a tool result, or throws the API's error so the agent sees why it failed. */
 function unwrap(r: { status: number; json: any }) {
   if (r.status >= 200 && r.status < 300) return r.json;
-  throw new ToolError({ error: r.json?.error ?? `http_${r.status}`, ...(r.json?.status_code ? { status_code: r.json.status_code } : {}) });
+  throw new ToolError({ error: r.json?.error ?? `http_${r.status}`, ...(r.json?.status_code ? { status_code: r.json.status_code } : {}), ...(r.json?.retry_after ? { retry_after_seconds: r.json.retry_after, message: "Too many requests: wait this many seconds before trying again." } : {}) });
 }
 
 export const TOOLS: Tool[] = [
