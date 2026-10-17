@@ -1,4 +1,5 @@
 import type { Sql } from "../db";
+import { imageUrl } from "./images";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
 import { party, type DayRange } from "./adminLists";
@@ -46,7 +47,7 @@ export async function merchantDetail(sql: Sql, id: string) {
 
   return {
     id: m.id, name: m.display_name ?? m.name, legal_name: m.legal_name, handle: m.handle, status: m.status,
-    email: m.email, phone: m.phone, created_at: m.created_at, website: m.website, photo: m.photo, tier: m.tier,
+    email: m.email, phone: m.phone, created_at: m.created_at, website: m.website, photo: imageUrl(m.photo), tier: m.tier,
     address: { line: m.address, city: m.city, state: m.state, post_code: m.post_code, country: m.country },
     bank: m.bank_last4 ? { last4: m.bank_last4, status: m.bank_status } : null,
     balance: n(m.balance ?? 0n),

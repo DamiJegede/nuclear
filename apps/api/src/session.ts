@@ -4,6 +4,9 @@ import type { AppContext, SessionKind } from "./env";
 import { AGENT_KEY_PREFIX, hashToken, verifyTerminalJwt } from "./crypto";
 import { connect } from "./db";
 
+/** The only routes a pending or declined business may use. */
+const PENDING_OK = new Set(["/v1/account", "/v1/account/documents", "/v1/auth/logout"]);
+
 /** Opens one DB client per request and closes it after the response. */
 export const withDb: MiddlewareHandler<AppContext> = async (c, next) => {
   const sql = connect(c.env);
@@ -47,10 +50,10 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
       return next();
     }
 
-    const [dev] = await sql<{ id: string; account_id: string; wallet_id: string | null }[]>`
-      select d.id, d.account_id, d.wallet_id
+    const [dev] = await sql<{ id: string; account_id: string; wallet_id: string | null; account_status: string; account_type: string }[]>`
+      select d.id, d.account_id, d.wallet_id, a.status as account_status, a.type as account_type
         from devices d
-        join accounts a on a.id = d.account_id and a.status = 'active'
+        join accounts a on a.id = d.account_id and a.status in ('active', 'pending', 'declined')
         left join wallets w on w.id = d.wallet_id
        where d.session_token_hash = ${hashToken(token)}
          and d.revoked_at is null
@@ -60,6 +63,10 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
 
     const kind: SessionKind = dev.wallet_id ? "wallet" : "owner";
     if (!allowed.includes(kind)) return c.json({ error: "forbidden" }, 403);
+    // A business waiting for approval (or declined) can sign in, see its status, upload documents and sign out: nothing else.
+    if (dev.account_status !== "active" && !(dev.account_type === "B" && PENDING_OK.has(c.req.path.replace(/\/+$/, "")))) {
+      return c.json({ error: "account_not_approved", status: dev.account_status }, 403);
+    }
 
     c.set("auth", { deviceId: dev.id, accountId: dev.account_id, kind, walletId: dev.wallet_id });
     await sql`update devices set last_accessed_at = now() where id = ${dev.id}`;

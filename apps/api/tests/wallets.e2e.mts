@@ -8,6 +8,7 @@ import { connect } from "../src/db.ts";
 import postgres from "postgres";
 const URL = "postgres://postgres@127.0.0.1:54340/nuclear";
 const adm = postgres(URL, { max: 2, onnotice: () => {} });
+const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 import { execFileSync } from "node:child_process";
 psql(["-c", "drop schema public cascade; create schema public;"]);
 migrate();
@@ -38,8 +39,11 @@ const eq = (label: string, got: unknown, want: unknown) => {
   ok ? pass++ : fail++;
   console.log(ok ? "ok  " : "FAIL", label, ok ? "" : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
 };
-const signup = async (name: string, email: string, type = "C") =>
-  (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => {
+  const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+  if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]);   // businesses start pending; this suite needs them live
+  return j;
+};
 
 const ada = await signup("Ada", "ada@example.com");
 const bob = await signup("Bob", "bob@example.com");

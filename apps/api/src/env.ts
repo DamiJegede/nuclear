@@ -2,6 +2,16 @@ export interface Env {
   HYPERDRIVE: Hyperdrive;
   /** R2 bucket for uploaded images (tag and shop pictures). */
   IMAGES?: R2Bucket;
+  /** Public address of this API, put in front of image keys (e.g. https://nuclear-api.a-space.workers.dev). Unset = the address of the request. */
+  PUBLIC_URL?: string;
+  /** Cloudflare Images binding (wrangler `images`): resizes and compresses uploaded profile photos. */
+  IMG?: ImagesBinding;
+  /** Private R2 bucket `nuclear-uploads` for customers' and businesses' uploaded files (never public; admins download through the API). */
+  UPLOADS?: R2Bucket;
+  /** Cloudflare Email Service binding (send_email). Needs a verified sending domain; see EMAIL_FROM. */
+  EMAIL?: { send(message: { from: string; to: string; subject: string; text: string }): Promise<unknown> };
+  /** Sender address for system emails, on a domain verified in Cloudflare Email Service, e.g. "Nuclear <no-reply@example.com>". Unset = emails are not sent (the text is kept in the audit log). */
+  EMAIL_FROM?: string;
   /** HS256 secret for wallet magic-link JWTs. `wrangler secret put JWT_SECRET`; `.dev.vars` locally. */
   JWT_SECRET: string;
   /** Base URL used to build magic links. Defaults to https://app.nuclear.us */

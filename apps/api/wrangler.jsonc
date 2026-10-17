@@ -10,12 +10,21 @@
   "vars": {
     // Browser origins allowed to call /v1/admin/* (comma-separated). Add the admin portal's real URL
     // (the hosted one is already listed). The operator token is still required on every call.
+    // The address image keys are turned into full URLs on (unset = the address of the request).
+    "PUBLIC_URL": "https://nuclear-api.a-space.workers.dev",
     "ADMIN_ORIGINS": "http://localhost:5173,https://nuclear-admin.a-space.workers.dev",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },
   // Uploaded images (tag and shop pictures). Created 2026-10-16: `wrangler r2 bucket create nuclear-images`.
-  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "nuclear-images" }],
+  // Private uploads (business documents): `wrangler r2 bucket create nuclear-uploads`. Email: Cloudflare Email Service binding; set EMAIL_FROM once the sending domain is verified.
+  "r2_buckets": [
+    { "binding": "IMAGES", "bucket_name": "nuclear-images" },
+    { "binding": "UPLOADS", "bucket_name": "nuclear-uploads" }
+  ],
+  "send_email": [{ "name": "EMAIL" }],
+  // Resizes profile photos to 256 x 256 JPEG on upload.
+  "images": { "binding": "IMG" },
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",

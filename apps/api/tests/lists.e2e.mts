@@ -17,7 +17,7 @@ const call = async (method: string, path: string, o: { body?: unknown; token?: s
   const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
 };
 const op = (p: string) => call("GET", p, { token: OP });
-const signup = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => { const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json; if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]); return j; }; // businesses start pending; these suites need them live
 
 const ada = await signup("Ada Lovelace", "ada@example.com"), bob = await signup("Bob Builder", "bob@example.com");
 await signup("Cafe Nero", "cafe@example.com", "B"); await signup("Bakery 100%", "bake@example.com", "B");

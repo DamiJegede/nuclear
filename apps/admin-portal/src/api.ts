@@ -98,6 +98,7 @@ export type MerchantTerminal = {
 };
 export type MerchantStaffRow = { id: string; staff_account_id: string; name: string; email: string | null; handle: string | null; role: "read" | "write"; bank_last4: string | null; created_at: string };
 export type MerchantProduct = { id: string; name: string; category: string | null; price: number; discount: number; stock: number | null; active: boolean; status: string; total_sold: number; sold_today: number };
+export type MerchantDocument = { id: string; type: string; created_at: string; file: string };
 export type MerchantTxKind = "all" | "payments" | "refunds" | "pending";
 export type MerchantTxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string;
@@ -254,6 +255,10 @@ export function createApi(token: string, base: string = API_URL) {
   // Uploaded photos come back as API paths; make them absolute so the page can show them.
   const absolutePhoto = <M extends { photo: string | null }>(m: M): M =>
     ({ ...m, photo: m.photo && m.photo.startsWith("/") ? base.replace(/\/$/, "") + m.photo : m.photo });
+  // Profile photos in transaction rows come as API paths too.
+  const absParty = (p: TxParty | null): TxParty | null => (p ? absolutePhoto(p) : p);
+  const absTx = <P extends { transactions: { from_party: TxParty | null; to_party: TxParty | null }[] }>(page: P): P =>
+    ({ ...page, transactions: page.transactions.map((t) => ({ ...t, from_party: absParty(t.from_party), to_party: absParty(t.to_party) })) });
   return {
     me: () => request<AdminMe>("GET", "/v1/admin/me"),
     logout: () => request<null>("POST", "/v1/admin/logout"),
@@ -261,14 +266,25 @@ export function createApi(token: string, base: string = API_URL) {
       (await request<{ merchants: MerchantRow[] }>("GET", `/v1/admin/merchants${q ? `?q=${encodeURIComponent(q)}` : ""}`)).merchants,
     users: async (q?: string) =>
       (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
-    transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
-      request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
-    merchant: async (id: string) => (await request<{ merchant: MerchantDetailData }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}`)).merchant,
+    transactions: async (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
+      absTx(await request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
+    merchant: async (id: string) => absolutePhoto((await request<{ merchant: MerchantDetailData }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}`)).merchant),
     merchantTerminals: async (id: string) => (await request<{ terminals: MerchantTerminal[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/terminals`)).terminals,
     merchantStaff: async (id: string) => (await request<{ staff: MerchantStaffRow[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/staff`)).staff,
     merchantProducts: async (id: string) => (await request<{ products: MerchantProduct[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/products`)).products,
-    merchantTransactions: (id: string, kind: MerchantTxKind = "all", cursor?: string, range: DayRange = {}) =>
-      request<MerchantTxPage>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    merchantTransactions: async (id: string, kind: MerchantTxKind = "all", cursor?: string, range: DayRange = {}) =>
+      absTx(await request<MerchantTxPage>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
+    /** Business approval (Admin, Merchants): the uploaded documents, a download, and the decision. */
+    merchantDocuments: async (id: string) => (await request<{ documents: MerchantDocument[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/documents`)).documents,
+    downloadMerchantDocument: async (id: string, uploadId: string): Promise<Blob> => {
+      let res: Response;
+      try { res = await fetch(`${base.replace(/\/$/, "")}/v1/admin/merchants/${encodeURIComponent(id)}/documents/${encodeURIComponent(uploadId)}`, { headers: { authorization: `Bearer ${token}` } }); }
+      catch { throw new ApiError(0, "network_error"); }
+      if (!res.ok) throw new ApiError(res.status, `http_${res.status}`);
+      return res.blob();
+    },
+    approveMerchant: (id: string) => request<{ merchant: { id: string; status: string }; email: "sent" | "failed" | "not_configured" }>("POST", `/v1/admin/merchants/${encodeURIComponent(id)}/approve`),
+    declineMerchant: (id: string, reason: string) => request<{ merchant: { id: string; status: string }; email: "sent" | "failed" | "not_configured" }>("POST", `/v1/admin/merchants/${encodeURIComponent(id)}/decline`, { reason }),
     /** Support action: signs a terminal out so its token stops working. */
     /** Admin: approve or reject a merchant's pending refund (approving moves the money now). */
     resolveMerchantRefund: (merchantId: string, refundId: string, action: "approve" | "reject") =>
@@ -276,14 +292,14 @@ export function createApi(token: string, base: string = API_URL) {
     /** Admin: suspend or reactivate a merchant. */
     setMerchantStatus: (merchantId: string, status: "active" | "suspended") =>
       request<{ merchant: { id: string; status: string } }>("PUT", `/v1/admin/merchants/${encodeURIComponent(merchantId)}/status`, { status }),
-    user: async (id: string) => (await request<{ user: UserDetailData }>("GET", `/v1/admin/users/${encodeURIComponent(id)}`)).user,
+    user: async (id: string) => absolutePhoto((await request<{ user: UserDetailData }>("GET", `/v1/admin/users/${encodeURIComponent(id)}`)).user),
     userWallets: async (id: string) => (await request<{ wallets: UserWallet[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/wallets`)).wallets,
     userTags: async (id: string) => (await request<{ tags: UserTag[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/tags`)).tags,
     userDevices: async (id: string) => (await request<{ devices: UserDevice[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/devices`)).devices,
     userFunding: async (id: string) => (await request<{ funding: UserFunding }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/funding`)).funding,
     userOrders: async (id: string) => (await request<{ orders: UserOrder[] }>("GET", `/v1/admin/users/${encodeURIComponent(id)}/orders`)).orders,
-    userTransactions: (id: string, kind: UserTxKind = "all", cursor?: string, range: DayRange = {}) =>
-      request<UserTxPage>("GET", `/v1/admin/users/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    userTransactions: async (id: string, kind: UserTxKind = "all", cursor?: string, range: DayRange = {}) =>
+      absTx(await request<UserTxPage>("GET", `/v1/admin/users/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
     /** Support actions (Admin, Support): sign out everywhere, unlock the login, revoke an agent key. */
     signOutUser: (id: string) => request<{ signed_out: number }>("POST", `/v1/admin/users/${encodeURIComponent(id)}/sign-out`),
     unlockUserLogin: (id: string) => request<null>("POST", `/v1/admin/users/${encodeURIComponent(id)}/unlock-login`),

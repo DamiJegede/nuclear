@@ -1,7 +1,7 @@
 import type { Sql } from "../db";
 import { debitWallet, spendable } from "./walletFunds";
 import { n } from "./money";
-import { itemPhotoUrl, modelPhotoUrl } from "./images";
+import { imageUrl } from "./images";
 
 export const MAX_PER_ORDER = 20;
 
@@ -15,7 +15,7 @@ type ModelRow = {
 };
 
 const modelJson = (m: ModelRow) => ({
-  id: m.id, type: m.type, name: m.name, photo: modelPhotoUrl(m.id, m.photo), currency: m.currency, price: n(m.price),
+  id: m.id, type: m.type, name: m.name, photo: imageUrl(m.photo), currency: m.currency, price: n(m.price),
   limited: m.limited, remaining: m.quantity - m.sold, max_per_order: Math.min(MAX_PER_ORDER, m.quantity - m.sold),
 });
 
@@ -34,7 +34,7 @@ type ItemRow = {
   id: string; name: string; description: string | null; photo: string | null; currency: string; price: bigint; stock: number | null; sold: number;
 };
 const itemJson = (i: ItemRow) => ({
-  id: i.id, name: i.name, description: i.description, photo: itemPhotoUrl(i.id, i.photo), currency: i.currency, price: n(i.price),
+  id: i.id, name: i.name, description: i.description, photo: imageUrl(i.photo), currency: i.currency, price: n(i.price),
   remaining: i.stock, max_per_order: i.stock === null ? MAX_PER_ORDER : Math.min(MAX_PER_ORDER, i.stock),
 });
 

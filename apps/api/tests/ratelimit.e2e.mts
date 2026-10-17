@@ -95,6 +95,7 @@ eq("an agent's sends: thirty a minute, the thirty-first is refused before any mo
 })(), [true, 429, 0]);
 eq("payments by an agent key share the same money limit; the owner's own sends are not limited", await (async () => {
   const term = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Shop", email: "shop@example.com", password: GOOD } })).json;
+  await q("update accounts set status='active' where id=$1", [term.account_id]);
   const t = (await call("POST", "/v1/terminals", { token: term.session_token, body: { name: "T" } })).json.terminal.id;
   const p = await call("POST", "/v1/payments", { token: a2.key, key: "pay-a2", body: { amount: 1, terminal_id: t } });
   const ownerSends = []; for (let i = 0; i < 35; i++) ownerSends.push((await call("POST", "/v1/transfers", { token: B, key: "o" + i, body: { to_wallet_id: carolWallet, amount: 1 } })).status);

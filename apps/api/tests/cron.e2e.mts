@@ -67,6 +67,7 @@ eq("a cron that fires after the catch-up finds the day done and keeps today's sp
 eq("reading a wallet also catches up (the limit shown is today's)", await (async () => { await q("update wallets set spent_today = 900 where id=$1", [wallet]); await setDay("2020-01-01"); const w = (await call("GET", "/v1/wallets", A)).json.wallets[0]; return [w.spent_today, w.remaining_today]; })(), [0, 1000]);
 eq("products' sold_today is caught up as well (terminal catalogue, payments)", await (async () => {
   const shop = (await (await app.fetch(new Request("http://x/v1/auth/signup", { method: "POST", headers: { "content-type": "application/json", authorization: "" }, body: JSON.stringify({ type: "B", name: "S", email: "s@example.com", password: "correct horse battery" }) }), env, ctx)).json()) as any;
+  await q("update accounts set status='active' where id=$1", [shop.account_id]);
   const t = (await call("POST", "/v1/terminals", shop.session_token, { name: "T" })).json;
   const p = await q("insert into products (account_id, name, price, stock, sold_today, total_sold) values ($1, 'Coffee', 300, 50, 7, 7) returning id", [shop.account_id]);
   await setDay("2020-01-01");

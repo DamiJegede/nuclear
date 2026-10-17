@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { imageUrl } from "../lib/images";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { hashToken, signTerminalJwt } from "../crypto";
@@ -316,7 +317,7 @@ terminalSelf.post("/lookup", async (c) => {
         wallet_id: tag.wallet_id,
         handle: tag.handle,
         display_name: tag.display_name,
-        photo: tag.photo,
+        photo: imageUrl(tag.photo),
         staff: st ? { role: st.role } : null,
       },
     };
@@ -340,7 +341,7 @@ const productJson = (p: ProductRow) => ({
   price: Number(p.price),
   discount: Number(p.discount),
   effective_price: Number(p.price - p.discount),
-  photo: p.photo,
+  photo: imageUrl(p.photo),
   stock: p.stock,
   active: p.active,
   status: p.status,

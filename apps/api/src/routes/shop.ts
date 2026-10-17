@@ -4,7 +4,6 @@ import type { AppContext } from "../env";
 import { sessionGuard } from "../session";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { MAX_PER_ORDER, availableItems, availableModels, getOrder, listOrders, orderJson, purchase } from "../lib/shop";
-import { imageResponse, isImageFile, shopImageKey, tagImageKey } from "../lib/images";
 
 export const shop = new Hono<AppContext>();
 
@@ -31,17 +30,6 @@ shop.get("/items/:id", async (c) => {
   const [i] = await availableItems(c.get("sql"), id.data);
   return i ? c.json({ item: i }) : c.json({ error: "not_found" }, 404);
 });
-
-// Uploaded pictures come from R2. The URL carries a version (?v=), so it can be cached hard.
-for (const [path, table, key] of [["models", "tag_models", tagImageKey], ["items", "shop", shopImageKey]] as const) {
-  shop.get(`/${path}/:id/photo`, async (c) => {
-    const id = uuid.safeParse(c.req.param("id"));
-    if (!id.success) return c.json({ error: "not_found" }, 404);
-    const [row] = await c.get("sql")<{ photo: string | null }[]>`select photo from ${c.get("sql")(table)} where id = ${id.data}`;
-    if (!isImageFile(row?.photo ?? null)) return c.json({ error: "not_found" }, 404);
-    return (await imageResponse(c.env, key(row!.photo!))) ?? c.json({ error: "not_found" }, 404);
-  });
-}
 
 // ---- Buying (the account holder's own session) ------------------------------------------------
 

@@ -8,7 +8,9 @@ import { SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, US
 import { approvePending, rejectPending } from "../lib/refund";
 import { clientIp, reset as resetThrottle } from "../lib/throttle";
 import { adminLog, log } from "../lib/audit";
-import { deleteImage, isPng, itemPhotoUrl, modelPhotoUrl, newImageFile, putPng, tagImageKey, shopImageKey, MAX_IMAGE_BYTES } from "../lib/images";
+import { approvedEmail, declinedEmail, sendMail } from "../lib/email";
+import { getUpload, mimeOfPath } from "../lib/uploads";
+import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
@@ -484,7 +486,7 @@ admin.put("/merchants/:id/status", async (c) => {
   const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
-  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status <> 'closed' returning id, status, name`;
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'B' and status in ('active', 'suspended') returning id, status, name`;
   if (!rows.length) return c.json({ error: "not_found" }, 404);
   await adminLog(c, body.data.status === "suspended" ? "merchant.suspended" : "merchant.reactivated", { type: "merchant", id: id.data, label: rows[0]!.name });
   return c.json({ merchant: { id: rows[0]!.id, status: rows[0]!.status } });
@@ -561,6 +563,60 @@ admin.post("/wallets/:id/revoke-key", async (c) => {
   await adminLog(c, "wallet.key_revoked", { type: "wallet", id: id.data, label: rows[0]!.display_name }, { account_id: rows[0]!.account_id });
   return c.body(null, 204);
 });
+// ---- Business approval: a new business is `pending` until an Admin or Merchants person reads its document and approves
+// or declines it (a decline needs a reason and emails the business what to do). A declined business that uploads again
+// goes back to pending (see POST /v1/account/documents). Documents are private: they are streamed from R2 only here.
+const approvalGate = (c: any) => {
+  const a = c.get("adminAuth");
+  return a.kind === "admin" && !MERCHANT_WRITERS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
+};
+admin.get("/merchants/:id/documents", async (c) => {
+  const denied = approvalGate(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")<{ id: string; type: string; path: string; created_at: Date }[]>`
+    select id, type, path, created_at from uploads where account_id = ${id.data} order by created_at desc, id desc`;
+  return c.json({ documents: rows.map((d) => ({ id: d.id, type: d.type, created_at: d.created_at, file: d.path.split(".").pop() })) });
+});
+admin.get("/merchants/:id/documents/:uploadId", async (c) => {
+  const denied = approvalGate(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id")), uid = merchantId.safeParse(c.req.param("uploadId"));
+  if (!id.success || !uid.success) return c.json({ error: "not_found" }, 404);
+  const [d] = await c.get("sql")<{ path: string }[]>`select path from uploads where id = ${uid.data} and account_id = ${id.data}`;
+  const obj = d ? await getUpload(c.env, d.path) : null;
+  if (!d || !obj) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "merchant.document_downloaded", { type: "merchant", id: id.data }, { upload_id: uid.data });
+  const ext = d.path.split(".").pop();
+  return new Response(await obj.arrayBuffer(), {
+    headers: { "content-type": mimeOfPath(d.path), "content-disposition": `attachment; filename="business-document.${ext}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+  });
+});
+
+const decideBody = z.object({ reason: z.string().trim().min(5).max(1000).optional() });
+for (const decision of ["approve", "decline"] as const) {
+  admin.post(`/merchants/:id/${decision}`, async (c) => {
+    const denied = approvalGate(c); if (denied) return denied;
+    const id = merchantId.safeParse(c.req.param("id"));
+    const body = decideBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!id.success) return c.json({ error: "not_found" }, 404);
+    if (!body.success) return c.json({ error: "invalid_request" }, 400);
+    if (decision === "decline" && !body.data.reason) return c.json({ error: "reason_required" }, 400);
+    const sql = c.get("sql");
+    const next = decision === "approve" ? "active" : "declined";
+    const rows = decision === "approve"
+      ? await sql<{ id: string; name: string; email: string | null }[]>`update accounts set status = 'active' where id = ${id.data} and type = 'B' and status in ('pending', 'declined') returning id, name, email`
+      : await sql<{ id: string; name: string; email: string | null }[]>`update accounts set status = 'declined' where id = ${id.data} and type = 'B' and status = 'pending' returning id, name, email`;
+    if (!rows.length) return c.json({ error: "not_pending" }, 409);
+    const m = rows[0]!;
+    const mail = decision === "approve" ? approvedEmail(m.name) : declinedEmail(m.name, body.data.reason!);
+    const sent = m.email ? await sendMail(c.env, { to: m.email, ...mail }) : "failed";
+    await adminLog(c, decision === "approve" ? "merchant.approved" : "merchant.declined", { type: "merchant", id: m.id, label: m.name }, {
+      ...(decision === "decline" ? { reason: body.data.reason } : {}), email: sent, ...(sent === "sent" ? {} : { email_text: mail.text }),
+    });
+    return c.json({ merchant: { id: m.id, status: next }, email: sent });
+  });
+}
+
 // Admin only: suspend or reactivate a person, or one of their wallets. A suspended account is refused on its
 // next request (sessions, wallets, agent keys alike); nothing is deleted.
 admin.put("/users/:id/status", async (c) => {
@@ -638,7 +694,7 @@ type ModelRow = {
   country: string | null; quantity: number; sold: number; limited: boolean; status: string; created_at: Date;
 };
 const modelJson = (m: ModelRow, extra: object = {}) => ({
-  id: m.id, type: m.type, name: m.name, photo: modelPhotoUrl(m.id, m.photo), currency: m.currency, price: n(m.price),
+  id: m.id, type: m.type, name: m.name, photo: imageUrl(m.photo), currency: m.currency, price: n(m.price),
   country: m.country, quantity: m.quantity, sold: m.sold, limited: m.limited, status: m.status,
   created_at: m.created_at, ...extra,
 });
@@ -750,10 +806,10 @@ admin.put("/tag-models/:id/photo", async (c) => {
   const sql = c.get("sql");
   const [m] = await sql<{ name: string; photo: string | null }[]>`select name, photo from tag_models where id = ${id.data}`;
   if (!m) return c.json({ error: "not_found" }, 404);
-  const file = newImageFile(id.data);
-  if (!(await putPng(c.env, tagImageKey(file), bytes))) return c.json({ error: "storage_unavailable" }, 503);
-  await sql`update tag_models set photo = ${file} where id = ${id.data}`;
-  if (m.photo) await deleteImage(c.env, tagImageKey(m.photo));
+  const key = newImageKey("tags", id.data, "png");
+  if (!(await putPng(c.env, key, bytes))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update tag_models set photo = ${key} where id = ${id.data}`;
+  if (m.photo) await deleteImage(c.env, m.photo);
   await adminLog(c, "tag_model.photo_uploaded", { type: "tag_model", id: id.data, label: m.name });
   return c.body(null, 204);
 });
@@ -832,7 +888,7 @@ admin.post("/tag-models/:id/tags", async (c) => {
 // ---- Shop items (our merch) -------------------------------------------------------------------
 const ITEM_COLS = "id, name, description, photo, price, currency, stock, sold, status, created_at, updated_at";
 type ItemRow = { id: string; name: string; description: string | null; photo: string | null; price: bigint; currency: string; stock: number | null; sold: number; status: string; created_at: Date; updated_at: Date };
-const itemJson = (i: ItemRow) => ({ ...i, photo: itemPhotoUrl(i.id, i.photo), price: n(i.price) });
+const itemJson = (i: ItemRow) => ({ ...i, photo: imageUrl(i.photo), price: n(i.price) });
 const itemBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).nullable().optional(),
@@ -897,10 +953,10 @@ admin.put("/shop-items/:id/photo", async (c) => {
   const sql = c.get("sql");
   const [m] = await sql<{ name: string; photo: string | null }[]>`select name, photo from shop where id = ${id.data}`;
   if (!m) return c.json({ error: "not_found" }, 404);
-  const file = newImageFile(id.data);
-  if (!(await putPng(c.env, shopImageKey(file), bytes))) return c.json({ error: "storage_unavailable" }, 503);
-  await sql`update shop set photo = ${file} where id = ${id.data}`;
-  if (m.photo) await deleteImage(c.env, shopImageKey(m.photo));
+  const key = newImageKey("shop", id.data, "png");
+  if (!(await putPng(c.env, key, bytes))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update shop set photo = ${key} where id = ${id.data}`;
+  if (m.photo) await deleteImage(c.env, m.photo);
   await adminLog(c, "shop_item.photo_uploaded", { type: "shop_item", id: id.data, label: m.name });
   return c.body(null, 204);
 });

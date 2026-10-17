@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import type { AppContext, Env } from "./env";
 import { connect } from "./db";
 import { dailyJobs } from "./lib/cron";
+import { setPublicBase } from "./lib/images";
 import { programDay } from "./lib/dailyReset";
 import { withDb } from "./session";
 import { account } from "./routes/account";
+import { photos } from "./routes/photos";
 import { admin } from "./routes/admin";
 import { activity } from "./routes/activity";
 import { auth } from "./routes/auth";
@@ -23,6 +25,7 @@ import { wallets } from "./routes/wallets";
 const app = new Hono<AppContext>();
 
 app.use("*", async (c, next) => {
+  setPublicBase(c.env.PUBLIC_URL ?? new URL(c.req.url).origin);   // image keys become full URLs on this address
   await next();
   // Responses may carry session tokens or financial data: never cache.
   if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
@@ -46,6 +49,7 @@ v1.route("/admin", admin);
 v1.route("/auth", auth);
 v1.route("/devices", devices);
 v1.route("/handles", handles);
+v1.route("/photos", photos);
 v1.route("/wallets", wallets);
 v1.route("/payments", payments);
 v1.route("/terminals", terminals);

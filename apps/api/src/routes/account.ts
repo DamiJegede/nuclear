@@ -1,5 +1,4 @@
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
-import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -8,6 +7,10 @@ import { sandboxFund } from "../lib/ledger";
 import { dailyCap } from "./transfers";
 import { handleSchema } from "../lib/handle";
 import { requireOwner, requireSession } from "../session";
+import { imageUrl } from "../lib/images";
+import { saveProfilePhoto } from "../lib/profilePhoto";
+import { MAX_DOCUMENTS, MAX_UPLOAD_BYTES, putUpload, uploadKind } from "../lib/uploads";
+import { customerLog } from "../lib/audit";
 
 export const account = new Hono<AppContext>();
 account.use("*", requireSession);
@@ -18,7 +21,51 @@ account.get("/account", requireOwner, async (c) => {
     { id: string; type: string; handle: string | null; name: string; photo: string | null; tier: string; status: string }[]
   >`select id, type, handle, name, photo, tier, status from accounts where id = ${c.get("auth").accountId}`;
   if (!a) return c.json({ error: "not_found" }, 404);
-  return c.json({ account_id: a.id, type: a.type, handle: a.handle, name: a.name, photo: a.photo, tier: a.tier, status: a.status });
+  return c.json({ account_id: a.id, type: a.type, handle: a.handle, name: a.name, photo: imageUrl(a.photo), tier: a.tier, status: a.status });
+});
+
+// The account's picture (a person's, or a business's logo), uploaded after the account exists: any PNG, JPEG or WebP, cropped to
+// 256 x 256, compressed to JPEG, saved in R2; accounts.photo keeps the R2 key.
+account.put("/account/photo", requireOwner, async (c) => {
+  const { accountId } = c.get("auth");
+  const sql = c.get("sql");
+  const [a] = await sql<{ photo: string | null; name: string }[]>`select photo, name from accounts where id = ${accountId}`;
+  if (!a) return c.json({ error: "not_found" }, 404);
+  const r = await saveProfilePhoto(c, "accounts", accountId, a.photo);
+  if (r instanceof Response) return r;
+  await sql`update accounts set photo = ${r.key} where id = ${accountId}`;
+  await customerLog(c, accountId, null, "customer.photo_changed", { account_id: accountId });
+  return c.json({ photo: imageUrl(r.key) });
+});
+
+// A business's own documents. A pending or declined business may use these (see session.ts): it uploads a document for
+// review; a declined business that uploads again goes back to pending. The file goes to the private bucket `nuclear-uploads`.
+account.get("/account/documents", requireOwner, async (c) => {
+  const rows = await c.get("sql")`select id, type, created_at from uploads where account_id = ${c.get("auth").accountId} order by created_at desc, id desc`;
+  return c.json({ documents: rows });
+});
+
+account.post("/account/documents", requireOwner, async (c) => {
+  const { accountId } = c.get("auth");
+  const sql = c.get("sql");
+  const [a] = await sql<{ type: string; status: string; name: string }[]>`select type, status, name from accounts where id = ${accountId}`;
+  if (!a || a.type !== "B") return c.json({ error: "forbidden" }, 403);
+  const mime = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
+  if (bytes.length > MAX_UPLOAD_BYTES) return c.json({ error: "file_too_large" }, 413);
+  const kind = uploadKind(mime, bytes);
+  if (!kind) return c.json({ error: "unsupported_file_type" }, 415);
+  const [n] = await sql<{ n: number }[]>`select count(*)::int as n from uploads where account_id = ${accountId} and type = 'business_document'`;
+  if (n!.n >= MAX_DOCUMENTS) return c.json({ error: "too_many_documents" }, 409);
+  const [u] = await sql<{ id: string }[]>`select uuidv7() as id`;
+  const path = `${accountId}/${u!.id}.${kind.ext}`;
+  if (!(await putUpload(c.env, path, bytes, kind.mime))) return c.json({ error: "storage_unavailable" }, 503);
+  const [row] = await sql<{ id: string; type: string; created_at: Date }[]>`
+    insert into uploads (id, account_id, type, path) values (${u!.id}, ${accountId}, 'business_document', ${path}) returning id, type, created_at`;
+  if (a.status === "declined") await sql`update accounts set status = 'pending' where id = ${accountId} and status = 'declined'`;
+  await customerLog(c, accountId, null, "business.document_uploaded", { upload_id: row!.id, resubmitted: a.status === "declined" }, { type: "merchant", id: accountId, label: a.name });
+  return c.json({ document: row, status: a.status === "declined" ? "pending" : a.status }, 201);
 });
 
 // Set or change the account handle. Primary/root account only: requireOwner rejects delegated
@@ -100,7 +147,7 @@ account.post("/recipients/lookup", rateLimit("lookup-email", RULES.lookupEmail, 
      where lower(a.email) = ${parsed.data.email} and a.type = 'C' and a.status = 'active'
        and a.id <> ${accountId}`;
   if (!r) return c.json({ error: "not_found" }, 404);
-  return c.json({ wallet_id: r.id, display_name: r.display_name, photo: r.photo });
+  return c.json({ wallet_id: r.id, display_name: r.display_name, photo: imageUrl(r.photo) });
 });
 
 // SANDBOX ONLY: simulated bank load, confirmed and released immediately.

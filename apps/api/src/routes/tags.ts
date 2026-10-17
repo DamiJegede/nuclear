@@ -1,4 +1,5 @@
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
+import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -38,7 +39,7 @@ const viewJson = (t: TagView) => ({
   transaction_limit: n(t.transaction_limit),
   last_read_at: t.last_read_at,
   created_at: t.created_at,
-  model: { id: t.model_id, type: t.model_type, name: t.model_name, photo: t.model_photo },
+  model: { id: t.model_id, type: t.model_type, name: t.model_name, photo: imageUrl(t.model_photo) },
 });
 
 // A tag is managed through its owning wallet's account: owners see every tag on their account,

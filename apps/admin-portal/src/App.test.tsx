@@ -1316,6 +1316,40 @@ describe("merchant support page", () => {
     expect(pending).toHaveClass("refund-row");
   });
 
+  it("a pending business shows the approval card: download the document, approve after a confirm", async () => {
+    const merchantDocuments = vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-16T09:00:00Z", file: "pdf" }]);
+    const downloadMerchantDocument = vi.fn().mockResolvedValue(new Blob(["%PDF"], { type: "application/pdf" }));
+    const approveMerchant = vi.fn().mockResolvedValue({ merchant: { id: MID, status: "active" }, email: "sent" });
+    const merchant = vi.fn().mockResolvedValueOnce({ ...DETAIL, status: "pending" }).mockResolvedValue(DETAIL);
+    URL.createObjectURL = vi.fn().mockReturnValue("blob:x"); URL.revokeObjectURL = vi.fn();
+    const user = await open(api({ merchant, merchantDocuments, downloadMerchantDocument, approveMerchant }));
+    const card = await screen.findByRole("region", { name: "Business approval" });
+    expect(screen.queryByRole("button", { name: "Suspend Merchant" })).toBeNull();
+    await user.click(await within(card).findByRole("button", { name: "Download" }));
+    expect(downloadMerchantDocument).toHaveBeenCalledWith(MID, "d1");
+    await user.click(within(card).getByRole("button", { name: "Approve Business" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm Approve" }));
+    expect(approveMerchant).toHaveBeenCalledWith(MID);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Business approval" })).toBeNull());
+  });
+
+  it("declining needs a reason, which goes to the API (and is emailed)", async () => {
+    const merchantDocuments = vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-16T09:00:00Z", file: "png" }]);
+    const declineMerchant = vi.fn().mockResolvedValue({ merchant: { id: MID, status: "declined" }, email: "not_configured" });
+    const merchant = vi.fn().mockResolvedValueOnce({ ...DETAIL, status: "pending" }).mockResolvedValue({ ...DETAIL, status: "declined" });
+    const user = await open(api({ merchant, merchantDocuments, declineMerchant }));
+    const card = await screen.findByRole("region", { name: "Business approval" });
+    await user.click(await within(card).findByRole("button", { name: "Decline Business" }));
+    const dlg = screen.getByRole("dialog");
+    await user.click(within(dlg).getByRole("button", { name: "Confirm Decline" }));
+    expect(await within(dlg).findByText(/Write the reason/)).toBeInTheDocument();
+    expect(declineMerchant).not.toHaveBeenCalled();
+    await user.type(within(dlg).getByLabelText("Reason"), "The document is blurry.");
+    await user.click(within(dlg).getByRole("button", { name: "Confirm Decline" }));
+    expect(declineMerchant).toHaveBeenCalledWith(MID, "The document is blurry.");
+    expect(await screen.findByText(/Declined\. Email isn't set up yet/)).toBeInTheDocument();
+  });
+
   it("an Admin approves a pending refund after a confirm; the lists and numbers refresh", async () => {
     const resolveMerchantRefund = vi.fn().mockResolvedValue({ refund: { id: "p", status: "completed", status_code: null } });
     const merchantTransactions = vi.fn().mockResolvedValue(PENDING);

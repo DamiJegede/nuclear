@@ -1,4 +1,5 @@
 import { RULES, rateLimit } from "../lib/throttle";
+import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -281,7 +282,7 @@ async function payerView(sql: Sql, out: PayOutcome) {
   if (out.kind === "conflict") return null;
   const [w] = await sql<{ display_name: string; photo: string | null }[]>`
     select display_name, photo from wallets where id = ${out.row.from_wallet_id}`;
-  return w ?? null;
+  return w ? { ...w, photo: imageUrl(w.photo) } : null;
 }
 
 // Recover an outcome after a lost response or BLE drop, using the original attempt id. Includes the

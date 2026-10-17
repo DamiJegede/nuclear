@@ -35,8 +35,11 @@ const eq = (label: string, got: unknown, want: unknown) => {
   ok ? pass++ : fail++;
   console.log(ok ? "ok  " : "FAIL", label, ok ? "" : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
 };
-const signup = async (name: string, email: string, type = "C") =>
-  (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => {
+  const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+  if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]);   // businesses start pending; this suite needs them live
+  return j;
+};
 const fund = (token: string, amount: number, key: string) => call("POST", "/v1/sandbox/fundings", { token, key, body: { amount } });
 const bal = async (token: string) => (await call("GET", "/v1/balance", { token })).json;
 

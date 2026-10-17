@@ -21,9 +21,9 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | phone | Contact phone number. |
 | email | Contact/login email where applicable. Business contact details do not authorize shared staff login. |
 | password_hash | Password hash, never a plaintext password. Nullable for accounts without password login. |
-| photo | Image reference, not image binary data. |
+| photo | R2 key of the account's profile picture (`accounts/<id>-<epoch ms>.jpg`, 256 x 256 JPEG, uploaded after the account exists), or NULL. Older rows may hold an https address. |
 | tier | free, plus, or insider. |
-| status | Account access/lifecycle status. |
+| status | Account access/lifecycle status: active, pending (a new business awaiting approval), declined (refused; the business may upload a new document, which returns it to pending), suspended or closed. Businesses start pending; customers start active. A pending or declined business can sign in, see its status, upload documents and sign out, and nothing else. |
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
@@ -51,7 +51,7 @@ Before subtracting active reservations, sends may use max(balance, 0); payments 
 | id | Primary key identifying the spending wallet. |
 | account_id | Foreign key to accounts.id; owner of the shared funds. |
 | display_name | Wallet/person/agent display name. Default-wallet name synchronization is proposed behavior. |
-| photo | Wallet/person image reference used in activity. Default-wallet photo synchronization is proposed behavior. |
+| photo | R2 key of the wallet's picture (`wallets/<id>-<epoch ms>.jpg`, 256 x 256 JPEG, uploaded after the wallet exists), used in activity, or NULL. Default-wallet photo synchronization is proposed behavior. |
 | type | default, agent, or person. |
 | daily_limit | Nullable bigint spending limit; NULL means no additional wallet daily cap. Funds and platform rules still apply. |
 | spent_today | Successful sends plus payments counted today; resets to zero at 00:00 Eastern. |
@@ -108,7 +108,6 @@ App calls POST /v1/devices/session/extend on every launch. A valid, unexpired, u
 | legal_name | Registered legal business name. |
 | display_name | Trading/customer-facing name. |
 | tax_id | Protected tax identifier; restrict access and encrypt as appropriate. |
-| business_doc | Private supporting-document reference. |
 | bank_account_id | Foreign key to the business's selected payout bank account. |
 | address | Street address line 1 and optional line 2 in one text field, separated by a newline. |
 | city | City/locality. |
@@ -410,7 +409,7 @@ Claiming and managing: a tag is claimed by tapping it with a phone and sending t
 | id | Model primary key. |
 | type | band or card. |
 | name | Model name. |
-| photo | File name of the uploaded PNG in R2 (see Images), or NULL. |
+| photo | R2 key of the uploaded PNG (`tags/<id>-<epoch ms>.png`, see Images), or NULL. |
 | currency | Sale currency code. |
 | price | Integer minor-unit sale price. |
 | country | Sale country/market; precise market behavior remains to be finalized. |
@@ -446,15 +445,19 @@ One row per completed store purchase (migration 0010 as `tag_orders`, renamed an
 
 ## shop
 
-Our own merchandise for sale (migration 0018): id, name, description, photo (the **file name** of the PNG in R2, `<id>-<epoch ms>.png`; the folder `shop/` and the public URL `/v1/shop/items/:id/photo` are rendered by the API), price (cents), currency, stock (NULL = not tracked), sold, status (pending, available or closed), created_at, updated_at. Items are bought with `POST /v1/shop/orders {item_id, ...}`, which creates an `orders` row of type `shop` and raises `sold` (and lowers `stock` when tracked). Managed in the admin portal's Shop page (Admin and Sales).
+Our own merchandise for sale (migration 0018): id, name, description, photo (the R2 key of the PNG, `shop/<id>-<epoch ms>.png`; the API renders the full URL), price (cents), currency, stock (NULL = not tracked), sold, status (pending, available or closed), created_at, updated_at. Items are bought with `POST /v1/shop/orders {item_id, ...}`, which creates an `orders` row of type `shop` and raises `sold` (and lowers `stock` when tracked). Managed in the admin portal's Shop page (Admin and Sales).
 
 ## logs
 
 The audit trail (migration 0018), append-only (triggers refuse update, delete and truncate): id, actor_type (admin, operator, customer, agent or system), actor_id, actor_label (an admin's Access ID or a customer's email), action (for example `tag_model.created`, `admin.created`, `refund.approved`, `user.suspended`, `customer.login`), target_type, target_id, target_label, details (small JSON, never secrets), ip and created_at. Written for every admin action and for customer security events (sign-up, login and failed login, logout, handle change, device revoke, agent key rotate and revoke). Shown on the admin portal's Logs page (Admin) and as the Activity tab of a user or merchant. A log failure never blocks the action it describes.
 
+## uploads
+
+One row per file a person or business uploaded (migration 0020): id, account_id (the uploader), type (`business_document` today), path (the object key inside the private R2 bucket `nuclear-uploads`: `<account id>/<upload id>.<pdf|png|jpg>`) and created_at. The bucket is never public: admins (Admin and Merchants roles) download business documents through `GET /v1/admin/merchants/:id/documents/:uploadId`, and every download is logged. PDF, PNG or JPEG only (content type and first bytes checked), 5 MB at most, 10 documents per business. The old `businesses.business_doc` column was dropped.
+
 ## Images
 
-Uploaded pictures live in the R2 bucket `nuclear-images` (binding `IMAGES`). tag_models.photo and shop.photo hold only the file name (`<id>-<epoch ms>.png`); the key is `tags/<file>` or `shop/<file>`, a new upload gets a new name and the old object is deleted, and the API serves them publicly with an immutable cache. PNG only, 256 KB at most (the admin portal resizes to 256 x 256).
+Image files live in the R2 bucket `nuclear-images` (binding `IMAGES`): tag pictures (`tags/`), store pictures (`shop/`), account photos (`accounts/`), wallet photos (`wallets/`) and product images (`products/`). Every other uploaded document goes to the private bucket `nuclear-uploads` (see `uploads`). A `photo` column holds only the **R2 key** (`<folder>/<id>-<epoch ms>.<png|jpg>`, enforced by a CHECK), and the API builds the full public URL (`/v1/photos/<key>`) whenever it returns one. A new upload gets a new key and the old object is deleted. Tag and shop pictures are PNG, 256 KB at most (the admin portal resizes to 256 x 256); account and wallet photos are cropped to 256 x 256 and compressed to JPEG by the API.
 
 ## passes
 

@@ -1,4 +1,5 @@
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
+import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import type { AppContext } from "../env";
 import { handleSchema } from "../lib/handle";
@@ -26,7 +27,7 @@ handles.get("/:handle", rateLimit("lookup-handle", RULES.lookupHandle, byAccount
     handle: r.handle,
     type: r.type,
     display_name: r.name,
-    photo: r.photo,
+    photo: imageUrl(r.photo),
     wallet_id: r.wallet_id,
   });
 });

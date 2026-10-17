@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { imageUrl } from "../lib/images";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { n } from "../lib/money";
@@ -117,7 +118,7 @@ activity.get("/", async (c) => {
       counterparty:
         r.counter_name === null
           ? null
-          : { wallet_id: r.counter_wallet_id, display_name: r.counter_name, photo: r.counter_photo },
+          : { wallet_id: r.counter_wallet_id, display_name: r.counter_name, photo: imageUrl(r.counter_photo) },
       timestamp: r.ts,
     })),
     next_cursor: hasMore && last ? `${last.ts_key}|${last.id}` : null,

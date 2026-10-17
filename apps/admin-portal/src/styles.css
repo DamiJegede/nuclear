@@ -350,3 +350,11 @@ tr.tx-detail:not(.open) .tx-line { padding-top: 0; }
 .avatar.sm { width: 32px; height: 32px; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .tx-collapse { transition: none; } }
 tr.tx-detail:not(.open) .tx-inner { visibility: hidden; transition: visibility 0s 0.22s; }
+
+/* Business approval card */
+.approval { margin-bottom: 16px; }
+.approval h2 { margin: 0 0 6px; }
+.doc-list { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 8px; }
+.doc-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.modal-actions.left { justify-content: flex-start; }
+textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); resize: vertical; }

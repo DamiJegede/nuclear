@@ -16,7 +16,7 @@ const call = async (method: string, path: string, o: { body?: unknown; token?: s
   const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
 };
 const op = (p: string) => call("GET", p, { token: OP });
-const signup = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => { const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json; if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]); return j; }; // businesses start pending; these suites need them live
 
 // ---- a merchant with terminals, an Orb, staff, a catalogue and a history
 const shop = await signup("Cafe Nero", "cafe@example.com", "B"); const other = await signup("Other Shop", "other@example.com", "B");
@@ -75,7 +75,7 @@ eq("each row says who, where, how and why: customer, terminal, via, reference, s
 const kinds = await Promise.all(["payments", "refunds", "pending"].map(async (k) => (await op(`/v1/admin/merchants/${M}/transactions?kind=${k}`)).json.transactions.map((t: any) => `${t.type}:${t.status}`).sort().join(",")));
 eq("kinds: payments, refunds (done) and refunds awaiting approval", kinds, ["pay:completed,pay:completed,pay:completed,pay:failed", "refund:completed", "refund:pending"]);
 eq("completed totals are only money that moved", all.totals, { payments: { count: 3, volume: 4200 }, refunds: { count: 1, volume: 400 } });
-eq("period filters work here too (today has all of it, a past period none) and bad dates are refused", [(await op(`/v1/admin/merchants/${M}/transactions?from=2020-01-01&to=2020-01-31`)).json.counts.all, (await op(`/v1/admin/merchants/${M}/transactions?from=${new Date().toISOString().slice(0, 10)}`)).json.counts.all >= 1, (await op(`/v1/admin/merchants/${M}/transactions?from=bad`)).status, (await op(`/v1/admin/merchants/${M}/transactions?kind=nope`)).status], [0, true, 400, 400]);
+eq("period filters work here too (today has all of it, a past period none) and bad dates are refused", [(await op(`/v1/admin/merchants/${M}/transactions?from=2020-01-01&to=2020-01-31`)).json.counts.all, (await op(`/v1/admin/merchants/${M}/transactions?from=${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`)).json.counts.all >= 1, (await op(`/v1/admin/merchants/${M}/transactions?from=bad`)).status, (await op(`/v1/admin/merchants/${M}/transactions?kind=nope`)).status], [0, true, 400, 400]);
 eq("paging by cursor returns every row once", await (async () => { const a = (await op(`/v1/admin/merchants/${M}/transactions?limit=4`)).json; const b = (await op(`/v1/admin/merchants/${M}/transactions?limit=4&cursor=${encodeURIComponent(a.next_cursor)}`)).json; return [a.transactions.length, b.transactions.length, b.next_cursor, new Set([...a.transactions, ...b.transactions].map((t: any) => t.id)).size]; })(), [4, 2, null, 6]);
 
 // ---- who can look, who can act

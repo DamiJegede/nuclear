@@ -106,6 +106,7 @@ await pool(Array.from({ length: N_MERCHANTS }, (_, i) => i), 6, async (i) => {
   const r = await call("POST", "/v1/auth/signup", { body: { type: "B", name, email: `shop${i}.${RUN}@seed.nuclear.test`, password: PASSWORD } });
   if (r.status !== 201) { console.log("merchant failed", r.status, r.json?.error); return; }
   const owner = r.json.session_token;
+  await call("POST", `/v1/admin/merchants/${r.json.account_id}/approve`, { token: OP });   // new businesses start pending
   const nTerm = int(1, 3);
   for (let t = 0; t < nTerm; t++) {
     const approval = (i + t) % 5 === 4;                    // about one terminal in five needs approval for refunds

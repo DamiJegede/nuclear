@@ -3,6 +3,7 @@ import type { Api, DayRange, MerchantDetailData, MerchantProduct, MerchantStaffR
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
+import { BusinessApproval } from "./BusinessApproval";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
@@ -45,7 +46,7 @@ export function MerchantDetail({
       <div className="head">
         <h1><a href="/merchants" className="crumb" onClick={(e) => { e.preventDefault(); onBack(); }}>Merchants</a> <span className="muted">/</span> {m?.name ?? ""}
           {m && <> {statusPill(m.status)}</>}</h1>
-        {m && canAdmin && m.status !== "closed" && (
+        {m && canAdmin && (m.status === "active" || m.status === "suspended") && (
           <button type="button" className={m.status === "active" ? "ghost" : ""} onClick={() => { setStatusError(null); setSuspending(true); }}>
             {m.status === "active" ? "Suspend Merchant" : "Reactivate Merchant"}
           </button>
@@ -64,6 +65,10 @@ export function MerchantDetail({
             <button type="button" className="ghost" disabled={statusBusy} onClick={() => setSuspending(false)}>Cancel</button>
           </div>
         </Modal>
+      )}
+
+      {m && (m.status === "pending" || m.status === "declined") && (
+        <BusinessApproval api={api} id={id} name={m.name} status={m.status} canAct={canAct} onChanged={() => void load()} onError={onError} />
       )}
 
       {failed && !m ? (

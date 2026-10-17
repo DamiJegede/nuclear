@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { imageUrl } from "../lib/images";
+import { saveProfilePhoto } from "../lib/profilePhoto";
 import { customerLog } from "../lib/audit";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -37,7 +39,7 @@ export function walletJson(w: WalletRow) {
   return {
     id: w.id,
     display_name: w.display_name,
-    photo: w.photo,
+    photo: imageUrl(w.photo),
     type: w.type,
     daily_limit: n(w.daily_limit),
     spent_today: n(w.spent_today),
@@ -68,7 +70,6 @@ wallets.get("/", async (c) => {
 const createBody = z.object({
   display_name: z.string().trim().min(1).max(80),
   type: z.enum(["agent", "person"]),
-  photo: z.string().max(2048).nullish(),
   daily_limit: amountOrZero.nullish(),
   allow_pay: z.boolean().default(true),
   allow_send: z.boolean().default(false), // sends are opt-in for non-default wallets
@@ -94,8 +95,8 @@ wallets.post("/", requireOwner, async (c) => {
       select count(*)::bigint as count from wallets where account_id = ${accountId} and status <> 'closed'`;
     if ((cnt?.count ?? 0n) >= BigInt(MAX_WALLETS_PER_ACCOUNT)) return null;
     const [w] = await tx<WalletRow[]>`
-      insert into wallets (account_id, display_name, photo, type, daily_limit, allow_pay, allow_send, key_hash, key_hint)
-      values (${accountId}, ${b.display_name}, ${b.photo ?? null}, ${b.type},
+      insert into wallets (account_id, display_name, type, daily_limit, allow_pay, allow_send, key_hash, key_hint)
+      values (${accountId}, ${b.display_name}, ${b.type},
               ${b.daily_limit === undefined || b.daily_limit === null ? null : b.daily_limit.toString()},
               ${b.allow_pay}, ${b.allow_send}, ${agentKey?.hash ?? null}, ${agentKey?.hint ?? null})
       returning ${tx.unsafe(COLS)}`;
@@ -131,7 +132,6 @@ wallets.get("/:id", async (c) => {
 const patchBody = z
   .object({
     display_name: z.string().trim().min(1).max(80),
-    photo: z.string().max(2048).nullable(),
     daily_limit: amountOrZero.nullable(),
     allow_pay: z.boolean(),
     allow_send: z.boolean(),
@@ -139,6 +139,23 @@ const patchBody = z
   })
   .partial()
   .refine((o) => Object.keys(o).length > 0, { message: "empty_patch" });
+
+// A wallet's picture, uploaded after the wallet exists: any PNG, JPEG or WebP, cropped to 256 x 256, compressed to JPEG, saved in R2;
+// wallets.photo keeps the R2 key. Owner only.
+wallets.put("/:id/photo", requireOwner, async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const { accountId } = c.get("auth");
+  const sql = c.get("sql");
+  const [w] = await sql<{ photo: string | null; status: string; display_name: string }[]>`select photo, status, display_name from wallets where id = ${id.data} and account_id = ${accountId}`;
+  if (!w) return c.json({ error: "not_found" }, 404);
+  if (w.status === "closed") return c.json({ error: "wallet_closed" }, 409);
+  const r = await saveProfilePhoto(c, "wallets", id.data, w.photo);
+  if (r instanceof Response) return r;
+  await sql`update wallets set photo = ${r.key} where id = ${id.data} and account_id = ${accountId}`;
+  await customerLog(c, accountId, null, "customer.photo_changed", { wallet_id: id.data }, { type: "wallet", id: id.data, label: w.display_name });
+  return c.json({ photo: imageUrl(r.key) });
+});
 
 wallets.patch("/:id", requireOwner, async (c) => {
   const id = uuid.safeParse(c.req.param("id"));

@@ -17,7 +17,7 @@ const call = async (method: string, path: string, o: { body?: unknown; token?: s
   const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
 };
 const op = (p: string) => call("GET", p, { token: OP });
-const signup = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => { const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json; if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]); return j; }; // businesses start pending; these suites need them live
 const urlFor = (uid: string, counter: number) => { const pt = Buffer.alloc(16, 0x55); pt[0] = 0xc7; Buffer.from(uid, "hex").copy(pt, 1); pt.writeUIntLE(counter, 8, 3); const c = createCipheriv("aes-128-cbc", TAG_KEY, Buffer.alloc(16)); c.setAutoPadding(false); return `https://tag.nclr.app/v1/${Buffer.concat([c.update(pt), c.final()]).toString("hex")}`; };
 
 // ---- a person with a busy life

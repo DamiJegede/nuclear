@@ -42,8 +42,8 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
   try {
     const result = await sql.begin(async (tx) => {
       const [acct] = await tx<{ id: string }[]>`
-        insert into accounts (type, name, email, phone, password_hash)
-        values (${b.type}, ${b.name}, ${b.email}, ${b.phone ?? null}, ${passwordHash})
+        insert into accounts (type, name, email, phone, password_hash, status)
+        values (${b.type}, ${b.name}, ${b.email}, ${b.phone ?? null}, ${passwordHash}, ${b.type === "B" ? "pending" : "active"})
         returning id`;
       const accountId = acct!.id;
       await tx`insert into balances (account_id) values (${accountId})`;
@@ -90,7 +90,7 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
   const [acct] = await sql<{ id: string; password_hash: string | null; status: string }[]>`
     select id, password_hash, status from accounts where lower(email) = ${b.email}`;
   const ok = await verifyPassword(b.password, acct?.password_hash ?? DUMMY_HASH);
-  if (!acct || !acct.password_hash || !ok || acct.status !== "active") {
+  if (!acct || !acct.password_hash || !ok || !["active", "pending", "declined"].includes(acct.status)) {
     const h = await hit(sql, failKey, RULES.loginFailures);
     if (acct) await customerLog(c, acct.id, b.email, "customer.login_failed", { locked: !h.ok });
     return c.json({ error: "invalid_credentials" }, 401);

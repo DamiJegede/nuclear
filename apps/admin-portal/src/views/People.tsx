@@ -3,7 +3,7 @@ import type { Api, MerchantRow, UserRow } from "../api";
 import { int, money } from "../format";
 
 const joined = (iso: string) => new Date(iso).toLocaleDateString();
-const statusPill = (s: string) => <span className={`pill ${s === "active" ? "available" : "closed"}`}>{s}</span>;
+const statusPill = (s: string) => <span className={`pill ${s === "active" ? "available" : s === "pending" ? "pending" : "closed"}`}>{s}</span>;
 
 /** Shared by Merchants and Users: a name filter (typed, sent to the API after a short pause) over a table. */
 function useFiltered<T>(load: (q: string) => Promise<T[]>, onError: (e: unknown) => void) {

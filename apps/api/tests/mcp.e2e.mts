@@ -23,7 +23,7 @@ const rpc = async (key: string | null, method: string, params?: unknown, raw?: u
   const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
 };
 const tool = async (key: string, name: string, args: object = {}) => { const r = await rpc(key, "tools/call", { name, arguments: args }); const c = r.json.result; return { isError: c.isError as boolean, data: JSON.parse(c.content[0].text) }; };
-const signup = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => { const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json; if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]); return j; }; // businesses start pending; these suites need them live
 
 const ada = await signup("Ada", "ada@example.com"), bob = await signup("Bob", "bob@example.com"), shop = await signup("Shop", "shop@example.com", "B");
 const A = ada.session_token, B = bob.session_token, S = shop.session_token;

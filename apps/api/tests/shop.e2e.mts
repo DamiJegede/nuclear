@@ -54,16 +54,16 @@ eq("photo upload rejects other types, empty and oversize bodies", [
   (await call("PUT", `/v1/admin/tag-models/${band.id}/photo`, { token: OP, type: "image/png", bytes: new Uint8Array(262145) })).status], [415, 400, 400, 413]);
 eq("a valid photo is stored; unknown model is 404", [(await call("PUT", `/v1/admin/tag-models/${band.id}/photo`, { token: OP, type: "image/png", bytes: png })).status, (await call("PUT", `/v1/admin/tag-models/00000000-0000-7000-8000-000000000000/photo`, { token: OP, type: "image/png", bytes: png })).status], [204, 404]);
 const withPhoto = (await call("GET", "/v1/shop/models")).json.models[0];
-eq("the model now points at its photo path", /^\/v1\/shop\/models\/[0-9a-f-]+\/photo\?v=\d+$/.test(withPhoto.photo), true);
-const ph = await raw("GET", withPhoto.photo.split("?")[0]);
+eq("the model now has a full photo URL built from its R2 key", /^http:\/\/x\/v1\/photos\/tags\/[0-9a-f-]{36}-\d+\.png$/.test(withPhoto.photo), true);
+const ph = await raw("GET", new URL(withPhoto.photo).pathname);
 eq("the photo is served publicly with its type, the same bytes and a long cache", [ph.status, ph.headers.get("content-type"), Array.from(new Uint8Array(await ph.arrayBuffer())), ph.headers.get("cache-control")], [200, "image/png", Array.from(png), "public, max-age=31536000, immutable"]);
 eq("admin list shows the photo path too", (await op("GET", "/v1/admin/tag-models")).json.models.find((m: any) => m.id === band.id).photo, withPhoto.photo);
 const stored = (await q("select photo from tag_models where id=$1", [band.id]))[0].photo;
-eq("the database keeps only the file name; the R2 key is rendered from a fixed prefix", [/^[0-9a-f-]{36}-\d+\.png$/.test(stored), store.has("tags/" + stored)], [true, true]);
+eq("the database keeps only the R2 key (folder and file name); the API builds the full URL", [/^tags\/[0-9a-f-]{36}-\d+\.png$/.test(stored), store.has(stored), withPhoto.photo === `http://x/v1/photos/${stored}`], [true, true, true]);
 await new Promise((r) => setTimeout(r, 5));
 await raw("PUT", `/v1/admin/tag-models/${band.id}/photo`, { token: OP, type: "image/png", bytes: png });
-eq("a new upload gets a new file name and the old object is deleted", [(await q("select photo from tag_models where id=$1", [band.id]))[0].photo !== stored, store.has("tags/" + stored)], [true, false]);
-eq("no photo is 404", (await call("GET", `/v1/shop/models/${pending.id}/photo`)).status, 404);
+eq("a new upload gets a new file name and the old object is deleted", [(await q("select photo from tag_models where id=$1", [band.id]))[0].photo !== stored, store.has(stored)], [true, false]);
+eq("a model without a photo has null; an unknown or malformed key is 404", [(await op("GET", `/v1/admin/tag-models/${pending.id}`)).json.model.photo, (await call("GET", `/v1/photos/tags/${pending.id}-1.png`)).status, (await call("GET", "/v1/photos/tags/nope.png")).status], [null, 404, 404]);
 
 // ---- buying
 // The shop allows ten orders a minute per account (see ratelimit.e2e.mts); these scenarios place many, so clear the counter first.
@@ -126,7 +126,7 @@ const draft = (await mkItem({ name: "Draft Hat", price: 1500 })).json.item;
 eq("a shop item is created pending by default; bad bodies are refused", [draft.status, (await mkItem({ name: "", price: 1 })).status, (await mkItem({ name: "x", price: -1 })).status], ["pending", 400, 400]);
 eq("public items list shows only available items with stock", [(await call("GET", "/v1/shop/items")).json.items.map((i: any) => i.name), (await call("GET", `/v1/shop/items/${draft.id}`)).status], [["Nuclear Tee"], 404]);
 await op("PUT", `/v1/admin/shop-items/${tee.id}/photo`, {});
-eq("an item photo goes to R2 and is served publicly", await (async () => { const r = await raw("PUT", `/v1/admin/shop-items/${tee.id}/photo`, { token: OP, type: "image/png", bytes: png }); const g = (await op("GET", `/v1/admin/shop-items/${tee.id}`)).json.item; const f = await raw("GET", g.photo.split("?")[0]); return [r.status, /^\/v1\/shop\/items\/[0-9a-f-]+\/photo\?v=\d+$/.test(g.photo), f.status, [...store.keys()].some((k) => k.startsWith(`shop/${tee.id}-`))]; })(), [204, true, 200, true]);
+eq("an item photo goes to R2 and is served publicly", await (async () => { const r = await raw("PUT", `/v1/admin/shop-items/${tee.id}/photo`, { token: OP, type: "image/png", bytes: png }); const g = (await op("GET", `/v1/admin/shop-items/${tee.id}`)).json.item; const f = await raw("GET", new URL(g.photo).pathname); return [r.status, /^http:\/\/x\/v1\/photos\/shop\/[0-9a-f-]{36}-\d+\.png$/.test(g.photo), f.status, [...store.keys()].some((k) => k.startsWith(`shop/${tee.id}-`))]; })(), [204, true, 200, true]);
 const t1 = await order(A, "tee-1", { item_id: tee.id, quantity: 2, shipping: SHIP });
 eq("buying merch creates a shop order with a snapshot; stock and sold move", [t1.status, t1.json.order.type, t1.json.order.item.name, t1.json.order.total, (await q("select stock, sold from shop where id=$1", [tee.id]))[0]], [201, "shop", "Nuclear Tee", 5000, { stock: 1, sold: 2 }]);
 eq("tag orders are type tag, shop orders type shop", (await q("select type, count(*)::int n from orders group by type order by type")), [{ type: "shop", n: 1 }, { type: "tag", n: 3 }]);

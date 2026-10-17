@@ -1,4 +1,5 @@
 import type { Sql } from "../db";
+import { imageUrl } from "./images";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
 
@@ -44,7 +45,7 @@ export async function userList(sql: Sql, q: string | null) {
 
 /** Who is on one side of a transaction: a link target for the portal (user or merchant) and a photo only when it is an image address. */
 export const party = (id: string | null, type: string | null, photo: string | null) =>
-  id && type ? { id, kind: type === "B" ? "merchant" : "user", photo: photo && /^https?:\/\//.test(photo) ? photo : null } : null;
+  id && type ? { id, kind: type === "B" ? "merchant" : "user", photo: imageUrl(photo) } : null;
 
 export type TxKind = "all" | "sends" | "taps" | "funds" | "agents";
 export const TX_KINDS: TxKind[] = ["all", "sends", "taps", "funds", "agents"];

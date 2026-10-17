@@ -33,7 +33,7 @@ const raw = async (method: string, path: string, o: { body?: unknown; token?: st
     body: o.body === undefined ? undefined : JSON.stringify(o.body),
   }), o.env ?? env, ctx);
 const call = async (...a: Parameters<typeof raw>) => { const r = await raw(...a); const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null }; };
-const signup = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json;
+const signup = async (name: string, email: string, type = "C") => { const j = (await call("POST", "/v1/auth/signup", { body: { name, email, password: "correct horse battery", type } })).json; if (type === "B") await q("update accounts set status='active' where id=$1", [j.account_id]); return j; }; // businesses start pending; these suites need them live
 const stats = async () => (await call("GET", "/v1/admin/stats", { token: TOKEN })).json;
 const urlFor = (uid: string, counter: number) => {
   const pt = Buffer.alloc(16, 0x55);
