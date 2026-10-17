@@ -1350,6 +1350,50 @@ describe("merchant support page", () => {
     expect(await screen.findByText(/Declined\. Email isn't set up yet/)).toBeInTheDocument();
   });
 
+  it("Email Merchant opens a compose window with five templates then Custom; a template fills subject and message; {{name}} is left for the server", async () => {
+    const emailMerchants = vi.fn().mockResolvedValue({ total: 1, sent: 1, failed: 0, not_configured: 0, no_address: 0, skipped: [], results: [{ id: MID, name: "Cafe Nero", email: "sent" }] });
+    const user = await open(api({ emailMerchants }));
+    await user.click(await screen.findByRole("button", { name: "Email Merchant" }));
+    const dlg = screen.getByRole("dialog", { name: "Email Merchant" });
+    expect(within(within(dlg).getByRole("radiogroup", { name: "Template" })).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["welcome", "documents", "review", "approved", "notice", "custom"]);
+    expect(within(dlg).getByText("Cafe Nero")).toBeInTheDocument();
+    await user.click(within(dlg).getByRole("button", { name: "Send Email" }));
+    expect(await within(dlg).findByText("Write a subject.")).toBeInTheDocument();
+    await user.click(within(dlg).getByRole("radio", { name: "Documents needed" }));
+    expect((within(dlg).getByLabelText("Subject") as HTMLInputElement).value).toContain("{{name}}");
+    expect((within(dlg).getByLabelText("Message") as HTMLTextAreaElement).value).toContain("upload a clear copy");
+    await user.click(within(dlg).getByRole("button", { name: "Send Email" }));
+    expect(emailMerchants).toHaveBeenCalledWith({ merchant_ids: [MID], subject: expect.stringContaining("{{name}}"), body: expect.stringContaining("business document") });
+    expect(await screen.findByText("Cafe Nero was emailed.")).toBeInTheDocument();
+  });
+
+  it("Email Merchants (from the list) picks an audience with counts and asks to confirm before sending", async () => {
+    const merchants = vi.fn().mockResolvedValue([{ ...ML, status: "active" }, { ...ML, id: "m2", name: "Bar", status: "pending" }, { ...ML, id: "m3", name: "Pub", status: "pending" }]);
+    const emailMerchants = vi.fn().mockResolvedValue({ total: 2, sent: 0, failed: 0, not_configured: 2, no_address: 0, skipped: [], results: [] });
+    const user = await signIn(api({ merchants, emailMerchants }), vi.fn().mockResolvedValue(SIGNED));
+    await user.click(await screen.findByRole("link", { name: "Merchants" }));
+    await user.click(await screen.findByRole("button", { name: "Email Merchants" }));
+    const dlg = screen.getByRole("dialog", { name: "Email Merchants" });
+    expect(await within(dlg).findByRole("option", { name: "Active and Pending (3)" })).toBeInTheDocument();
+    await user.selectOptions(within(dlg).getByLabelText("To"), "pending");
+    await user.click(within(dlg).getByRole("radio", { name: "Under review" }));
+    await user.click(within(dlg).getByRole("button", { name: "Send Email" }));
+    const confirm = screen.getByRole("dialog", { name: "Send to Merchants" });
+    expect(confirm).toHaveTextContent("to 2 pending merchants");
+    expect(emailMerchants).not.toHaveBeenCalled();
+    await user.click(within(confirm).getByRole("button", { name: "Confirm Send" }));
+    expect(emailMerchants).toHaveBeenCalledWith({ audience: "pending", subject: expect.any(String), body: expect.any(String) });
+    expect(await screen.findByText(/Email isn't set up yet/)).toBeInTheDocument();
+  });
+
+  it("Sales cannot email merchants (no button)", async () => {
+    const sales: SignedIn = { ...SIGNED, admin: { ...SIGNED.admin, role: "sales" }, role: "sales", pages: ["users", "merchants", "tags"], landing: "users" };
+    const user = await signIn(api({ merchants: vi.fn().mockResolvedValue([ML]) }), vi.fn().mockResolvedValue(sales));
+    await user.click(await screen.findByRole("link", { name: "Merchants" }));
+    await screen.findByRole("row", { name: /Cafe Nero/ });
+    expect(screen.queryByRole("button", { name: "Email Merchants" })).toBeNull();
+  });
+
   it("an Admin approves a pending refund after a confirm; the lists and numbers refresh", async () => {
     const resolveMerchantRefund = vi.fn().mockResolvedValue({ refund: { id: "p", status: "completed", status_code: null } });
     const merchantTransactions = vi.fn().mockResolvedValue(PENDING);

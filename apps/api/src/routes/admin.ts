@@ -617,6 +617,47 @@ for (const decision of ["approve", "decline"] as const) {
   });
 }
 
+// ---- Email merchants (Admin and Merchants roles): one merchant, a list of them, or every active / pending business.
+// {{name}} in the subject or message becomes each merchant's name. The text goes through Cloudflare Email Service; each
+// merchant gets its own log row (and, when nothing was sent, the text is kept there). Active and pending businesses only.
+const MAX_EMAIL_RECIPIENTS = 200;
+const emailBody = z.object({
+  merchant_ids: z.array(merchantId).min(1).max(MAX_EMAIL_RECIPIENTS).optional(),
+  audience: z.enum(["active", "pending", "active_pending"]).optional(),
+  subject: z.string().trim().min(1).max(150),
+  body: z.string().trim().min(1).max(5000),
+}).refine((b) => (b.merchant_ids === undefined) !== (b.audience === undefined), { message: "ids_or_audience" });
+const fill = (t: string, name: string) => t.replace(/\{\{\s*name\s*\}\}/gi, name);
+
+admin.post("/merchants/email", async (c) => {
+  const denied = approvalGate(c); if (denied) return denied;
+  const body = emailBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const b = body.data;
+  const sql = c.get("sql");
+  const statuses = b.audience === "active" ? ["active"] : b.audience === "pending" ? ["pending"] : ["active", "pending"];
+  const rows = await sql<{ id: string; name: string; email: string | null; status: string }[]>`
+    select id, name, email, status from accounts
+     where type = 'B' and status in ${sql(statuses)} ${b.merchant_ids ? sql`and id in ${sql(b.merchant_ids)}` : sql``}
+     order by created_at, id limit ${MAX_EMAIL_RECIPIENTS}`;
+  const missing = b.merchant_ids ? b.merchant_ids.filter((id) => !rows.some((r) => r.id === id)) : [];
+  if (rows.length === 0) return c.json({ error: "no_recipients" }, 422);
+
+  const results: { id: string; name: string; email: "sent" | "failed" | "not_configured" | "no_address" }[] = [];
+  for (let i = 0; i < rows.length; i += 5) {
+    const batch = rows.slice(i, i + 5);
+    const done = await Promise.all(batch.map(async (m) => {
+      const subject = fill(b.subject, m.name), text = fill(b.body, m.name);
+      const sent = m.email ? await sendMail(c.env, { to: m.email, subject, text }) : "no_address" as const;
+      await adminLog(c, "merchant.emailed", { type: "merchant", id: m.id, label: m.name }, { subject, email: sent, ...(sent === "sent" ? {} : { email_text: text }) });
+      return { id: m.id, name: m.name, email: sent };
+    }));
+    results.push(...done);
+  }
+  const count = (k: string) => results.filter((r) => r.email === k).length;
+  return c.json({ total: results.length, sent: count("sent"), failed: count("failed"), not_configured: count("not_configured"), no_address: count("no_address"), skipped: missing, results });
+});
+
 // Admin only: suspend or reactivate a person, or one of their wallets. A suspended account is refused on its
 // next request (sessions, wallets, agent keys alike); nothing is deleted.
 admin.put("/users/:id/status", async (c) => {

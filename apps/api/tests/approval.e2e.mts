@@ -91,6 +91,35 @@ const declined = logs.find((l: any) => l.action === "merchant.declined" && l.tar
 eq("the log keeps the reason and the unsent email text", [declined.details.reason, declined.details.email, /tax certificate/.test(declined.details.email_text)], ["Please send your tax certificate.", "not_configured", true]);
 eq("downloads, uploads, approvals and declines are all logged", ["merchant.document_downloaded", "business.document_uploaded", "merchant.approved", "merchant.declined"].every((a) => logs.some((l: any) => l.action === a)), true);
 
+// ---- emailing merchants: one, a list, or an audience; Admin and Merchants only; active and pending only
+sent.length = 0;
+const act = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Active Cafe", email: "active@cafe.test", password: "correct horse battery" } })).json;
+await q("update accounts set status='active' where id=$1", [act.account_id]);
+const pend = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Pending Pizza", email: "pending@pizza.test", password: "correct horse battery" } })).json;
+const mail = (b: unknown, token = merchantsRole) => call("POST", "/v1/admin/merchants/email", { token, body: b });
+eq("only Admin and Merchants may email merchants", [(await mail({ audience: "active", subject: "Hi", body: "Hello" }, sales)).status, (await call("POST", "/v1/admin/merchants/email", { body: { audience: "active", subject: "Hi", body: "Hello" } })).status], [403, 401]);
+eq("bad bodies: needs a subject and message, and exactly one of ids or audience", [(await mail({ audience: "active", subject: "", body: "x" })).status, (await mail({ audience: "active", subject: "x", body: "" })).status, (await mail({ subject: "x", body: "y" })).status, (await mail({ audience: "active", merchant_ids: [act.account_id], subject: "x", body: "y" })).status, (await mail({ audience: "everyone", subject: "x", body: "y" })).status], [400, 400, 400, 400, 400]);
+const one = await mail({ merchant_ids: [act.account_id], subject: "Hello {{name}}", body: "Dear {{ name }}, welcome." });
+eq("one merchant: {{name}} is filled in the subject and the message, and the mail goes to its address", [one.status, one.json.sent, sent.length, sent[0].to, sent[0].subject, sent[0].text], [200, 1, 1, "active@cafe.test", "Hello Active Cafe", "Dear Active Cafe, welcome."]);
+sent.length = 0;
+const pendOnly = await mail({ audience: "pending", subject: "Docs", body: "Please upload for {{name}}." });
+eq("audience pending reaches only pending businesses", [pendOnly.json.total, sent.map((m) => m.to).sort()], [1, ["pending@pizza.test"]]);
+sent.length = 0;
+const both = await mail({ audience: "active_pending", subject: "News", body: "Hi {{name}}" });
+const everyone = (await q("select email from accounts where type='B' and status in ('active','pending') order by email")).map((r: any) => r.email);
+eq("active_pending reaches every active and pending business, each once", [both.json.total, both.json.sent, sent.map((m) => m.to).sort()], [everyone.length, everyone.length, everyone]);
+eq("declined, suspended and unknown merchants are skipped; customers are never emailed", await (async () => {
+  const dec = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Declined Deli", email: "declined@deli.test", password: "correct horse battery" } })).json;
+  await q("update accounts set status='declined' where id=$1", [dec.account_id]);
+  sent.length = 0;
+  const r = await mail({ merchant_ids: [dec.account_id, ada.account_id, act.account_id], subject: "x", body: "y" });
+  return [r.json.total, r.json.skipped.length, sent.map((m) => m.to)];
+})(), [1, 2, ["active@cafe.test"]]);
+eq("nobody to email is a 422", (await mail({ merchant_ids: [ada.account_id], subject: "x", body: "y" })).status, 422);
+const none = await call("POST", "/v1/admin/merchants/email", { token: OP, body: { merchant_ids: [act.account_id], subject: "Hi {{name}}", body: "Body for {{name}}" }, e: { ...env, EMAIL: undefined } });
+eq("without email configured nothing is sent, the answer says so and the log keeps the text", [none.json.sent, none.json.not_configured, (await op("GET", `/v1/admin/merchants/${act.account_id}/activity`)).json.logs.find((l: any) => l.action === "merchant.emailed" && l.details.email === "not_configured")?.details.email_text], [0, 1, "Body for Active Cafe"]);
+eq("every email is logged per merchant", (await op("GET", `/v1/admin/merchants/${act.account_id}/activity`)).json.logs.filter((l: any) => l.action === "merchant.emailed").length >= 3, true);
+
 // ---- the schema
 eq("business_doc is gone and uploads has the five columns", [(await q("select count(*)::int n from information_schema.columns where table_name='businesses' and column_name='business_doc'"))[0].n, (await q("select column_name from information_schema.columns where table_name='uploads' order by ordinal_position")).map((r: any) => r.column_name)], [0, ["id", "account_id", "type", "path", "created_at"]]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

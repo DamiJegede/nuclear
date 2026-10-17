@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Api, MerchantRow, UserRow } from "../api";
 import { int, money } from "../format";
+import { EmailMerchants } from "./EmailMerchants";
 
 const joined = (iso: string) => new Date(iso).toLocaleDateString();
 const statusPill = (s: string) => <span className={`pill ${s === "active" ? "available" : s === "pending" ? "pending" : "closed"}`}>{s}</span>;
@@ -38,12 +39,17 @@ function FilterBox({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-export function Merchants({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
+export function Merchants({ api, onError, open, canEmail = false }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void; canEmail?: boolean }) {
+  const [emailing, setEmailing] = useState(false);
   const load = useCallback((q: string) => api.merchants(q || undefined), [api]);
   const { q, setQ, rows, failed, retry } = useFiltered<MerchantRow>(load, onError);
   return (
     <section>
-      <div className="head"><h1>Merchants</h1></div>
+      <div className="head">
+        <h1>Merchants</h1>
+        {canEmail && <div className="head-actions"><button type="button" onClick={() => setEmailing(true)}>Email Merchants</button></div>}
+      </div>
+      {emailing && <EmailMerchants api={api} target={{ kind: "many" }} onClose={() => setEmailing(false)} onError={onError} />}
       <FilterBox label="Filter merchants by name" value={q} onChange={setQ} />
       <div className="card flush">
         {failed && !rows ? <p className="error pad" role="alert">Couldn't load merchants. <button className="link" onClick={retry}>Try Again</button></p>

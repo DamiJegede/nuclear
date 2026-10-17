@@ -4,6 +4,7 @@ import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { BusinessApproval } from "./BusinessApproval";
+import { EmailMerchants } from "./EmailMerchants";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
@@ -25,6 +26,7 @@ export function MerchantDetail({
   const [m, setM] = useState<MerchantDetailData | null>(null);
   const [failed, setFailed] = useState(false);
   const [suspending, setSuspending] = useState(false);
+  const [emailing, setEmailing] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   usePageTitle(m ? `${m.name} · Merchants` : "Merchant");
@@ -46,12 +48,16 @@ export function MerchantDetail({
       <div className="head">
         <h1><a href="/merchants" className="crumb" onClick={(e) => { e.preventDefault(); onBack(); }}>Merchants</a> <span className="muted">/</span> {m?.name ?? ""}
           {m && <> {statusPill(m.status)}</>}</h1>
+        <div className="head-actions">
+        {m && canAct && (m.status === "active" || m.status === "pending") && <button type="button" className="ghost" onClick={() => setEmailing(true)}>Email Merchant</button>}
         {m && canAdmin && (m.status === "active" || m.status === "suspended") && (
           <button type="button" className={m.status === "active" ? "ghost" : ""} onClick={() => { setStatusError(null); setSuspending(true); }}>
             {m.status === "active" ? "Suspend Merchant" : "Reactivate Merchant"}
           </button>
         )}
+        </div>
       </div>
+      {m && emailing && <EmailMerchants api={api} target={{ kind: "one", id, name: m.name }} onClose={() => setEmailing(false)} onError={onError} />}
       {m && suspending && (
         <Modal title={m.status === "active" ? "Suspend Merchant" : "Reactivate Merchant"} onClose={() => setSuspending(false)} locked={statusBusy}>
           {m.status === "active"

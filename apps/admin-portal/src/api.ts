@@ -98,6 +98,10 @@ export type MerchantTerminal = {
 };
 export type MerchantStaffRow = { id: string; staff_account_id: string; name: string; email: string | null; handle: string | null; role: "read" | "write"; bank_last4: string | null; created_at: string };
 export type MerchantProduct = { id: string; name: string; category: string | null; price: number; discount: number; stock: number | null; active: boolean; status: string; total_sold: number; sold_today: number };
+export type EmailResult = {
+  total: number; sent: number; failed: number; not_configured: number; no_address: number; skipped: string[];
+  results: { id: string; name: string; email: "sent" | "failed" | "not_configured" | "no_address" }[];
+};
 export type MerchantDocument = { id: string; type: string; created_at: string; file: string };
 export type MerchantTxKind = "all" | "payments" | "refunds" | "pending";
 export type MerchantTxRow = {
@@ -283,6 +287,9 @@ export function createApi(token: string, base: string = API_URL) {
       if (!res.ok) throw new ApiError(res.status, `http_${res.status}`);
       return res.blob();
     },
+    /** Email one merchant, a list, or every active and/or pending merchant ({{name}} is filled in per merchant). */
+    emailMerchants: (input: { merchant_ids?: string[]; audience?: "active" | "pending" | "active_pending"; subject: string; body: string }) =>
+      request<EmailResult>("POST", "/v1/admin/merchants/email", input),
     approveMerchant: (id: string) => request<{ merchant: { id: string; status: string }; email: "sent" | "failed" | "not_configured" }>("POST", `/v1/admin/merchants/${encodeURIComponent(id)}/approve`),
     declineMerchant: (id: string, reason: string) => request<{ merchant: { id: string; status: string }; email: "sent" | "failed" | "not_configured" }>("POST", `/v1/admin/merchants/${encodeURIComponent(id)}/decline`, { reason }),
     /** Support action: signs a terminal out so its token stops working. */

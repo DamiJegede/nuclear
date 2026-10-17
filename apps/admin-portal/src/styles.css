@@ -358,3 +358,13 @@ tr.tx-detail:not(.open) .tx-inner { visibility: hidden; transition: visibility 0
 .doc-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .modal-actions.left { justify-content: flex-start; }
 textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); resize: vertical; }
+
+/* Email compose */
+.email-compose { display: grid; gap: 12px; margin-bottom: 8px; }
+.email-compose label { display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }
+.email-compose input, .email-compose select { width: 100%; }
+.email-to { margin: 0; }
+.template-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.choice.template { height: auto; min-height: 52px; padding: 10px 8px; font-size: 14px; text-align: center; }
+.modal:has(.email-compose) { width: min(640px, 100%); }
+@media (max-width: 520px) { .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -189,7 +189,7 @@ export function App({
         {view === "tag" && route.id && me.pages.includes("tags") && <TagDetail api={api} id={route.id} canWrite={canWriteTags} onBack={() => setView("tags")} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
         {view === "admins" && me.pages.includes("admins") && <Admins api={api} me={me} onError={onError} />}
-        {view === "merchants" && me.pages.includes("merchants") && <Merchants api={api} onError={onError} open={(mid) => setView("merchant", false, mid, "details")} />}
+        {view === "merchants" && me.pages.includes("merchants") && <Merchants api={api} onError={onError} canEmail={me.role === "admin" || me.role === "merchants"} open={(mid) => setView("merchant", false, mid, "details")} />}
         {view === "merchant" && route.id && me.pages.includes("merchants") && (
           <MerchantDetail api={api} id={route.id} tab={(route.tab as MerchantTab) ?? "details"} canAct={me.role === "admin" || me.role === "merchants"} canAdmin={me.role === "admin"} openUser={me.pages.includes("users") ? (uid) => setView("user", false, uid, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (mid) => setView("merchant", false, mid, "details") : undefined}
             onTab={(t) => setView("merchant", false, route.id, t)} onBack={() => setView("merchants")} onError={onError} />
