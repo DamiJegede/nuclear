@@ -1,0 +1,143 @@
+export class ApiError extends Error {
+  constructor(public status: number, public code: string, public extra?: Record<string, unknown>) {
+    super(code);
+  }
+}
+
+export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefined) ?? "https://nuclear-api.a-space.workers.dev";
+
+async function send<T>(base: string, token: string | null, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  let res: Response;
+  const isBlob = typeof Blob !== "undefined" && body instanceof Blob;
+  try {
+    res = await fetch(base.replace(/\/$/, "") + path, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body === undefined ? {} : { "content-type": isBlob ? (body as Blob).type : "application/json" }),
+        ...headers,
+      },
+      body: body === undefined ? undefined : isBlob ? (body as Blob) : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, "network_error");
+  }
+  const text = await res.text();
+  let json: any = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON error page */ }
+  if (!res.ok) throw new ApiError(res.status, json?.error ?? `http_${res.status}`, json ?? undefined);
+  return json as T;
+}
+
+// ---- Types ----------------------------------------------------------------------------------------
+export type Session = { account_id: string; device_id: string; session_token: string; session_expires_at: string };
+export type AccountStatus = "active" | "pending" | "declined" | "suspended" | "closed";
+export type Account = {
+  account_id: string; type: "B" | "C"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null;
+  tier: string; status: AccountStatus; decline?: { reason: string | null; at: string };
+};
+export type Balance = { balance: number; earmarked: number; balance_pending: number; credit_limit: number; credit_spent: number; available_to_send: number; available_to_pay: number; restricted: boolean };
+export type BusinessDocument = { id: string; type: string; created_at: string };
+export type Orb = { id: string; uid: string; model: string; software: string };
+export type Terminal = { id: string; name: string; allow_refunds: boolean; created_at: string; updated_at: string; orb: Orb | null };
+export type OwnedOrb = Orb & { terminal_id: string | null };
+export type StaffMember = { id: string; staff_account_id: string; handle: string | null; name: string | null; role: "read" | "write"; created_at: string };
+export type Refund = {
+  id: string; status: "pending" | "completed" | "failed"; status_code: string | null; amount: number; payment_id: string | null; payment_amount: number;
+  attempt: string | null; reference: string | null; payer: { display_name: string } | null; items: unknown; requested_on_terminal_id: string | null;
+  approver_account_id: string | null; timestamp: string; completed_at: string | null;
+};
+export type Device = { id: string; wallet_id: string | null; platform: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; redeemed: boolean };
+export type HandleLookup = { account_id: string; handle: string; type: "B" | "C"; display_name: string; photo: string | null; wallet_id: string };
+
+export type TxKind = "all" | "payments" | "refunds" | "pending";
+export type TxRow = {
+  id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; via: "tap" | "pass" | "app" | null;
+  reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null; from: string | null; to: string | null;
+};
+export type TxPage = {
+  counts: Record<TxKind, number>; totals: { payments: { count: number; volume: number }; refunds: { count: number; volume: number } };
+  transactions: TxRow[]; next_cursor: string | null;
+};
+export type DayRange = { from?: string; to?: string };
+export type Profile = { legal_name: string; display_name: string; tax_id_last4: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
+export type ProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
+export type PayoutBank = { id: string; last4: string; status: string; created_at: string };
+export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
+export type Product = {
+  id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
+  stock: number | null; active: boolean; status: "available" | "sold_out"; total_sold: number; sold_today: number; created_at: string;
+};
+export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean };
+export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
+export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[] };
+
+// ---- Public calls (no session) ----------------------------------------------------------------------
+export const signIn = (email: string, password: string, base: string = API_URL) =>
+  send<Session>(base, null, "POST", "/v1/auth/login", { email, password, platform: "web" });
+export const signUp = (input: { name: string; email: string; password: string; phone?: string }, base: string = API_URL) =>
+  send<Session>(base, null, "POST", "/v1/auth/signup", { ...input, type: "B", platform: "web" });
+
+export type Api = ReturnType<typeof createApi>;
+
+/** Calls made as a signed-in business owner. The session token is held by the caller, never logged. */
+export function createApi(token: string, base: string = API_URL) {
+  const request = <T>(method: string, path: string, body?: unknown, headers?: Record<string, string>) => send<T>(base, token, method, path, body, headers);
+  const id = encodeURIComponent;
+  const qs = (o: Record<string, string | number | undefined>) => {
+    const p = Object.entries(o).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+    return p.length ? `?${p.join("&")}` : "";
+  };
+  return {
+    logout: () => request<null>("POST", "/v1/auth/logout"),
+    account: () => request<Account>("GET", "/v1/account"),
+    balance: () => request<Balance>("GET", "/v1/balance"),
+    setHandle: (handle: string) => request<{ handle: string }>("PUT", "/v1/account/handle", { handle }),
+    /** The logo: any PNG, JPEG or WebP; the API crops it to 256 x 256 JPEG. */
+    uploadPhoto: (file: Blob) => request<{ photo: string }>("PUT", "/v1/account/photo", file),
+    documents: async () => (await request<{ documents: BusinessDocument[] }>("GET", "/v1/account/documents")).documents,
+    uploadDocument: (file: Blob) => request<{ document: BusinessDocument; status: AccountStatus }>("POST", "/v1/account/documents", file),
+
+    terminals: async () => (await request<{ terminals: Terminal[] }>("GET", "/v1/terminals")).terminals,
+    createTerminal: (input: { name: string; allow_refunds: boolean }) =>
+      request<{ terminal: Terminal; session_token: string; session_expires_at: string }>("POST", "/v1/terminals", input),
+    updateTerminal: async (tid: string, patch: Partial<{ name: string; allow_refunds: boolean }>) => (await request<{ terminal: Terminal }>("PATCH", `/v1/terminals/${id(tid)}`, patch)).terminal,
+    /** Issues a new terminal session token (the old one stops working); shown once. */
+    terminalSession: (tid: string) => request<{ session_token: string; session_expires_at: string }>("POST", `/v1/terminals/${id(tid)}/session`),
+    revokeTerminal: (tid: string) => request<null>("POST", `/v1/terminals/${id(tid)}/revoke`),
+    pairOrb: async (tid: string, orb: { uid: string; model: string; software: string }) => (await request<{ orb: Orb }>("PUT", `/v1/terminals/${id(tid)}/orb`, orb)).orb,
+    unpairOrb: (tid: string) => request<null>("DELETE", `/v1/terminals/${id(tid)}/orb`),
+    orbs: async () => (await request<{ orbs: OwnedOrb[] }>("GET", "/v1/orbs")).orbs,
+    releaseOrb: (oid: string) => request<null>("POST", `/v1/orbs/${id(oid)}/release`),
+
+    staff: async () => (await request<{ staff: StaffMember[] }>("GET", "/v1/staff")).staff,
+    lookupHandle: (handle: string) => request<HandleLookup>("GET", `/v1/handles/${id(handle.replace(/^@/, ""))}`),
+    addStaff: async (staffAccountId: string, role: "read" | "write") => (await request<{ staff: StaffMember }>("POST", "/v1/staff", { staff_account_id: staffAccountId, role })).staff,
+    setStaffRole: async (sid: string, role: "read" | "write") => (await request<{ staff: StaffMember }>("PATCH", `/v1/staff/${id(sid)}`, { role })).staff,
+    removeStaff: (sid: string) => request<null>("DELETE", `/v1/staff/${id(sid)}`),
+
+    refunds: async (status: "pending" | "completed" | "failed" = "pending") => (await request<{ refunds: Refund[] }>("GET", `/v1/refunds${qs({ status, limit: 100 })}`)).refunds,
+    resolveRefund: (rid: string, action: "approve" | "reject") => request<unknown>("POST", `/v1/refunds/${id(rid)}/${action}`),
+
+    transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
+      request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
+    profile: async () => (await request<{ profile: Profile | null }>("GET", "/v1/business/profile")).profile,
+    saveProfile: async (input: ProfileInput) => (await request<{ profile: Profile }>("PUT", "/v1/business/profile", input)).profile,
+    bank: async () => (await request<{ bank: PayoutBank | null }>("GET", "/v1/business/bank")).bank,
+    saveBank: async (input: { routing_number: string; account_number: string }) => (await request<{ bank: PayoutBank }>("PUT", "/v1/business/bank", input)).bank,
+    removeBank: () => request<null>("DELETE", "/v1/business/bank"),
+    categories: async () => (await request<{ categories: Category[] }>("GET", "/v1/business/categories")).categories,
+    createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,
+    updateCategory: async (cid: string, patch: Partial<{ name: string; active: boolean }>) => (await request<{ category: Category }>("PATCH", `/v1/business/categories/${id(cid)}`, patch)).category,
+    deleteCategory: (cid: string) => request<null>("DELETE", `/v1/business/categories/${id(cid)}`),
+    products: async (filter: { category_id?: string; q?: string } = {}) => (await request<{ products: Product[] }>("GET", `/v1/business/products${qs(filter)}`)).products,
+    createProduct: async (input: Partial<ProductInput> & { name: string; price: number }) => (await request<{ product: Product }>("POST", "/v1/business/products", input)).product,
+    updateProduct: async (pid: string, patch: Partial<ProductInput>) => (await request<{ product: Product }>("PATCH", `/v1/business/products/${id(pid)}`, patch)).product,
+    deleteProduct: (pid: string) => request<null>("DELETE", `/v1/business/products/${id(pid)}`),
+    uploadProductPhoto: (pid: string, file: Blob) => request<{ photo: string }>("PUT", `/v1/business/products/${id(pid)}/photo`, file),
+    checkouts: async (status: Checkout["status"] = "open") => (await request<{ checkouts: Checkout[] }>("GET", `/v1/business/checkouts${qs({ status, limit: 100 })}`)).checkouts,
+    cancelCheckout: (cid: string) => request<{ checkout: Checkout }>("POST", `/v1/business/checkouts/${id(cid)}/cancel`),
+    devices: async () => (await request<{ devices: Device[] }>("GET", "/v1/devices")).devices,
+    revokeDevice: (did: string) => request<null>("POST", `/v1/devices/${id(did)}/revoke`),
+  };
+}

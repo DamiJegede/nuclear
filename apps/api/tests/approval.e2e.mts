@@ -15,7 +15,7 @@ const UPLOADS = {
 };
 const sent: any[] = [];
 const EMAIL = { send: async (m: any) => { sent.push(m); } };
-const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"), SANDBOX_FUNDING: "true", UPLOADS, EMAIL, EMAIL_FROM: "Nuclear <no-reply@example.com>" };
+const env: any = { MERCHANT_ORIGINS: "http://localhost:5174,https://portal.example", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"), SANDBOX_FUNDING: "true", UPLOADS, EMAIL, EMAIL_FROM: "Nuclear <no-reply@example.com>" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
@@ -119,6 +119,16 @@ eq("nobody to email is a 422", (await mail({ merchant_ids: [ada.account_id], sub
 const none = await call("POST", "/v1/admin/merchants/email", { token: OP, body: { merchant_ids: [act.account_id], subject: "Hi {{name}}", body: "Body for {{name}}" }, e: { ...env, EMAIL: undefined } });
 eq("without email configured nothing is sent, the answer says so and the log keeps the text", [none.json.sent, none.json.not_configured, (await op("GET", `/v1/admin/merchants/${act.account_id}/activity`)).json.logs.find((l: any) => l.action === "merchant.emailed" && l.details.email === "not_configured")?.details.email_text], [0, 1, "Body for Active Cafe"]);
 eq("every email is logged per merchant", (await op("GET", `/v1/admin/merchants/${act.account_id}/activity`)).json.logs.filter((l: any) => l.action === "merchant.emailed").length >= 3, true);
+
+// ---- the merchant portal (browser): CORS on the business API, and a declined business reads its reason
+const pre = (origin: string) => app.fetch(new Request("http://x/v1/account", { method: "OPTIONS", headers: { origin, "access-control-request-method": "GET", "access-control-request-headers": "authorization" } }), env, ctx);
+const okPre = await pre("http://localhost:5174"), badPre = await pre("https://evil.example");
+eq("the business API allows the merchant portal's origin (and only listed ones) in the browser", [okPre.headers.get("access-control-allow-origin"), okPre.headers.get("access-control-allow-headers")?.includes("idempotency-key"), badPre.headers.get("access-control-allow-origin")], ["http://localhost:5174", true, null]);
+const rj = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Reason Rest", email: "reason@rest.test", password: "correct horse battery" } })).json;
+await op("POST", `/v1/admin/merchants/${rj.account_id}/decline`, { reason: "Please send a clearer scan." });
+const acc = (await call("GET", "/v1/account", { token: rj.session_token })).json;
+eq("a declined business sees its status, email and the reason", [acc.status, acc.email, acc.decline.reason], ["declined", "reason@rest.test", "Please send a clearer scan."]);
+eq("an approved business has no decline block", (await call("GET", "/v1/account", { token: B })).json.decline, undefined);
 
 // ---- the schema
 eq("business_doc is gone and uploads has the five columns", [(await q("select count(*)::int n from information_schema.columns where table_name='businesses' and column_name='business_doc'"))[0].n, (await q("select column_name from information_schema.columns where table_name='uploads' order by ordinal_position")).map((r: any) => r.column_name)], [0, ["id", "account_id", "type", "path", "created_at"]]);

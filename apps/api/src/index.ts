@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { AppContext, Env } from "./env";
 import { connect } from "./db";
 import { dailyJobs } from "./lib/cron";
@@ -6,6 +7,7 @@ import { setPublicBase } from "./lib/images";
 import { programDay } from "./lib/dailyReset";
 import { withDb } from "./session";
 import { account } from "./routes/account";
+import { business } from "./routes/business";
 import { photos } from "./routes/photos";
 import { admin } from "./routes/admin";
 import { activity } from "./routes/activity";
@@ -41,6 +43,17 @@ app.get("/health/db", async (c) => {
 });
 
 const v1 = new Hono<AppContext>();
+// The merchant portal is a browser app on its own origin: only origins in MERCHANT_ORIGINS (comma-separated) get CORS headers
+// on the customer/business API (the admin API has its own list). Runs first so preflights, which carry no token, succeed.
+v1.use("*", async (c, next) => {
+  if (c.req.path.startsWith("/v1/admin")) return next();
+  return cors({
+    origin: (origin, ctx) => ((ctx.env.MERCHANT_ORIGINS ?? "").split(",").map((o: string) => o.trim()).filter(Boolean).includes(origin) ? origin : null),
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["authorization", "content-type", "idempotency-key"],
+    maxAge: 600,
+  })(c, next);
+});
 v1.use("*", withDb);
 // Anything that reads or changes spent_today / sold_today first makes sure the day's reset has happened
 // (the cron usually did it; this is the backstop if a run was missed).
@@ -50,6 +63,7 @@ v1.route("/auth", auth);
 v1.route("/devices", devices);
 v1.route("/handles", handles);
 v1.route("/photos", photos);
+v1.route("/business", business);
 v1.route("/wallets", wallets);
 v1.route("/payments", payments);
 v1.route("/terminals", terminals);

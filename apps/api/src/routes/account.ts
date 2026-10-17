@@ -17,11 +17,19 @@ account.use("*", requireSession);
 
 // Primary-account profile. Handle is NULL until the owner sets it.
 account.get("/account", requireOwner, async (c) => {
-  const [a] = await c.get("sql")<
-    { id: string; type: string; handle: string | null; name: string; photo: string | null; tier: string; status: string }[]
-  >`select id, type, handle, name, photo, tier, status from accounts where id = ${c.get("auth").accountId}`;
+  const sql = c.get("sql");
+  const [a] = await sql<
+    { id: string; type: string; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; tier: string; status: string }[]
+  >`select id, type, handle, name, email, phone, photo, tier, status from accounts where id = ${c.get("auth").accountId}`;
   if (!a) return c.json({ error: "not_found" }, 404);
-  return c.json({ account_id: a.id, type: a.type, handle: a.handle, name: a.name, photo: imageUrl(a.photo), tier: a.tier, status: a.status });
+  // A declined business is told why (the reason an admin wrote when declining).
+  const [d] = a.status === "declined"
+    ? await sql<{ reason: string | null; at: Date }[]>`select details->>'reason' as reason, created_at as at from logs where action = 'merchant.declined' and target_id = ${a.id} order by created_at desc, id desc limit 1`
+    : [];
+  return c.json({
+    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, phone: a.phone, photo: imageUrl(a.photo), tier: a.tier, status: a.status,
+    ...(d ? { decline: { reason: d.reason, at: d.at } } : {}),
+  });
 });
 
 // The account's picture (a person's, or a business's logo), uploaded after the account exists: any PNG, JPEG or WebP, cropped to
