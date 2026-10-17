@@ -81,6 +81,21 @@ export async function getItems(q: Q, checkoutId: string): Promise<ItemRow[]> {
      order by created_at, id`;
 }
 
+/** A page of a business's checkouts with their items: two queries in all, however many rows (never one per checkout). */
+export async function listCheckouts(q: Q, accountId: string, status: string, limit: number) {
+  const rows = await q<CheckoutRow[]>`
+    select ${q.unsafe(CO_COLS)} from checkouts where account_id = ${accountId} and status = ${status}
+     order by created_at desc, id desc limit ${limit}`;
+  if (rows.length === 0) return [];
+  const items = await q<(ItemRow & { checkout_id: string })[]>`
+    select id, checkout_id, product_id, name, unit_price, discount, quantity, refunded_quantity, refund_pending_quantity
+      from checkout_items where checkout_id in ${q(rows.map((r) => r.id))}
+     order by created_at, id`;
+  const by = new Map<string, ItemRow[]>();
+  for (const it of items) (by.get(it.checkout_id) ?? by.set(it.checkout_id, []).get(it.checkout_id)!).push(it);
+  return rows.map((r) => checkoutJson(r, by.get(r.id) ?? []));
+}
+
 export const itemJson = (it: ItemRow) => ({
   id: it.id,
   product_id: it.product_id,

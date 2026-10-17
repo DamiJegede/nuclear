@@ -95,4 +95,13 @@ const tx = (await get("/transactions")).json;
 eq("transactions: the payment with the customer's name and no account ids; counts and totals", [tx.transactions.length, tx.transactions[0].type, tx.transactions[0].amount, tx.transactions[0].customer, tx.transactions[0].from_party, tx.counts.payments, tx.totals.payments.volume], [1, "pay", 1000, "Ada", null, 1, 1000]);
 eq("filters, periods and bad input behave as on the admin page", [(await get("/transactions?kind=refunds")).json.transactions.length, (await get("/transactions?from=2020-01-01&to=2020-01-31")).json.counts.all, (await get("/transactions?from=bad")).status, (await get("/transactions?kind=nope")).status, (await get("/transactions?cursor=nope")).status], [0, 0, 400, 400, 400]);
 eq("another business sees none of it", [(await call("GET", "/v1/business/transactions", { token: O })).json.counts.all, (await call("GET", "/v1/business/checkouts?status=paid", { token: O })).json.checkouts.length], [0, 0]);
+// ---- overview (one request) and the list queries (no per-row queries)
+const ov = (await get("/overview")).json;
+eq("the overview returns every first-page number in one answer", [ov.terminals, ov.pending_refunds, ov.staff, ov.open_orders, ov.categories, ov.products, ov.today.transactions, ov.yesterday.net, typeof ov.balance, ov.city], [{ count: 1, paired: 0 }, { count: 0, amount: 0 }, { count: 0, writers: 0 }, 0, 1, 1, 1, 0, "number", "Albany"]);
+eq("another business's overview is its own (empty)", [(await call("GET", "/v1/business/overview", { token: O })).json.products, (await call("GET", "/v1/business/overview", { token: O })).json.today.transactions], [0, 0]);
+// 30 orders with items: the list reads them with two queries in all, not 1 + 2 per order
+await q(`insert into checkouts (account_id, terminal_id, total, status) select $1, $2, 100, 'open' from generate_series(1, 30)`, [biz.account_id, term.terminal.id]);
+await q(`insert into checkout_items (checkout_id, name, unit_price, quantity) select id, 'Thing', 100, 1 from checkouts where account_id = $1 and total = 100`, [biz.account_id]);
+const listed = (await get("/checkouts?status=open&limit=50")).json.checkouts;
+eq("a page of orders carries its items (every one has its line)", [listed.length, listed.filter((c: any) => c.items.length === 1).length], [30, 30]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

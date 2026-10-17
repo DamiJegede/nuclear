@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { amount } from "../lib/money";
 import { quoteCart, type CartLine } from "../lib/catalog";
-import { checkoutJson, getCheckout, getItems, insertCheckout } from "../lib/checkout";
+import { checkoutJson, getCheckout, getItems, insertCheckout, listCheckouts } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
 
 const uuid = z.string().uuid();
@@ -63,17 +63,7 @@ terminalCheckouts.get("/", async (c) => {
   const status = z.enum(["open", "paid", "canceled", "expired"]).default("open").safeParse(c.req.query("status"));
   const limit = z.coerce.number().int().min(1).max(100).default(50).safeParse(c.req.query("limit"));
   if (!status.success || !limit.success) return c.json({ error: "invalid_request" }, 400);
-  const sql = c.get("sql");
-  const rows = await sql<{ id: string }[]>`
-    select id from checkouts
-     where account_id = ${c.get("terminal").accountId} and status = ${status.data}
-     order by created_at desc, id desc limit ${limit.data}`;
-  const out = [];
-  for (const r of rows) {
-    const co = await getCheckout(sql, c.get("terminal").accountId, r.id);
-    out.push(checkoutJson(co!, await getItems(sql, r.id)));
-  }
-  return c.json({ checkouts: out });
+  return c.json({ checkouts: await listCheckouts(c.get("sql"), c.get("terminal").accountId, status.data, limit.data) });
 });
 
 terminalCheckouts.get("/:id", async (c) => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
 import { usePageTitle } from "./title";
-import { Catalogue } from "./views/Catalogue";
+import { Catalog } from "./views/Catalog";
 import { Login } from "./views/Login";
 import { Orders } from "./views/Orders";
 import { Transactions } from "./views/Transactions";
@@ -18,13 +18,13 @@ const KEY = "nuclear.merchant.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "transactions" | "orders" | "catalogue" | "terminals" | "orbs" | "staff" | "refunds" | "profile";
+export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "refunds" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
   { page: "transactions", label: "Transactions", path: "/transactions" },
   { page: "orders", label: "Orders", path: "/orders" },
-  { page: "catalogue", label: "Catalogue", path: "/catalogue" },
+  { page: "catalog", label: "Catalog", path: "/catalog" },
   { page: "terminals", label: "Terminals", path: "/terminals" },
   { page: "orbs", label: "Orbs", path: "/orbs" },
   { page: "staff", label: "Staff", path: "/staff" },
@@ -108,10 +108,10 @@ export function App({
         </div>
       </header>
       <main>
-        {page === "overview" && <Overview api={api} account={account} onError={onError} go={(p) => setPage(p as Page)} />}
+        {page === "overview" && <Overview api={api} account={account} onChanged={() => void loadAccount()} onError={onError} go={(p) => setPage(p as Page)} />}
         {page === "transactions" && <Transactions api={api} onError={onError} />}
         {page === "orders" && <Orders api={api} onError={onError} />}
-        {page === "catalogue" && <Catalogue api={api} onError={onError} />}
+        {page === "catalog" && <Catalog api={api} onError={onError} />}
         {page === "terminals" && <Terminals api={api} onError={onError} />}
         {page === "orbs" && <Orbs api={api} onError={onError} />}
         {page === "staff" && <Staff api={api} onError={onError} />}

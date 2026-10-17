@@ -7,9 +7,9 @@ import { Modal } from "./Modal";
 
 type Load = { categories: Category[]; products: Product[] };
 
-/** The product catalogue: categories on the left, products on the right (add, edit, deactivate, delete, picture). */
-export function Catalogue({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
-  usePageTitle("Catalogue");
+/** The product catalog: categories on the left, products on the right (add, edit, deactivate, delete, picture). */
+export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+  usePageTitle("Catalog");
   const [data, setData] = useState<Load | null>(null);
   const [failed, setFailed] = useState(false);
   const [filter, setFilter] = useState<string>("");          // category id; "" = all
@@ -45,15 +45,15 @@ export function Catalogue({ api, onError }: { api: Api; onError: (e: unknown) =>
     try { await api.updateProduct(p.id, { active: !p.active }); await load(); } catch (e) { onError(e); }
   }
 
-  if (!data) return <section><h1>Catalogue</h1>{failed ? <p className="error" role="alert">Couldn't load the catalogue. <button className="link" onClick={() => void load()}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
+  if (!data) return <section><h1>Catalog</h1>{failed ? <p className="error" role="alert">Couldn't load the catalog. <button className="link" onClick={() => void load()}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
   const term = q.trim().toLowerCase();
   const rows = data.products.filter((p) => (filter === "" || p.category_id === filter) && (!term || p.name.toLowerCase().includes(term)));
   const catName = (id: string | null) => data.categories.find((c) => c.id === id)?.name ?? "—";
 
   return (
     <section>
-      <div className="head"><h1>Catalogue</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button></div></div>
-      <div className="catalogue">
+      <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button></div></div>
+      <div className="catalog">
         <aside className="card categories" aria-label="Categories">
           <h2>Categories</h2>
           <ul>

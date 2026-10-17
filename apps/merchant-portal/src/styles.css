@@ -393,11 +393,44 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 .card .doc-list { margin: 8px 0 12px; }
 .order-items { list-style: none; margin: 4px 0 14px; padding: 0; display: grid; gap: 4px; }
 .order-items li { display: flex; justify-content: space-between; gap: 16px; max-width: 520px; }
-.catalogue { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 800px) { .catalogue { grid-template-columns: 1fr; } }
+.catalog { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 800px) { .catalog { grid-template-columns: 1fr; } }
 .categories ul { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 2px; }
 .cat-row { display: flex; align-items: center; gap: 4px; }
 .cat { flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; background: transparent; color: var(--text); text-align: left; padding: 7px 10px; font-weight: 500; }
 .cat.active { background: var(--bg); font-weight: 700; }
 .cat:hover { background: var(--pop-bg); color: var(--pop-text); }
 .cat-row .small { padding: 4px 8px; font-size: 12px; }
+
+/* Overview: three large cards, then four small ones. Every card links to its page through a stretched title link. */
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 12px; }
+@media (max-width: 900px) { .grid.three { grid-template-columns: 1fr; } }
+.linkcard { position: relative; transition: border-color 0.15s, background 0.15s; }
+/* Hover or keyboard focus inverts the whole card (the opposite of the page), like the admin portal's selected look. */
+.linkcard:hover, .linkcard:focus-within { background: var(--pop-bg); color: var(--pop-text); border-color: var(--pop-bg); }
+.linkcard:hover h2, .linkcard:focus-within h2, .linkcard:hover .sub, .linkcard:focus-within .sub, .linkcard:hover .muted, .linkcard:focus-within .muted, .linkcard:hover .tile-label, .linkcard:focus-within .tile-label { color: var(--pop-muted); }
+.linkcard:hover .tile-rule, .linkcard:focus-within .tile-rule { border-top-color: var(--pop-muted); }
+.linkcard:hover .avatar, .linkcard:focus-within .avatar { background: var(--pop-soft); border-color: var(--pop-muted); }
+.linkcard:hover .avatar-initials, .linkcard:focus-within .avatar-initials { color: var(--pop-text); }
+.linkcard :focus-visible { outline-color: var(--pop-text); }
+.linkcard h2 { margin: 0 0 4px; }
+.linkcard h2 a, .linkcard .tile-name { color: inherit; text-decoration: none; }
+.stretched::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
+.big.xl { font-size: 48px; line-height: 1.1; margin: 6px 0 4px; }
+.big.md { font-size: 22px; margin: 2px 0 0; }
+.tile-rule { border: 0; border-top: 1px solid var(--line); margin: 14px 0 10px; }
+.tile-label { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.profile-tile { display: flex; align-items: center; gap: 18px; min-height: 190px; }
+.profile-tile .tile-text { min-width: 0; }
+.tile-name { font-size: 24px; font-weight: 700; display: block; overflow-wrap: anywhere; line-height: 1.2; }
+.tile-line { margin: 4px 0 0; font-size: 15px; }
+.logo-btn { position: relative; z-index: 1; padding: 0; background: transparent; border-radius: 50%; flex: none; display: block; }
+.logo-btn .avatar { width: 104px; height: 104px; font-size: 38px; }
+.logo-hint { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.logo-btn:hover .logo-hint, .logo-btn:focus-visible .logo-hint { opacity: 1; }
+.crop { display: grid; justify-items: center; gap: 12px; }
+.crop-frame { width: 256px; height: 256px; border-radius: 50%; overflow: hidden; border: 1px solid var(--line); background: var(--bg); touch-action: none; }
+.crop-canvas { width: 256px; height: 256px; display: block; cursor: grab; }
+.crop-canvas:active { cursor: grabbing; }
+.crop-zoom { display: grid; gap: 4px; width: 256px; }
+.crop-zoom input { padding: 0; }

@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
-import { checkoutJson, getCheckout, getItems } from "../lib/checkout";
+import { checkoutJson, getCheckout, getItems, listCheckouts } from "../lib/checkout";
 import { imageUrl } from "../lib/images";
 import { MERCHANT_TX_KINDS, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { saveProfilePhoto } from "../lib/profilePhoto";
+import { PROGRAM_TZ } from "../lib/ledger";
+import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 
 /**
@@ -22,6 +24,42 @@ business.use("*", requireSession, requireOwner, async (c, next) => {
 
 const uuid = z.string().uuid();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+// ---- Overview: every number the portal's first page shows, in one request (they were ten, each repeating sign-in checks) ----
+business.get("/overview", async (c) => {
+  const sql = c.get("sql");
+  const id = c.get("auth").accountId;
+  const [bal, term, pend, staff, orders, prof, cats, prods, tx] = await Promise.all([
+    sql<{ balance: bigint; balance_pending: bigint }[]>`select balance, balance_pending from balances where account_id = ${id}`,
+    sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where exists (select 1 from orbs o where o.terminal_id = t.id)))::int as paired from terminals t where t.account_id = ${id}`,
+    sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from transactions where type = 'refund' and status = 'pending' and from_account_id = ${id}`,
+    sql<{ n: number; writers: number }[]>`select count(*)::int as n, (count(*) filter (where role = 'write'))::int as writers from staff where account_id = ${id}`,
+    sql<{ n: number }[]>`select count(*)::int as n from checkouts where account_id = ${id} and status = 'open'`,
+    sql<{ city: string | null; state: string | null }[]>`select city, state from businesses where account_id = ${id}`,
+    sql<{ n: number }[]>`select count(*)::int as n from categories where account_id = ${id}`,
+    sql<{ n: number }[]>`select count(*)::int as n from products where account_id = ${id}`,
+    // Today (since 00:00 New York) and yesterday, from the account's payments and refunds, read once.
+    sql<{ today_n: number; y_pay: bigint; y_ref: bigint }[]>`
+      with d as (select ((now() at time zone ${PROGRAM_TZ})::date)::timestamp at time zone ${PROGRAM_TZ} as t0,
+                        (((now() at time zone ${PROGRAM_TZ})::date - 1)::timestamp at time zone ${PROGRAM_TZ}) as y0)
+      select (count(*) filter (where x."timestamp" >= d.t0))::int as today_n,
+             coalesce(sum(x.amount) filter (where x.type = 'pay' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_pay,
+             coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_ref
+        from transactions x, d
+       where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= d.y0`,
+  ]);
+  return c.json({
+    balance: Number(bal[0]?.balance ?? 0n), balance_pending: Number(bal[0]?.balance_pending ?? 0n),
+    terminals: { count: term[0]!.n, paired: term[0]!.paired },
+    pending_refunds: { count: pend[0]!.n, amount: Number(pend[0]!.v) },
+    staff: { count: staff[0]!.n, writers: staff[0]!.writers },
+    open_orders: orders[0]!.n,
+    city: prof[0]?.city ?? null, state: prof[0]?.state ?? null,
+    categories: cats[0]!.n, products: prods[0]!.n,
+    today: { transactions: tx[0]!.today_n },
+    yesterday: { net: Number(tx[0]!.y_pay) - Number(tx[0]!.y_ref) },
+  });
+});
 
 // ---- Transactions: this business's payments and refunds -----------------------------------------
 const txQuery = z.object({
@@ -279,12 +317,7 @@ business.put("/products/:id/photo", async (c) => {
 business.get("/checkouts", async (c) => {
   const q = z.object({ status: z.enum(["open", "paid", "canceled", "expired"]).default("open"), limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
-  const sql = c.get("sql");
-  const { accountId } = c.get("auth");
-  const rows = await sql<{ id: string }[]>`select id from checkouts where account_id = ${accountId} and status = ${q.data.status} order by created_at desc, id desc limit ${q.data.limit}`;
-  const out = [];
-  for (const r of rows) out.push(checkoutJson((await getCheckout(sql, accountId, r.id))!, await getItems(sql, r.id)));
-  return c.json({ checkouts: out });
+  return c.json({ checkouts: await listCheckouts(c.get("sql"), c.get("auth").accountId, q.data.status, q.data.limit) });
 });
 
 // Cancel an order that is still open (a paid one cannot be cancelled: refund it instead).

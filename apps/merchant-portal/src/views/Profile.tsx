@@ -4,6 +4,7 @@ import { digitsOnly } from "../inputs";
 import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
 import { Avatar } from "./Avatar";
+import { LogoCrop } from "./LogoCrop";
 import { Modal } from "./Modal";
 
 const HANDLE = /^[a-z0-9]{4,12}$/;
@@ -34,15 +35,13 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
   const [handle, setHandle] = useState(account.handle ?? "");
   const [handleMsg, setHandleMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  async function photo(file: File | undefined) {
+  const [crop, setCrop] = useState<File | null>(null);
+  function photo(file: File | undefined) {
     if (!file) return;
     setError(null);
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return setError("Choose a PNG, JPEG or WebP image.");
     if (file.size > 8 * 1024 * 1024) return setError("The image is over 8 MB.");
-    setBusy(true);
-    try { await api.uploadPhoto(file); onChanged(); }
-    catch (e) { onError(e); setError("Couldn't upload that image. Try again."); }
-    finally { setBusy(false); }
+    setCrop(file);
   }
 
   async function saveHandle() {
@@ -65,7 +64,8 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
           <p className="big small">{account.name}</p>
           <p className="muted">{account.email ?? "—"}{account.phone ? ` · ${account.phone}` : ""}</p>
           <button type="button" className="ghost" disabled={busy} onClick={() => input.current?.click()}>{busy ? "Uploading…" : account.photo ? "Replace Logo" : "Upload Logo"}</button>
-          <input ref={input} type="file" className="sr-only" aria-label="Logo" accept="image/png,image/jpeg,image/webp" onChange={(e) => { void photo(e.target.files?.[0]); e.target.value = ""; }} />
+          <input ref={input} type="file" className="sr-only" aria-label="Logo" accept="image/png,image/jpeg,image/webp" onChange={(e) => { photo(e.target.files?.[0]); e.target.value = ""; }} />
+          {crop && <LogoCrop file={crop} onClose={() => setCrop(null)} onSave={async (jpeg) => { try { await api.uploadPhoto(jpeg); setCrop(null); onChanged(); } catch (e) { onError(e); throw e; } }} />}
           {error && <p className="error" role="alert">{error}</p>}
         </div>
       </div>
