@@ -368,3 +368,14 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 .choice.template { height: auto; min-height: 52px; padding: 10px 8px; font-size: 14px; text-align: center; }
 .modal:has(.email-compose) { width: min(640px, 100%); }
 @media (max-width: 520px) { .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Shop: product type cards and the download file picker */
+.choice.product-kind { grid-auto-flow: row; height: auto; min-height: 84px; padding: 14px 12px; gap: 4px; text-align: center; align-content: center; }
+.choice.product-kind .kind-text { font-weight: 400; font-size: 13px; opacity: 0.8; }
+.choice.product-kind:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+.file-pick { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); min-height: 42px; }
+.file-pick .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-file { min-width: 0; }
+.file-pick { min-height: 0; height: 42px; padding: 0 6px 0 12px; overflow: hidden; }
+.file-pick .file-name { flex: 1 1 0; min-width: 0; }
+.file-pick button { flex: none; padding: 4px 12px; height: 30px; }

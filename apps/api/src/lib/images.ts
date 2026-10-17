@@ -20,6 +20,8 @@ export const newImageKey = (folder: ImageFolder, id: string, ext: "png" | "jpg")
 let publicBase = "";
 export const setPublicBase = (url: string) => { publicBase = url.replace(/\/+$/, ""); };
 /** The full URL of a stored key; null for no photo (or a value that is not a key). */
+/** A full URL for an API path (same base as image URLs). */
+export const apiUrl = (path: string) => `${publicBase}${path}`;
 export const imageUrl = (key: string | null | undefined): string | null => (isImageKey(key) ? `${publicBase}/v1/photos/${key}` : null);
 
 export async function deleteImage(env: Env, key: string): Promise<void> {

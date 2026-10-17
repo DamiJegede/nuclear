@@ -118,11 +118,11 @@ export async function userFunding(sql: Sql, id: string) {
 export async function userOrders(sql: Sql, id: string) {
   const rows = await sql<{
     id: string; type: string; model_name: string; model_type: string | null; quantity: number; unit_price: bigint; total: bigint; status: string;
-    shipping: { name?: string; city?: string; region?: string; country?: string }; created_at: Date;
+    shipping: { name?: string; city?: string; region?: string; country?: string } | null; delivery: string; created_at: Date;
   }[]>`
-    select id, type, name as model_name, model_type, quantity, unit_price, total, status, shipping, created_at
+    select id, type, name as model_name, model_type, quantity, unit_price, total, status, shipping, delivery, created_at
       from orders where account_id = ${id} order by created_at desc, id desc limit 100`;
-  return rows.map((o) => ({ ...o, unit_price: n(o.unit_price), total: n(o.total) }));
+  return rows.map((o) => ({ ...o, shipping: o.shipping ?? {}, unit_price: n(o.unit_price), total: n(o.total) }));
 }
 
 export type UserTxKind = "all" | "sends" | "received" | "payments" | "loads" | "refunds";

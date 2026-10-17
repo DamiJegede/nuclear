@@ -16,7 +16,16 @@ const IMAGES = {
   put: async (k: string, v: Uint8Array, o?: any) => { store.set(k, { bytes: new Uint8Array(v), httpMetadata: o?.httpMetadata }); },
   get: async (k: string) => { const e = store.get(k); return e ? { httpMetadata: e.httpMetadata, arrayBuffer: async () => e.bytes.buffer.slice(e.bytes.byteOffset, e.bytes.byteOffset + e.bytes.byteLength) } : null; },
 };
-const env: any = { IMAGES, HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
+const files = new Map<string, { bytes: Uint8Array; mime?: string }>();
+const UPLOADS = {
+  put: async (k: string, v: Uint8Array, o?: any) => { files.set(k, { bytes: new Uint8Array(v), mime: o?.httpMetadata?.contentType }); },
+  delete: async (k: string) => { files.delete(k); },
+  get: async (k: string) => { const f = files.get(k); return f ? { httpMetadata: { contentType: f.mime }, arrayBuffer: async () => f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.byteLength) } : null; },
+};
+// A fake Cloudflare Images binding for the non-tag pictures: returns a small JPEG.
+const JPEG_OUT = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9]);
+const IMG = { input: (_s: ReadableStream) => { const ch: any = { transform: () => ch, output: async () => ({ response: () => new Response(JPEG_OUT) }) }; return ch; } };
+const env: any = { IMAGES, IMG, UPLOADS, HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
@@ -73,7 +82,7 @@ eq("bad bodies are refused (quantity, shipping, country)", [
   (await order(A, "b1", { model_id: band.id, quantity: 0, shipping: SHIP })).status,
   (await order(A, "b2", { model_id: band.id, quantity: 21, shipping: SHIP })).status,
   (await order(A, "b3", { model_id: band.id, quantity: 1 })).status,
-  (await order(A, "b4", { model_id: band.id, quantity: 1, shipping: { ...SHIP, country: "GBR" } })).status], [400, 400, 400, 400]);
+  (await order(A, "b4", { model_id: band.id, quantity: 1, shipping: { ...SHIP, country: "GBR" } })).status], [400, 400, 422, 400]);
 const o1 = await order(A, "buy-1", { model_id: band.id, quantity: 2, shipping: SHIP });
 eq("a purchase creates a paid order with a price snapshot, total and normalised shipping", [o1.status, o1.json.order.status, o1.json.order.quantity, o1.json.order.unit_price, o1.json.order.total, o1.json.order.model.name, o1.json.order.shipping.country], [201, "paid", 2, 2999, 5998, "NEO Band", "GB"]);
 eq("the buyer's balance dropped and the model's sold count rose", [(await call("GET", "/v1/balance", { token: A })).json.balance, (await q("select sold from tag_models where id=$1", [band.id]))[0].sold], [10000 - 5998, 2]);
@@ -126,7 +135,7 @@ const draft = (await mkItem({ name: "Draft Hat", price: 1500 })).json.item;
 eq("a shop item is created pending by default; bad bodies are refused", [draft.status, (await mkItem({ name: "", price: 1 })).status, (await mkItem({ name: "x", price: -1 })).status], ["pending", 400, 400]);
 eq("public items list shows only available items with stock", [(await call("GET", "/v1/shop/items")).json.items.map((i: any) => i.name), (await call("GET", `/v1/shop/items/${draft.id}`)).status], [["Nuclear Tee"], 404]);
 await op("PUT", `/v1/admin/shop-items/${tee.id}/photo`, {});
-eq("an item photo goes to R2 and is served publicly", await (async () => { const r = await raw("PUT", `/v1/admin/shop-items/${tee.id}/photo`, { token: OP, type: "image/png", bytes: png }); const g = (await op("GET", `/v1/admin/shop-items/${tee.id}`)).json.item; const f = await raw("GET", new URL(g.photo).pathname); return [r.status, /^http:\/\/x\/v1\/photos\/shop\/[0-9a-f-]{36}-\d+\.png$/.test(g.photo), f.status, [...store.keys()].some((k) => k.startsWith(`shop/${tee.id}-`))]; })(), [204, true, 200, true]);
+eq("an item picture may be any image (not only PNG): it is compressed to a JPEG in R2 and served publicly", await (async () => { const r = await raw("PUT", `/v1/admin/shop-items/${tee.id}/photo`, { token: OP, type: "image/png", bytes: png }); const g = (await op("GET", `/v1/admin/shop-items/${tee.id}`)).json.item; const f = await raw("GET", new URL(g.photo).pathname); return [r.status, /^http:\/\/x\/v1\/photos\/shop\/[0-9a-f-]{36}-\d+\.jpg$/.test(g.photo), f.status, [...store.keys()].some((k) => k.startsWith(`shop/${tee.id}-`))]; })(), [204, true, 200, true]);
 const t1 = await order(A, "tee-1", { item_id: tee.id, quantity: 2, shipping: SHIP });
 eq("buying merch creates a shop order with a snapshot; stock and sold move", [t1.status, t1.json.order.type, t1.json.order.item.name, t1.json.order.total, (await q("select stock, sold from shop where id=$1", [tee.id]))[0]], [201, "shop", "Nuclear Tee", 5000, { stock: 1, sold: 2 }]);
 eq("tag orders are type tag, shop orders type shop", (await q("select type, count(*)::int n from orders group by type order by type")), [{ type: "shop", n: 1 }, { type: "tag", n: 3 }]);
@@ -142,5 +151,39 @@ eq("admin actions and customer events are logged", ["tag_model.created", "tag_mo
 eq("log rows are append-only", await (async () => { try { await q("update logs set action='x'"); return "updated"; } catch { return "refused"; } })(), "refused");
 eq("a log needs the audit page; filters work", [(await call("GET", "/v1/admin/logs")).status, (await op("GET", "/v1/admin/logs?who=customer")).json.logs.every((l: any) => l.actor_type === "customer"), (await op("GET", "/v1/admin/logs?action=shop_item.")).json.logs.length], [401, true, 4]);
 eq("a person's activity lists their own events", (await op("GET", `/v1/admin/users/${ada.account_id}/activity`)).json.logs.some((l: any) => l.action === "customer.signed_up"), true);
+
+// ---- digital products: a file the buyer downloads after paying; no shipping, no stock
+const dig = (await mkItem({ name: "Nuclear Handbook", price: 1200, kind: "digital" })).json.item;
+eq("a digital item is created pending, untracked, without a file; physical is the default kind", [dig.kind, dig.status, dig.stock, dig.has_file, dig.file_ext, tee.kind, "file" in dig], ["digital", "pending", null, false, null, "physical", false]);
+eq("a digital item cannot be published without its file, nor created as available", [(await op("PATCH", `/v1/admin/shop-items/${dig.id}`, { status: "available" })).json.error, (await mkItem({ name: "X", price: 100, kind: "digital", status: "available" })).json.error], ["file_required", "file_required"]);
+const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 1, 2, 3]);
+eq("the file upload takes only listed types, non-empty, up to 25 MB, for digital items", [
+  (await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { token: OP, type: "application/x-msdownload", bytes: PDF })).status,
+  (await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { token: OP, type: "application/pdf", bytes: new Uint8Array(0) })).status,
+  (await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { token: OP, type: "application/pdf", bytes: new Uint8Array(25 * 1024 * 1024 + 1) })).status,
+  (await call("PUT", `/v1/admin/shop-items/${tee.id}/file`, { token: OP, type: "application/pdf", bytes: PDF })).status,
+  (await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { type: "application/pdf", bytes: PDF })).status], [415, 400, 413, 409, 401]);
+const upf = await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { token: OP, type: "application/pdf", bytes: PDF });
+const dkey = (await q("select file from shop where id=$1", [dig.id]))[0].file;
+eq("the file goes to the private bucket under downloads/<item>-<ms>.pdf; the admin JSON shows only that it exists", [upf.status, /^downloads\/[0-9a-f-]{36}-\d+\.pdf$/.test(dkey), files.has(dkey), (await op("GET", `/v1/admin/shop-items/${dig.id}`)).json.item.has_file, (await op("GET", `/v1/admin/shop-items/${dig.id}`)).json.item.file_ext, "file" in (await op("GET", `/v1/admin/shop-items/${dig.id}`)).json.item], [204, true, true, true, "pdf", false]);
+await new Promise((r) => setTimeout(r, 5));
+await call("PUT", `/v1/admin/shop-items/${dig.id}/file`, { token: OP, type: "application/zip", bytes: new Uint8Array([0x50, 0x4b, 3, 4]) });
+eq("a new file replaces the old one and deletes it", [files.has(dkey), (await q("select file from shop where id=$1", [dig.id]))[0].file !== dkey], [false, true]);
+eq("now it can be published; the public list says digital, no shipping, one per order", await (async () => { await op("PATCH", `/v1/admin/shop-items/${dig.id}`, { status: "available" }); const it = (await call("GET", `/v1/shop/items/${dig.id}`)).json.item; return [it.kind, it.requires_shipping, it.max_per_order, it.remaining]; })(), ["digital", false, 1, null]);
+await call("POST", "/v1/sandbox/fundings", { token: A, key: "fdig", body: { amount: 20000 } });
+const d1 = await order(A, "dig-1", { item_id: dig.id, quantity: 1 });
+eq("buying a digital item needs no shipping address; the order is a download order with a full download URL", [d1.status, d1.json.order.delivery, d1.json.order.shipping, d1.json.order.download_url === `http://x/v1/shop/orders/${d1.json.order.id}/download`, d1.json.order.total], [201, "download", null, true, 1200]);
+eq("digital quantity is one; physical items still need shipping; tags too", [(await order(A, "dig-2", { item_id: dig.id, quantity: 2 })).json.error, (await order(A, "tee-ship", { item_id: tee.id, quantity: 1 })).json.error, (await order(A, "band-ship", { model_id: band.id, quantity: 1 })).json.error], ["digital_quantity_one", "shipping_required", "shipping_required"]);
+eq("a retry returns the same order", (await order(A, "dig-1", { item_id: dig.id, quantity: 1 })).json.order.id, d1.json.order.id);
+const dlr = await raw("GET", `/v1/shop/orders/${d1.json.order.id}/download`, { token: A });
+eq("the buyer downloads the file with a private attachment response", [dlr.status, dlr.headers.get("content-type"), dlr.headers.get("content-disposition"), dlr.headers.get("cache-control"), Array.from(new Uint8Array(await dlr.arrayBuffer()))], [200, "application/zip", 'attachment; filename="Nuclear Handbook.zip"', "private, no-store", [0x50, 0x4b, 3, 4]]);
+eq("only the buyer; physical orders have no download; no session is 401", [(await call("GET", `/v1/shop/orders/${d1.json.order.id}/download`, { token: B })).status, (await call("GET", `/v1/shop/orders/${t1.json.order.id}/download`, { token: A })).status, (await call("GET", `/v1/shop/orders/${d1.json.order.id}/download`)).status], [404, 404, 401]);
+eq("the kind is locked once units are sold; stock stays untracked", [(await op("PATCH", `/v1/admin/shop-items/${dig.id}`, { kind: "physical" })).json.error, (await op("PATCH", `/v1/admin/shop-items/${dig.id}`, { stock: 5 })).json.item.stock, (await q("select sold from shop where id=$1", [dig.id]))[0].sold], ["kind_locked", null, 1]);
+eq("a digital order lists without shipping; the database keeps shipping NULL exactly for downloads", [(await call("GET", "/v1/shop/orders", { token: A })).json.orders.find((o: any) => o.id === d1.json.order.id).shipping, (await q("select count(*)::int n from orders where (delivery='download') <> (shipping is null)"))[0].n], [null, 0]);
+const sw = (await mkItem({ name: "Switchable", price: 100, kind: "digital" })).json.item;
+await call("PUT", `/v1/admin/shop-items/${sw.id}/file`, { token: OP, type: "application/pdf", bytes: PDF });
+const swKey = (await q("select file from shop where id=$1", [sw.id]))[0].file;
+eq("switching an unsold digital item to physical drops its file", [(await op("PATCH", `/v1/admin/shop-items/${sw.id}`, { kind: "physical" })).json.item.has_file, files.has(swKey)], [false, false]);
+eq("the user's orders list in the admin shows delivery", (await op("GET", `/v1/admin/users/${ada.account_id}/orders`)).json.orders.some((o: any) => o.delivery === "download" && o.shipping && Object.keys(o.shipping).length === 0), true);
 
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

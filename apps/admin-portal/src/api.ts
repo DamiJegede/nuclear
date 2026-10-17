@@ -136,7 +136,7 @@ export type UserFunding = {
   banks: { id: string; last4: string; status: string; created_at: string }[];
   fundings: { id: string; amount: number; status: string; failure_code: string | null; last4: string | null; created_at: string; released_at: string | null; returned_at: string | null }[];
 };
-export type UserOrder = { id: string; type: "tag" | "shop"; model_name: string; model_type: string | null; quantity: number; unit_price: number; total: number; status: string; shipping: { city?: string; region?: string; country?: string }; created_at: string };
+export type UserOrder = { id: string; type: "tag" | "shop"; delivery: "ship" | "download"; model_name: string; model_type: string | null; quantity: number; unit_price: number; total: number; status: string; shipping: { city?: string; region?: string; country?: string }; created_at: string };
 export type UserTxKind = "all" | "sends" | "received" | "payments" | "loads" | "refunds";
 export type UserTxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; direction: "in" | "out";
@@ -149,9 +149,9 @@ export type UserTxPage = {
 
 export type ShopItem = {
   id: string; name: string; description: string | null; photo: string | null; price: number; currency: string;
-  stock: number | null; sold: number; status: "pending" | "available" | "closed"; created_at: string; updated_at: string;
+  stock: number | null; sold: number; status: "pending" | "available" | "closed"; kind: "physical" | "digital"; has_file: boolean; file_ext: string | null; created_at: string; updated_at: string;
 };
-export type NewShopItem = { name: string; description?: string | null; price: number; stock?: number | null; status?: ShopItem["status"] };
+export type NewShopItem = { name: string; description?: string | null; price: number; stock?: number | null; status?: ShopItem["status"]; kind?: ShopItem["kind"] };
 export type LogRow = {
   id: string; actor_type: "admin" | "operator" | "customer" | "agent" | "system"; actor_id: string | null; actor_label: string | null;
   action: string; target_type: string | null; target_id: string | null; target_label: string | null; details: Record<string, unknown>; ip: string | null; created_at: string;
@@ -334,6 +334,8 @@ export function createApi(token: string, base: string = API_URL) {
     shopItems: async () => (await request<{ items: ShopItem[] }>("GET", "/v1/admin/shop-items")).items.map(absolutePhoto),
     createShopItem: async (i: NewShopItem) => (await request<{ item: ShopItem }>("POST", "/v1/admin/shop-items", i)).item,
     updateShopItem: async (id: string, patch: Partial<NewShopItem>) => (await request<{ item: ShopItem }>("PATCH", `/v1/admin/shop-items/${encodeURIComponent(id)}`, patch)).item,
+    /** The downloadable file of a digital item (PDF, ZIP, EPUB, MP3, MP4, PNG, JPEG or TXT, 25 MB at most). */
+    uploadShopItemFile: (id: string, file: Blob) => request<null>("PUT", `/v1/admin/shop-items/${encodeURIComponent(id)}/file`, file),
     uploadShopItemPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/shop-items/${encodeURIComponent(id)}/photo`, photo),
     /** The audit log, newest first. */
     logs: (f: LogFilter = {}, cursor?: string) => request<LogPage>("GET", `/v1/admin/logs?limit=50${f.who ? `&who=${encodeURIComponent(f.who)}` : ""}${f.action ? `&action=${encodeURIComponent(f.action)}` : ""}${f.q ? `&q=${encodeURIComponent(f.q)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),

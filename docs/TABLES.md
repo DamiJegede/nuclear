@@ -438,14 +438,15 @@ One row per completed store purchase (migration 0010 as `tag_orders`, renamed an
 | quantity | 1-20. |
 | unit_price, total | Cents, snapshotted; total = unit_price x quantity. |
 | currency | Default USD. |
-| shipping | JSON object: name, line1, line2?, city, region, postal_code, country (2 letters). |
+| shipping | JSON object: name, line1, line2?, city, region, postal_code, country (2 letters); NULL for a download order. |
 | status | paid (default), shipped or cancelled. |
 | transaction_id | Unique foreign key to the purchase transaction. |
 | created_at, updated_at | Timestamps. |
+| delivery | `ship` (default: shipping address required) or `download` (digital shop item; shipping NULL, type `shop` only). Added by migration 0022 at the end of the table. |
 
 ## shop
 
-Our own merchandise for sale (migration 0018): id, name, description, photo (the R2 key of the PNG, `shop/<id>-<epoch ms>.png`; the API renders the full URL), price (cents), currency, stock (NULL = not tracked), sold, status (pending, available or closed), created_at, updated_at. Items are bought with `POST /v1/shop/orders {item_id, ...}`, which creates an `orders` row of type `shop` and raises `sold` (and lowers `stock` when tracked). Managed in the admin portal's Shop page (Admin and Sales).
+Our own merchandise for sale (migration 0018): id, name, description, photo (the R2 key of the PNG, `shop/<id>-<epoch ms>.png`; the API renders the full URL), price (cents), currency, stock (NULL = not tracked), sold, status (pending, available or closed), created_at, updated_at, and (migration 0022, at the end of the table) kind (`physical` default, or `digital`: no stock, quantity 1 per order, needs a file before it can be available) and file (the key of the downloadable file in the private bucket `nuclear-uploads`, `downloads/<item id>-<epoch ms>.<ext>`; digital only). Items are bought with `POST /v1/shop/orders {item_id, ...}`, which creates an `orders` row of type `shop` and raises `sold` (and lowers `stock` when tracked). Managed in the admin portal's Shop page (Admin and Sales).
 
 ## logs
 

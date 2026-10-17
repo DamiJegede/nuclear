@@ -1,7 +1,7 @@
 import type { Sql } from "../db";
 import { debitWallet, spendable } from "./walletFunds";
 import { n } from "./money";
-import { imageUrl } from "./images";
+import { apiUrl, imageUrl } from "./images";
 
 export const MAX_PER_ORDER = 20;
 
@@ -31,17 +31,18 @@ export async function availableModels(sql: Sql, id?: string) {
 }
 
 type ItemRow = {
-  id: string; name: string; description: string | null; photo: string | null; currency: string; price: bigint; stock: number | null; sold: number;
+  id: string; name: string; description: string | null; photo: string | null; currency: string; price: bigint; stock: number | null; sold: number; kind: "physical" | "digital";
 };
 const itemJson = (i: ItemRow) => ({
   id: i.id, name: i.name, description: i.description, photo: imageUrl(i.photo), currency: i.currency, price: n(i.price),
-  remaining: i.stock, max_per_order: i.stock === null ? MAX_PER_ORDER : Math.min(MAX_PER_ORDER, i.stock),
+  kind: i.kind, requires_shipping: i.kind === "physical",
+  remaining: i.stock, max_per_order: i.kind === "digital" ? 1 : i.stock === null ? MAX_PER_ORDER : Math.min(MAX_PER_ORDER, i.stock),
 });
 
 /** Merchandise on sale: status available, stock left (or not tracked) and a price. */
 export async function availableItems(sql: Sql, id?: string) {
   const rows = await sql<ItemRow[]>`
-    select id, name, description, photo, currency, price, stock, sold from shop
+    select id, name, description, photo, currency, price, stock, sold, kind from shop
      where status = 'available' and (stock is null or stock > 0) and price > 0
        ${id ? sql`and id = ${id}` : sql``}
      order by created_at, id`;
@@ -50,15 +51,16 @@ export async function availableItems(sql: Sql, id?: string) {
 
 type OrderRow = {
   id: string; type: "tag" | "shop"; model_id: string | null; shop_id: string | null; name: string; model_type: string | null; quantity: number;
-  unit_price: bigint; total: bigint; currency: string; shipping: Shipping; status: string; transaction_id: string; created_at: Date;
+  unit_price: bigint; total: bigint; currency: string; shipping: Shipping | null; delivery: "ship" | "download"; status: string; transaction_id: string; created_at: Date;
 };
-const ORDER_COLS = "id, type, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, status, transaction_id, created_at";
+const ORDER_COLS = "id, type, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, delivery, status, transaction_id, created_at";
 
 export const orderJson = (o: OrderRow) => ({
   id: o.id, type: o.type,
   ...(o.type === "tag" ? { model: { id: o.model_id, name: o.name, type: o.model_type } } : { item: { id: o.shop_id, name: o.name } }),
   name: o.name, quantity: o.quantity,
-  unit_price: n(o.unit_price), total: n(o.total), currency: o.currency, shipping: o.shipping,
+  unit_price: n(o.unit_price), total: n(o.total), currency: o.currency, shipping: o.shipping, delivery: o.delivery,
+  ...(o.delivery === "download" ? { download_url: apiUrl(`/v1/shop/orders/${o.id}/download`) } : {}),
   status: o.status, transaction_id: o.transaction_id, created_at: o.created_at,
 });
 
@@ -69,7 +71,8 @@ export type PurchaseInput = {
   kind: "tag" | "shop";
   productId: string;
   quantity: number;
-  shipping: Shipping;
+  /** Required for bands, cards and physical items; digital items have none. */
+  shipping: Shipping | null;
   idempotencyKey: string;
 };
 
@@ -108,17 +111,22 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
     if (earlier) return earlier;
 
     // The product: price, name and availability, locked.
-    let name: string, price: bigint, currency: string, modelType: string | null = null;
+    let name: string, price: bigint, currency: string, modelType: string | null = null, digital = false;
     if (i.kind === "tag") {
+      if (!i.shipping) return { kind: "error", status: 422, error: "shipping_required" };
       const [m] = await tx<{ type: string; name: string; currency: string; price: bigint; quantity: number; sold: number; status: string }[]>`
         select type, name, currency, price, quantity, sold, status from tag_models where id = ${i.productId} for no key update`;
       if (!m || m.status !== "available" || m.price <= 0n) return { kind: "error", status: 404, error: "model_not_found" };
       if (m.quantity - m.sold < i.quantity) return { kind: "error", status: 409, error: m.quantity - m.sold <= 0 ? "sold_out" : "not_enough_stock" };
       ({ name, price, currency } = m); modelType = m.type;
     } else {
-      const [m] = await tx<{ name: string; currency: string; price: bigint; stock: number | null; status: string }[]>`
-        select name, currency, price, stock, status from shop where id = ${i.productId} for no key update`;
+      const [m] = await tx<{ name: string; currency: string; price: bigint; stock: number | null; status: string; kind: string; file: string | null }[]>`
+        select name, currency, price, stock, status, kind, file from shop where id = ${i.productId} for no key update`;
       if (!m || m.status !== "available" || m.price <= 0n) return { kind: "error", status: 404, error: "item_not_found" };
+      digital = m.kind === "digital";
+      if (digital && !m.file) return { kind: "error", status: 404, error: "item_not_found" };
+      if (digital && i.quantity !== 1) return { kind: "error", status: 422, error: "digital_quantity_one" };
+      if (!digital && !i.shipping) return { kind: "error", status: 422, error: "shipping_required" };
       if (m.stock !== null && m.stock < i.quantity) return { kind: "error", status: 409, error: m.stock <= 0 ? "sold_out" : "not_enough_stock" };
       ({ name, price, currency } = m);
     }
@@ -160,10 +168,10 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
     if (i.kind === "tag") await tx`update tag_models set sold = sold + ${i.quantity} where id = ${i.productId}`;
     else await tx`update shop set sold = sold + ${i.quantity}, stock = case when stock is null then null else stock - ${i.quantity} end where id = ${i.productId}`;
     const [order] = await tx<OrderRow[]>`
-      insert into orders (type, account_id, wallet_id, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, transaction_id)
+      insert into orders (type, account_id, wallet_id, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, delivery, transaction_id)
       values (${i.kind}, ${i.accountId}, ${wallet.id}, ${i.kind === "tag" ? i.productId : null}, ${i.kind === "shop" ? i.productId : null},
               ${name}, ${modelType}, ${i.quantity}, ${price.toString()}, ${amt}, ${currency},
-              ${JSON.stringify(i.shipping)}::text::jsonb, ${txId})
+              ${digital ? null : JSON.stringify(i.shipping)}::text::jsonb, ${digital ? "download" : "ship"}, ${txId})
       returning ${tx.unsafe(ORDER_COLS)}`;
     await tx`update transactions set status = 'completed', completed_at = now() where id = ${txId}`;
     return { kind: "ok", order: order!, replayed: false };

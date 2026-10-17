@@ -8,8 +8,9 @@ import { SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, US
 import { approvePending, rejectPending } from "../lib/refund";
 import { clientIp, reset as resetThrottle } from "../lib/throttle";
 import { adminLog, log } from "../lib/audit";
+import { saveProfilePhoto } from "../lib/profilePhoto";
 import { approvedEmail, declinedEmail, sendMail } from "../lib/email";
-import { getUpload, mimeOfPath } from "../lib/uploads";
+import { MAX_DOWNLOAD_BYTES, deleteUpload, downloadExt, getUpload, mimeOfPath, putUpload } from "../lib/uploads";
 import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
@@ -927,9 +928,10 @@ admin.post("/tag-models/:id/tags", async (c) => {
 });
 
 // ---- Shop items (our merch) -------------------------------------------------------------------
-const ITEM_COLS = "id, name, description, photo, price, currency, stock, sold, status, created_at, updated_at";
-type ItemRow = { id: string; name: string; description: string | null; photo: string | null; price: bigint; currency: string; stock: number | null; sold: number; status: string; created_at: Date; updated_at: Date };
-const itemJson = (i: ItemRow) => ({ ...i, photo: imageUrl(i.photo), price: n(i.price) });
+const ITEM_COLS = "id, name, description, photo, price, currency, stock, sold, status, kind, file, created_at, updated_at";
+type ItemRow = { id: string; name: string; description: string | null; photo: string | null; price: bigint; currency: string; stock: number | null; sold: number; status: string; kind: "physical" | "digital"; file: string | null; created_at: Date; updated_at: Date };
+/** `file` (a private storage key) is never returned: the page only learns whether there is one and its type. */
+const itemJson = ({ file, ...i }: ItemRow) => ({ ...i, photo: imageUrl(i.photo), price: n(i.price), has_file: !!file, file_ext: file ? file.split(".").pop()! : null });
 const itemBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).nullable().optional(),
@@ -937,6 +939,7 @@ const itemBody = z.object({
   currency: z.string().length(3).optional(),
   stock: z.number().int().min(0).max(1_000_000).nullable().optional(),
   status: z.enum(["pending", "available", "closed"]).optional(),
+  kind: z.enum(["physical", "digital"]).optional(),   // physical: shipped; digital: a file the buyer downloads after paying (no stock)
 }).strict();
 
 admin.get("/shop-items", async (c) => {
@@ -954,12 +957,14 @@ admin.get("/shop-items/:id", async (c) => {
 admin.post("/shop-items", async (c) => {
   const b = itemBody.safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const kind = b.data.kind ?? "physical";
+  if (kind === "digital" && b.data.status === "available") return c.json({ error: "file_required" }, 409);   // upload the file first, then publish
   const sql = c.get("sql");
   const [i] = await sql<ItemRow[]>`
-    insert into shop (name, description, price, currency, stock, status)
-    values (${b.data.name}, ${b.data.description ?? null}, ${b.data.price}, ${(b.data.currency ?? "USD").toUpperCase()}, ${b.data.stock ?? null}, ${b.data.status ?? "pending"})
+    insert into shop (name, description, price, currency, stock, status, kind)
+    values (${b.data.name}, ${b.data.description ?? null}, ${b.data.price}, ${(b.data.currency ?? "USD").toUpperCase()}, ${kind === "digital" ? null : b.data.stock ?? null}, ${b.data.status ?? "pending"}, ${kind})
     returning ${sql.unsafe(ITEM_COLS)}`;
-  await adminLog(c, "shop_item.created", { type: "shop_item", id: i!.id, label: i!.name }, { price: Number(i!.price), stock: i!.stock });
+  await adminLog(c, "shop_item.created", { type: "shop_item", id: i!.id, label: i!.name }, { price: Number(i!.price), stock: i!.stock, kind });
   return c.json({ item: itemJson(i!) }, 201);
 });
 
@@ -972,32 +977,58 @@ admin.patch("/shop-items/:id", async (c) => {
   const [cur] = await sql<ItemRow[]>`select ${sql.unsafe(ITEM_COLS)} from shop where id = ${id.data}`;
   if (!cur) return c.json({ error: "not_found" }, 404);
   const d = b.data;
+  const kind = d.kind ?? cur.kind;
+  if (kind !== cur.kind && cur.sold > 0) return c.json({ error: "kind_locked" }, 409);   // like a tag's type once units are sold
+  const status = d.status ?? cur.status;
+  const dropFile = kind === "physical" && cur.file !== null;
+  const file = dropFile ? null : cur.file;
+  if (kind === "digital" && status === "available" && !file) return c.json({ error: "file_required" }, 409);
+  const stock = kind === "digital" ? null : d.stock === undefined ? cur.stock : d.stock;
   const [i] = await sql<ItemRow[]>`
     update shop set name = ${d.name ?? cur.name},
       description = ${d.description === undefined ? cur.description : d.description},
       price = ${d.price ?? cur.price}, currency = ${d.currency ? d.currency.toUpperCase() : cur.currency},
-      stock = ${d.stock === undefined ? cur.stock : d.stock}, status = ${d.status ?? cur.status}
+      stock = ${stock}, status = ${status}, kind = ${kind}, file = ${file}
      where id = ${id.data} returning ${sql.unsafe(ITEM_COLS)}`;
+  if (dropFile) await deleteUpload(c.env, cur.file!);
   await adminLog(c, "shop_item.updated", { type: "shop_item", id: id.data, label: i!.name }, { fields: Object.keys(d) });
   return c.json({ item: itemJson(i!) });
 });
 
+// The downloadable file of a digital item: the raw bytes (PDF, ZIP, EPUB, MP3, MP4, PNG, JPEG or TXT, 25 MB at most), kept in the
+// private bucket nuclear-uploads under downloads/<item id>-<ms>.<ext>. A new file replaces the old one.
+admin.put("/shop-items/:id/file", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const mime = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const ext = downloadExt(mime);
+  if (!ext) return c.json({ error: "unsupported_file_type" }, 415);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
+  if (bytes.length > MAX_DOWNLOAD_BYTES) return c.json({ error: "file_too_large" }, 413);
+  const sql = c.get("sql");
+  const [it] = await sql<{ name: string; kind: string; file: string | null }[]>`select name, kind, file from shop where id = ${id.data}`;
+  if (!it) return c.json({ error: "not_found" }, 404);
+  if (it.kind !== "digital") return c.json({ error: "not_digital" }, 409);
+  const key = `downloads/${id.data}-${Date.now()}.${ext}`;
+  if (!(await putUpload(c.env, key, bytes, mime))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update shop set file = ${key} where id = ${id.data}`;
+  if (it.file) await deleteUpload(c.env, it.file);
+  await adminLog(c, "shop_item.file_uploaded", { type: "shop_item", id: id.data, label: it.name }, { type: ext, bytes: bytes.length });
+  return c.body(null, 204);
+});
+
+// A shop item's picture: any PNG, JPEG or WebP (8 MB at most); the API crops it to 256 x 256 and compresses it to JPEG
+// (only tag pictures must be PNG). Saved in nuclear-images as shop/<item id>-<ms>.jpg.
 admin.put("/shop-items/:id/photo", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-  if (type !== "image/png") return c.json({ error: "unsupported_image_type" }, 415);
-  const bytes = new Uint8Array(await c.req.arrayBuffer());
-  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
-  if (bytes.length > MAX_IMAGE_BYTES) return c.json({ error: "image_too_large" }, 413);
-  if (!isPng(bytes)) return c.json({ error: "invalid_image" }, 400);
   const sql = c.get("sql");
   const [m] = await sql<{ name: string; photo: string | null }[]>`select name, photo from shop where id = ${id.data}`;
   if (!m) return c.json({ error: "not_found" }, 404);
-  const key = newImageKey("shop", id.data, "png");
-  if (!(await putPng(c.env, key, bytes))) return c.json({ error: "storage_unavailable" }, 503);
-  await sql`update shop set photo = ${key} where id = ${id.data}`;
-  if (m.photo) await deleteImage(c.env, m.photo);
+  const r = await saveProfilePhoto(c, "shop", id.data, m.photo);
+  if (r instanceof Response) return r;
+  await sql`update shop set photo = ${r.key} where id = ${id.data}`;
   await adminLog(c, "shop_item.photo_uploaded", { type: "shop_item", id: id.data, label: m.name });
   return c.body(null, 204);
 });

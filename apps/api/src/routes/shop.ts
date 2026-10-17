@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { downloadMime, getUpload } from "../lib/uploads";
+import { customerLog } from "../lib/audit";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { sessionGuard } from "../session";
@@ -42,11 +44,12 @@ const orderBody = z.object({
   item_id: uuid.optional(),                  // a merchandise item
   quantity: z.number().int().min(1).max(MAX_PER_ORDER),
   wallet_id: uuid.optional(),
+  // Required for bands, cards and physical items (422 shipping_required); a digital item is downloaded and has none.
   shipping: z.object({
     name: text(100), line1: text(120), line2: z.string().trim().max(120).optional().transform((v) => v || undefined),
     city: text(80), region: text(80), postal_code: text(20),
     country: z.string().trim().toUpperCase().length(2),
-  }),
+  }).optional(),
 }).refine((b) => (b.model_id === undefined) !== (b.item_id === undefined), { message: "model_id_or_item_id" });
 
 // Checkout: pay for a band/card (model_id) or a merchandise item (item_id) with wallet balance. Idempotency-Key
@@ -63,7 +66,7 @@ shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async 
     kind: body.data.item_id ? "shop" : "tag",
     productId: (body.data.item_id ?? body.data.model_id)!,
     quantity: body.data.quantity,
-    shipping: body.data.shipping,
+    shipping: body.data.shipping ?? null,
     idempotencyKey: key,
   });
   if (out.kind === "error") return c.json({ error: out.error }, out.status);
@@ -72,6 +75,23 @@ shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async 
 });
 
 shop.get("/orders", async (c) => c.json({ orders: await listOrders(c.get("sql"), c.get("auth").accountId) }));
+
+// The file of a paid digital order, for its buyer only. Streamed from the private bucket.
+shop.get("/orders/:id/download", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const [o] = await c.get("sql")<{ name: string; file: string | null }[]>`
+    select o.name, s.file from orders o join shop s on s.id = o.shop_id
+     where o.id = ${id.data} and o.account_id = ${c.get("auth").accountId} and o.delivery = 'download' and o.status = 'paid'`;
+  if (!o) return c.json({ error: "not_found" }, 404);
+  const obj = o.file ? await getUpload(c.env, o.file) : null;
+  if (!o.file || !obj) return c.json({ error: "file_unavailable" }, 404);
+  const ext = o.file.split(".").pop()!;
+  await customerLog(c, c.get("auth").accountId, null, "order.downloaded", { order_id: id.data }, { type: "order", id: id.data, label: o.name });
+  return new Response(await obj.arrayBuffer(), {
+    headers: { "content-type": downloadMime(ext), "content-disposition": `attachment; filename="${o.name.replace(/[^A-Za-z0-9._ -]+/g, "").trim() || "download"}.${ext}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+  });
+});
 
 shop.get("/orders/:id", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));

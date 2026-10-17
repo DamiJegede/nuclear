@@ -344,10 +344,10 @@ function Orders({ api, id, onError }: { api: Api; id: string; onError: (e: unkno
               {data.map((o) => (
                 <tr key={o.id}>
                   <td className="when">{when(o.created_at)}</td>
-                  <th scope="row">{o.model_name} <span className="pill via">{o.type === "tag" ? o.model_type : "merch"}</span></th>
+                  <th scope="row">{o.model_name} <span className="pill via">{o.type === "tag" ? o.model_type : o.delivery === "download" ? "digital" : "merch"}</span></th>
                   <td className="num">{int(o.quantity)}</td>
                   <td className="num">{money(o.total)}</td>
-                  <td>{[o.shipping.city, o.shipping.region, o.shipping.country].filter(Boolean).join(", ") || "—"}</td>
+                  <td>{o.delivery === "download" ? "Download" : [o.shipping.city, o.shipping.region, o.shipping.country].filter(Boolean).join(", ") || "—"}</td>
                   <td>{statusPill(o.status)}</td>
                 </tr>
               ))}

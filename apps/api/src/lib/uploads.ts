@@ -23,3 +23,14 @@ export const putUpload = async (env: Env, path: string, bytes: Uint8Array, mime:
   return true;
 };
 export const getUpload = async (env: Env, path: string) => (env.UPLOADS ? env.UPLOADS.get(path) : null);
+
+// ---- Downloadable files of digital shop items (admin uploads, buyers download after paying) -------------------------------
+export const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+const DOWNLOADS: Record<string, string> = {
+  "application/pdf": "pdf", "application/zip": "zip", "application/epub+zip": "epub", "audio/mpeg": "mp3",
+  "video/mp4": "mp4", "image/png": "png", "image/jpeg": "jpg", "text/plain": "txt",
+};
+/** The file extension for an allowed download content type, or null. */
+export const downloadExt = (contentType: string): string | null => DOWNLOADS[contentType] ?? null;
+export const downloadMime = (ext: string): string => Object.entries(DOWNLOADS).find(([, e]) => e === ext)?.[0] ?? "application/octet-stream";
+export const deleteUpload = async (env: Env, key: string) => { try { await env.UPLOADS?.delete(key); } catch { /* an orphan is harmless */ } };

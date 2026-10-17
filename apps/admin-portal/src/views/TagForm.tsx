@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { ApiError, type Api, type TagModel } from "../api";
 import { dollarsToCents } from "../format";
+import { decimalOnly, digitsOnly } from "../inputs";
 import { resizePhoto } from "../image";
 import { Modal } from "./Modal";
 
@@ -94,8 +95,8 @@ export function TagFormModal({
             </div>
           </fieldset>
 
-          <label>Price (USD)<input inputMode="decimal" placeholder="29.99" value={price} onChange={(e) => setPrice(e.target.value)} /></label>
-          <label>Quantity<input inputMode="numeric" placeholder="1000" value={quantity} onChange={(e) => setQuantity(e.target.value)} /></label>
+          <label>Price (USD)<input inputMode="decimal" placeholder="29.99" value={price} onChange={(e) => setPrice(decimalOnly(e.target.value))} /></label>
+          <label>Quantity<input inputMode="numeric" placeholder="1000" value={quantity} onChange={(e) => setQuantity(digitsOnly(e.target.value))} /></label>
 
           <PhotoDrop preview={preview} error={photoError} onFile={(f) => void pick(f)} />
 
@@ -135,7 +136,7 @@ export const CardIcon = () => (
 );
 
 /** Click-or-drag PNG upload. */
-export function PhotoDrop({ preview, error, onFile, label = "Tag Image (PNG only)" }: { preview: string | null; error: string | null; onFile: (f: File | undefined) => void; label?: string }) {
+export function PhotoDrop({ preview, error, onFile, label = "Tag Image (PNG only)", accept = "image/png", noun = "a PNG" }: { preview: string | null; error: string | null; onFile: (f: File | undefined) => void; label?: string; accept?: string; noun?: string }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   return (
@@ -148,9 +149,9 @@ export function PhotoDrop({ preview, error, onFile, label = "Tag Image (PNG only
         onDrop={(e) => { e.preventDefault(); setOver(false); onFile(e.dataTransfer.files?.[0]); }}
       >
         {preview ? <img src={preview} alt="Photo preview" width={96} height={96} /> : <span className="dz-icon" aria-hidden>⇪</span>}
-        <span className="muted">{preview ? "Drop another PNG to replace it" : "Drag and drop a PNG here"}</span>
+        <span className="muted">{preview ? `Drop another image to replace it` : `Drag and drop ${noun} here`}</span>
         <button type="button" className="ghost" onClick={() => input.current?.click()}>{preview ? "Replace Image" : "Select Image"}</button>
-        <input ref={input} type="file" accept="image/png" className="sr-only" aria-label={label.replace(" (PNG only)", "")} onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+        <input ref={input} type="file" accept={accept} className="sr-only" aria-label={label.replace(" (PNG only)", "")} onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       {error && <p className="error" role="alert">{error}</p>}
     </div>

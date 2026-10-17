@@ -3,10 +3,10 @@ import type { AppContext } from "../env";
 import { MAX_PROFILE_INPUT_BYTES, isImageInput, isImageKey, newImageKey, putJpeg, toProfileJpeg } from "./images";
 
 /**
- * The shared upload step for account and wallet photos: validates the file, crops/compresses it to a 256 x 256 JPEG, writes it to R2
+ * The shared upload step for account, wallet, shop and product pictures: validates the file, crops/compresses it to a 256 x 256 JPEG, writes it to R2
  * under a new key and deletes the previous object. Returns the new key, or a ready error response.
  */
-export async function saveProfilePhoto(c: Context<AppContext>, folder: "accounts" | "wallets", id: string, previous: string | null): Promise<{ key: string } | Response> {
+export async function saveProfilePhoto(c: Context<AppContext>, folder: "accounts" | "wallets" | "shop" | "products", id: string, previous: string | null): Promise<{ key: string } | Response> {
   const mime = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);

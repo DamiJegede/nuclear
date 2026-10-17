@@ -374,10 +374,12 @@ describe("tags page", () => {
     await user.click(d.getByRole("button", { name: "Add Tag" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter the price in dollars");
     await user.clear(screen.getByLabelText("Price (USD)"));
+    await user.type(screen.getByLabelText("Price (USD)"), "$2a9.9.9,");
+    expect(screen.getByLabelText("Price (USD)")).toHaveValue("29.99");             // only 0-9 and one "." are accepted
+    await user.clear(screen.getByLabelText("Price (USD)"));
     await user.type(screen.getByLabelText("Price (USD)"), "10");
-    await user.type(screen.getByLabelText("Quantity"), "-3");
-    await user.click(d.getByRole("button", { name: "Add Tag" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Quantity must be a whole number.");
+    await user.type(screen.getByLabelText("Quantity"), "-3.5e");
+    expect(screen.getByLabelText("Quantity")).toHaveValue("35");                     // quantity takes digits only
     await user.clear(screen.getByLabelText("Quantity"));
     await user.type(screen.getByLabelText("Quantity"), "5");
     await user.click(d.getByRole("button", { name: "Add Tag" }));
@@ -1705,7 +1707,34 @@ describe("shop and audit log", () => {
     await user.type(screen.getByLabelText("Name"), "Cap");
     await user.type(screen.getByLabelText("Price (USD)"), "19.99");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add Item" }));
-    expect(await screen.findByText("Add a PNG image of the item.")).toBeInTheDocument();
+    expect(await screen.findByText("Add an image of the item.")).toBeInTheDocument();
+    expect(createShopItem).not.toHaveBeenCalled();
+  });
+
+  it("the Add Item window offers Physical Product and Digital Product cards; digital swaps Stock for a download file and uploads it after saving", async () => {
+    const shopItems = vi.fn().mockResolvedValue([ITEM]);
+    const createShopItem = vi.fn().mockResolvedValue({ ...ITEM, id: "d1", kind: "digital", status: "pending", stock: null, has_file: false, file_ext: null });
+    const uploadShopItemFile = vi.fn().mockResolvedValue(null);
+    const updateShopItem = vi.fn().mockResolvedValue({ ...ITEM, id: "d1", kind: "digital" });
+    const uploadShopItemPhoto = vi.fn().mockResolvedValue(null);
+    const user = await open(fakeApi({ shopItems, createShopItem, uploadShopItemFile, updateShopItem, uploadShopItemPhoto }), "Shop");
+    await user.click(await screen.findByRole("button", { name: "Add Item" }));
+    const dlg = screen.getByRole("dialog");
+    const kinds = within(within(dlg).getByRole("radiogroup", { name: "Product Type" }));
+    expect(kinds.getByText("Physical Product")).toBeInTheDocument();
+    expect(kinds.getByText("Requires handling, shipping and delivery")).toBeInTheDocument();
+    expect(within(dlg).queryByText("Product Type")).toBeNull();
+    expect(within(dlg).queryByLabelText("Status")).toBeNull();
+    expect(kinds.getByText("Digital Product")).toBeInTheDocument();
+    expect(kinds.getByText("Available for download after payment")).toBeInTheDocument();
+    expect(within(dlg).getByLabelText("Stock")).toBeInTheDocument();
+    await user.click(kinds.getByRole("radio", { name: /Digital Product/ }));
+    expect(within(dlg).queryByLabelText("Stock")).toBeNull();
+    expect(within(dlg).getByLabelText("Download File")).toBeInTheDocument();
+    await user.type(within(dlg).getByLabelText("Name"), "Handbook");
+    await user.type(within(dlg).getByLabelText("Price (USD)"), "12");
+    await user.click(within(dlg).getByRole("button", { name: "Add Item" }));
+    expect(await within(dlg).findByText("Add an image of the item.")).toBeInTheDocument();
     expect(createShopItem).not.toHaveBeenCalled();
   });
 
