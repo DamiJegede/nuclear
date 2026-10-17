@@ -4,24 +4,22 @@ import { digitsOnly } from "../inputs";
 import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
 import { Avatar } from "./Avatar";
-import { LogoCrop } from "./LogoCrop";
+import { PhotoCrop } from "./PhotoCrop";
 import { Modal } from "./Modal";
 
 const HANDLE = /^[a-z0-9]{4,12}$/;
 
-/** The business's own profile and security: logo, handle, documents, and the sessions signed in to this account. */
+/** The business's own profile and security: profile picture, handle, documents, and the sessions signed in to this account. */
 export function Profile({ api, account, onChanged, onError }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void }) {
   usePageTitle("Profile");
   return (
     <section>
       <div className="head"><h1>Profile</h1></div>
-      <div className="two-col">
+      <div className="stack">
         <Identity api={api} account={account} onChanged={onChanged} onError={onError} />
-        <Documents api={api} onError={onError} />
-      </div>
-      <div className="two-col">
-        <BusinessDetails api={api} onError={onError} />
         <PayoutBank api={api} onError={onError} />
+        <BusinessDetails api={api} onError={onError} />
+        <Documents api={api} onError={onError} />
       </div>
       <Sessions api={api} onError={onError} />
     </section>
@@ -44,6 +42,14 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
     setCrop(file);
   }
 
+  const [bio, setBioText] = useState(account.bio ?? "");
+  const [bioMsg, setBioMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  async function saveBio() {
+    setBioMsg(null);
+    try { await api.setBio(bio.trim() || null); setBioMsg({ ok: true, text: "Bio saved." }); onChanged(); }
+    catch (e) { onError(e); setBioMsg({ ok: false, text: "Couldn't save the bio. Try again." }); }
+  }
+
   async function saveHandle() {
     setHandleMsg(null);
     const h = handle.trim().toLowerCase();
@@ -63,9 +69,9 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
         <div>
           <p className="big small">{account.name}</p>
           <p className="muted">{account.email ?? "—"}{account.phone ? ` · ${account.phone}` : ""}</p>
-          <button type="button" className="ghost" disabled={busy} onClick={() => input.current?.click()}>{busy ? "Uploading…" : account.photo ? "Replace Logo" : "Upload Logo"}</button>
-          <input ref={input} type="file" className="sr-only" aria-label="Logo" accept="image/png,image/jpeg,image/webp" onChange={(e) => { photo(e.target.files?.[0]); e.target.value = ""; }} />
-          {crop && <LogoCrop file={crop} onClose={() => setCrop(null)} onSave={async (jpeg) => { try { await api.uploadPhoto(jpeg); setCrop(null); onChanged(); } catch (e) { onError(e); throw e; } }} />}
+          <button type="button" className="ghost" disabled={busy} onClick={() => input.current?.click()}>{busy ? "Uploading…" : account.photo ? "Replace Picture" : "Upload Picture"}</button>
+          <input ref={input} type="file" className="sr-only" aria-label="Profile picture" accept="image/png,image/jpeg,image/webp" onChange={(e) => { photo(e.target.files?.[0]); e.target.value = ""; }} />
+          {crop && <PhotoCrop file={crop} onClose={() => setCrop(null)} onSave={async (jpeg) => { try { await api.uploadPhoto(jpeg); setCrop(null); onChanged(); } catch (e) { onError(e); throw e; } }} />}
           {error && <p className="error" role="alert">{error}</p>}
         </div>
       </div>
@@ -76,6 +82,13 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
       </div>
       {handleMsg && <p className={handleMsg.ok ? "ok" : "error"} role={handleMsg.ok ? "status" : "alert"}>{handleMsg.text}</p>}
       <p className="hint">Customers can find you by your handle. 4 to 12 lowercase letters and numbers.</p>
+      <label htmlFor="bio" className="bio-label">Bio</label>
+      <textarea id="bio" rows={4} maxLength={500} value={bio} onChange={(e) => setBioText(e.target.value)} placeholder="Tell customers about your business" />
+      <div className="inline bio-row">
+        <span className="muted note">{bio.length} / 500</span>
+        <button type="button" disabled={bio.trim() === (account.bio ?? "")} onClick={() => void saveBio()}>Save Bio</button>
+      </div>
+      {bioMsg && <p className={bioMsg.ok ? "ok" : "error"} role={bioMsg.ok ? "status" : "alert"}>{bioMsg.text}</p>}
     </div>
   );
 }

@@ -19,15 +19,15 @@ account.use("*", requireSession);
 account.get("/account", requireOwner, async (c) => {
   const sql = c.get("sql");
   const [a] = await sql<
-    { id: string; type: string; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; tier: string; status: string }[]
-  >`select id, type, handle, name, email, phone, photo, tier, status from accounts where id = ${c.get("auth").accountId}`;
+    { id: string; type: string; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; bio: string | null; tier: string; status: string }[]
+  >`select id, type, handle, name, email, phone, photo, bio, tier, status from accounts where id = ${c.get("auth").accountId}`;
   if (!a) return c.json({ error: "not_found" }, 404);
   // A declined business is told why (the reason an admin wrote when declining).
   const [d] = a.status === "declined"
     ? await sql<{ reason: string | null; at: Date }[]>`select details->>'reason' as reason, created_at as at from logs where action = 'merchant.declined' and target_id = ${a.id} order by created_at desc, id desc limit 1`
     : [];
   return c.json({
-    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, phone: a.phone, photo: imageUrl(a.photo), tier: a.tier, status: a.status,
+    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, phone: a.phone, photo: imageUrl(a.photo), bio: a.bio, tier: a.tier, status: a.status,
     ...(d ? { decline: { reason: d.reason, at: d.at } } : {}),
   });
 });
@@ -74,6 +74,17 @@ account.post("/account/documents", requireOwner, async (c) => {
   if (a.status === "declined") await sql`update accounts set status = 'pending' where id = ${accountId} and status = 'declined'`;
   await customerLog(c, accountId, null, "business.document_uploaded", { upload_id: row!.id, resubmitted: a.status === "declined" }, { type: "merchant", id: accountId, label: a.name });
   return c.json({ document: row, status: a.status === "declined" ? "pending" : a.status }, 201);
+});
+
+// The account's bio: up to 500 characters; an empty text (or null) clears it. Owner only.
+account.put("/account/bio", requireOwner, async (c) => {
+  const b = z.object({ bio: z.string().trim().max(500).nullable() }).safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  const { accountId } = c.get("auth");
+  const bio = b.data.bio ? b.data.bio : null;
+  await c.get("sql")`update accounts set bio = ${bio} where id = ${accountId}`;
+  await customerLog(c, accountId, null, "customer.bio_changed", { length: bio?.length ?? 0 });
+  return c.json({ bio });
 });
 
 // Set or change the account handle. Primary/root account only: requireOwner rejects delegated

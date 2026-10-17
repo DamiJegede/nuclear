@@ -418,19 +418,28 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 .stretched::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
 .big.xl { font-size: 48px; line-height: 1.1; margin: 6px 0 4px; }
 .big.md { font-size: 22px; margin: 2px 0 0; }
-.tile-rule { border: 0; border-top: 1px solid var(--line); margin: 14px 0 10px; }
+.tile-rule { border: 0; border-top: 1px solid var(--line); margin: 25px 0; }
 .tile-label { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.profile-tile { display: flex; align-items: center; gap: 18px; min-height: 190px; }
-.profile-tile .tile-text { min-width: 0; }
+.profile-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 190px; padding-top: 40px; padding-bottom: 40px; text-align: center; }
+.dim { opacity: 0.5; }
+.profile-tile .tile-text { min-width: 0; width: 100%; }
 .tile-name { font-size: 24px; font-weight: 700; display: block; overflow-wrap: anywhere; line-height: 1.2; }
 .tile-line { margin: 4px 0 0; font-size: 15px; }
-.logo-btn { position: relative; z-index: 1; padding: 0; background: transparent; border-radius: 50%; flex: none; display: block; }
-.logo-btn .avatar { width: 104px; height: 104px; font-size: 38px; }
-.logo-hint { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
-.logo-btn:hover .logo-hint, .logo-btn:focus-visible .logo-hint { opacity: 1; }
+.photo-btn { position: relative; z-index: 1; padding: 0; background: transparent; border-radius: 50%; flex: none; display: block; }
+.photo-btn .avatar { width: 104px; height: 104px; font-size: 38px; }
+.photo-hint { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.photo-btn:hover .photo-hint, .photo-btn:focus-visible .photo-hint { opacity: 1; }
 .crop { display: grid; justify-items: center; gap: 12px; }
 .crop-frame { width: 256px; height: 256px; border-radius: 50%; overflow: hidden; border: 1px solid var(--line); background: var(--bg); touch-action: none; }
 .crop-canvas { width: 256px; height: 256px; display: block; cursor: grab; }
 .crop-canvas:active { cursor: grabbing; }
 .crop-zoom { display: grid; gap: 4px; width: 256px; }
 .crop-zoom input { padding: 0; }
+
+/* Profile: one full-width column; every card title sits 20px above its content */
+.stack { display: grid; gap: 16px; margin-bottom: 8px; }
+.card:not(.linkcard) > h2 { margin-bottom: 20px; }
+.bio-label { margin-top: 16px; }
+.bio-row { justify-content: space-between; margin-top: 8px; }
+.bio-row .note { margin: 0; }
+.card textarea { margin-top: 4px; }

@@ -10,10 +10,10 @@ import { party, type DayRange } from "./adminLists";
 export async function userDetail(sql: Sql, id: string) {
   const [u] = await sql<{
     id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null;
-    created_at: Date; photo: string | null;
+    created_at: Date; photo: string | null; bio: string | null;
     balance: bigint | null; pending: bigint | null; credit_limit: bigint | null; credit_spent: bigint | null; earmarked: bigint;
   }[]>`
-    select a.id, a.name, a.handle, a.email, a.phone, a.status, a.tier, a.created_at, a.photo,
+    select a.id, a.name, a.handle, a.email, a.phone, a.status, a.tier, a.created_at, a.photo, a.bio,
            b.balance, b.balance_pending as pending, b.credit_limit, b.credit_spent,
            (select coalesce(sum(w.balance), 0)::bigint from wallets w where w.account_id = a.id and w.balance is not null) as earmarked
       from accounts a left join balances b on b.account_id = a.id
@@ -45,7 +45,7 @@ export async function userDetail(sql: Sql, id: string) {
   const lock = u.email ? await peek(sql, `login:${u.email.toLowerCase()}`, RULES.loginFailures) : { blocked: false, retryAfter: 0 };
 
   return {
-    id: u.id, name: u.name, handle: u.handle, email: u.email, phone: u.phone, status: u.status, tier: u.tier, photo: imageUrl(u.photo), created_at: u.created_at,
+    id: u.id, name: u.name, handle: u.handle, email: u.email, phone: u.phone, status: u.status, tier: u.tier, photo: imageUrl(u.photo), bio: u.bio, created_at: u.created_at,
     login_locked: lock.blocked ? { retry_after: lock.retryAfter } : null,
     balances: {
       balance: n(u.balance ?? 0n), pending: n(u.pending ?? 0n), credit_limit: n(u.credit_limit ?? 0n), credit_spent: n(u.credit_spent ?? 0n),

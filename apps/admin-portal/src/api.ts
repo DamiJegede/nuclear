@@ -80,7 +80,7 @@ export type DayRange = { from?: string; to?: string };
 
 export type MerchantDetailData = {
   id: string; name: string; legal_name: string | null; handle: string | null; status: string; email: string | null; phone: string | null;
-  created_at: string; website: string | null; photo: string | null; tier: string | null;
+  created_at: string; website: string | null; photo: string | null; bio?: string | null; tier: string | null;
   address: { line: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null };
   bank: { last4: string; status: string } | null;
   balance: number;
@@ -116,7 +116,7 @@ export type MerchantTxPage = {
 };
 
 export type UserDetailData = {
-  id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null; photo: string | null; created_at: string;
+  id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null; photo: string | null; bio?: string | null; created_at: string;
   login_locked: { retry_after: number } | null;
   balances: { balance: number; pending: number; credit_limit: number; credit_spent: number; earmarked: number; shared: number };
   stats: {

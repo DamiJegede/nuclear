@@ -18,7 +18,7 @@ async function decode(file: File): Promise<{ w: number; h: number; draw: (ctx: C
  * Position and zoom a picture inside a circle, then save it as a 256 x 256 JPEG. Drag to move, the slider to zoom.
  * What is inside the circle is what customers see; the API compresses it again on upload.
  */
-export function LogoCrop({ file, onSave, onClose }: { file: File; onSave: (jpeg: Blob) => Promise<void>; onClose: () => void }) {
+export function PhotoCrop({ file, onSave, onClose }: { file: File; onSave: (jpeg: Blob) => Promise<void>; onClose: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const img = useRef<Awaited<ReturnType<typeof decode>> | null>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
@@ -72,13 +72,13 @@ export function LogoCrop({ file, onSave, onClose }: { file: File; onSave: (jpeg:
       const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/jpeg", 0.9));
       if (!blob) throw new Error("encode");
       await onSave(blob);
-    } catch { setError("Couldn't upload the logo. Try again."); setBusy(false); }
+    } catch { setError("Couldn't upload the picture. Try again."); setBusy(false); }
   }
 
   return (
-    <Modal title="Business Logo" onClose={onClose} locked={busy}>
+    <Modal title="Profile Picture" onClose={onClose} locked={busy}>
       <div className="crop">
-        <div className="crop-frame" aria-label="Logo preview. Drag to move.">
+        <div className="crop-frame" aria-label="Picture preview. Drag to move.">
           <canvas ref={canvas} width={SIZE} height={SIZE} className="crop-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} />
         </div>
         <label className="crop-zoom">Zoom
@@ -88,7 +88,7 @@ export function LogoCrop({ file, onSave, onClose }: { file: File; onSave: (jpeg:
         {error && <p className="error" role="alert">{error}</p>}
       </div>
       <div className="modal-actions">
-        <button type="button" disabled={busy || !ready} onClick={() => void save()}>{busy ? "Saving…" : "Save Logo"}</button>
+        <button type="button" disabled={busy || !ready} onClick={() => void save()}>{busy ? "Saving…" : "Save Picture"}</button>
         <button type="button" className="ghost" disabled={busy} onClick={onClose}>Cancel</button>
       </div>
     </Modal>

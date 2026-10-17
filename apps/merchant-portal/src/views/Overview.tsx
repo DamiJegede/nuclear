@@ -4,7 +4,7 @@ import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
 import { Avatar } from "./Avatar";
-import { LogoCrop } from "./LogoCrop";
+import { PhotoCrop } from "./PhotoCrop";
 
 /** The business at a glance: three large cards (profile, today, catalog), then terminals, approvals, staff and orders. */
 export function Overview({ api, account, onChanged, onError, go }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void; go: (page: string) => void }) {
@@ -39,14 +39,14 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
 
       <div className="grid three">
         <article className="card linkcard profile-tile" aria-label="Profile">
-          <button type="button" className="logo-btn" aria-label="Replace logo" onClick={() => input.current?.click()}>
+          <button type="button" className="photo-btn" aria-label="Replace profile picture" onClick={() => input.current?.click()}>
             <Avatar name={account.name} photo={account.photo} />
-            <span className="logo-hint" aria-hidden>{account.photo ? "Replace" : "Add Logo"}</span>
+            <span className="photo-hint" aria-hidden>{account.photo ? "Replace" : "Add Picture"}</span>
           </button>
-          <input ref={input} type="file" className="sr-only" aria-label="Logo" accept="image/png,image/jpeg,image/webp" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
+          <input ref={input} type="file" className="sr-only" aria-label="Profile picture" accept="image/png,image/jpeg,image/webp" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
           <div className="tile-text">
             <a href="/profile" className="stretched tile-name" onClick={nav("profile")}>{account.name}</a>
-            <p className="tile-line">{account.handle ? `@${account.handle}` : <span className="muted">No handle yet</span>}</p>
+            <p className="tile-line">{account.handle ? `@${account.handle}` : <span className="dim">No handle yet</span>}</p>
             <p className="tile-line muted">{place || "Add your address"}</p>
             {fileError && <p className="error" role="alert">{fileError}</p>}
           </div>
@@ -65,6 +65,9 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
           <h2><a href="/catalog" className="stretched" onClick={nav("catalog")}>Catalog</a></h2>
           <p className="big xl">{int(data.products)}</p>
           <p className="sub">{int(data.categories)} categor{data.categories === 1 ? "y" : "ies"}</p>
+          <hr className="tile-rule" />
+          <h3 className="tile-label">Today's Best Seller</h3>
+          <p className="big md">{data.best_seller ? data.best_seller.name : <span className="dim">No sales yet</span>}</p>
         </article>
       </div>
 
@@ -76,7 +79,7 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
       </div>
 
       {file && (
-        <LogoCrop file={file} onClose={() => setFile(null)}
+        <PhotoCrop file={file} onClose={() => setFile(null)}
           onSave={async (jpeg) => { await api.uploadPhoto(jpeg); setFile(null); onChanged(); retry(); }} />
       )}
     </section>

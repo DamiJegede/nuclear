@@ -29,7 +29,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 business.get("/overview", async (c) => {
   const sql = c.get("sql");
   const id = c.get("auth").accountId;
-  const [bal, term, pend, staff, orders, prof, cats, prods, tx] = await Promise.all([
+  const [bal, term, pend, staff, orders, prof, cats, prods, best, tx] = await Promise.all([
     sql<{ balance: bigint; balance_pending: bigint }[]>`select balance, balance_pending from balances where account_id = ${id}`,
     sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where exists (select 1 from orbs o where o.terminal_id = t.id)))::int as paired from terminals t where t.account_id = ${id}`,
     sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from transactions where type = 'refund' and status = 'pending' and from_account_id = ${id}`,
@@ -38,6 +38,8 @@ business.get("/overview", async (c) => {
     sql<{ city: string | null; state: string | null }[]>`select city, state from businesses where account_id = ${id}`,
     sql<{ n: number }[]>`select count(*)::int as n from categories where account_id = ${id}`,
     sql<{ n: number }[]>`select count(*)::int as n from products where account_id = ${id}`,
+    // Today's best seller: the product with the most units sold today (the counter resets at 00:00 New York); ties go to the bigger lifetime seller.
+    sql<{ name: string; sold_today: number }[]>`select name, sold_today from products where account_id = ${id} and sold_today > 0 order by sold_today desc, total_sold desc, name limit 1`,
     // Today (since 00:00 New York) and yesterday, from the account's payments and refunds, read once.
     sql<{ today_n: number; y_pay: bigint; y_ref: bigint }[]>`
       with d as (select ((now() at time zone ${PROGRAM_TZ})::date)::timestamp at time zone ${PROGRAM_TZ} as t0,
@@ -56,6 +58,7 @@ business.get("/overview", async (c) => {
     open_orders: orders[0]!.n,
     city: prof[0]?.city ?? null, state: prof[0]?.state ?? null,
     categories: cats[0]!.n, products: prods[0]!.n,
+    best_seller: best[0] ? { name: best[0].name, sold_today: best[0].sold_today } : null,
     today: { transactions: tx[0]!.today_n },
     yesterday: { net: Number(tx[0]!.y_pay) - Number(tx[0]!.y_ref) },
   });

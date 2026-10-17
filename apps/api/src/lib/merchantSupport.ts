@@ -9,12 +9,12 @@ import { party, type DayRange } from "./adminLists";
 export async function merchantDetail(sql: Sql, id: string) {
   const [m] = await sql<{
     id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; created_at: Date;
-    photo: string | null; tier: string | null;
+    photo: string | null; bio: string | null; tier: string | null;
     legal_name: string | null; display_name: string | null; address: string | null; city: string | null; state: string | null;
     post_code: string | null; country: string | null; website: string | null;
     bank_last4: string | null; bank_status: string | null; balance: bigint | null;
   }[]>`
-    select a.id, a.name, a.handle, a.email, a.phone, a.status, a.created_at, a.photo, a.tier,
+    select a.id, a.name, a.handle, a.email, a.phone, a.status, a.created_at, a.photo, a.bio, a.tier,
            b.legal_name, b.display_name, b.address, b.city, b.state, b.post_code, b.country, b.website,
            ba.last4 as bank_last4, ba.status as bank_status, bal.balance
       from accounts a
@@ -47,7 +47,7 @@ export async function merchantDetail(sql: Sql, id: string) {
 
   return {
     id: m.id, name: m.display_name ?? m.name, legal_name: m.legal_name, handle: m.handle, status: m.status,
-    email: m.email, phone: m.phone, created_at: m.created_at, website: m.website, photo: imageUrl(m.photo), tier: m.tier,
+    email: m.email, phone: m.phone, created_at: m.created_at, website: m.website, photo: imageUrl(m.photo), bio: m.bio, tier: m.tier,
     address: { line: m.address, city: m.city, state: m.state, post_code: m.post_code, country: m.country },
     bank: m.bank_last4 ? { last4: m.bank_last4, status: m.bank_status } : null,
     balance: n(m.balance ?? 0n),

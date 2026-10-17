@@ -157,6 +157,7 @@ function Details({ u }: { u: UserDetailData }) {
       <dl className="detail-list">
         {row("Name", u.name)}
         {row("Handle", u.handle ? `@${u.handle}` : null)}
+        {row("Bio", u.bio ?? null)}
         {row("Email", u.email)}
         {row("Phone", u.phone)}
         {row("Joined", day(u.created_at))}

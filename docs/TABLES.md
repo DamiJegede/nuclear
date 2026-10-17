@@ -24,6 +24,7 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | photo | R2 key of the account's profile picture (`accounts/<id>-<epoch ms>.jpg`, 256 x 256 JPEG, uploaded after the account exists), or NULL. Older rows may hold an https address. |
 | tier | free, plus, or insider. |
 | status | Account access/lifecycle status: active, pending (a new business awaiting approval), declined (refused; the business may upload a new document, which returns it to pending), suspended or closed. Businesses start pending; customers start active. A pending or declined business can sign in, see its status, upload documents and sign out, and nothing else. |
+| bio | Short text the owner writes about themselves or their business, up to 500 characters; NULL = none. Added by migration 0023 (physically last in the dev database; here at its logical position). |
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
@@ -508,3 +509,15 @@ Approved payment credit is tracked separately from funded balance in the ledger 
 Eleven tables describe the product, devices and physical inventory; ledger_entries is the twelfth internal accounting table; terminals and orbs add merchant hardware. Fundings rows track bank-load attempts, transactions record successful funding activity and other operations, ledger entries record balanced monetary effects, and balances is the atomically maintained current summary. Wallets identify spenders and limits, not separately funded pots. No database objects have been created or migrated.
 
 Activity combines transactions with fundings that have no transaction_id, using a single ordered, paginated feed so completed loads appear once. Pending and failed loads remain visible from fundings. A completed load can show a later return by joining its linked funding record. Join only the resulting page to wallet/account display records. Live wallet photos avoid historical snapshots; snapshot behavior remains optional. Account-owner indexes and matching timestamp/id pagination should be verified with representative data before scale commitments.
+
+## Pre-launch rebuild
+
+The dev database (nuclear-dev) will be rebuilt from scratch into a new database before launch, so columns that were added later need not be moved with table rebuilds now. The fresh schema must create them at the logical positions this document gives, not at the physical end where the dev migrations put them:
+
+| Table | Column | Logical position | Added by |
+| --- | --- | --- | --- |
+| accounts | bio | before created_at | 0023 |
+| orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
+| shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |
+
+Also in the fresh schema: the CHECK constraints from 0021 (photo columns hold only R2 keys), `accounts.status` with pending and declined (0020), `uploads` (0020, `businesses.business_doc` never created), `logs` and `orders` (0018, no `tag_orders` or `tag_model_photos`), and `shop`/`orders` as described above. Consolidate migrations 0001-0023 into one initial migration for the new database, with the columns in document order, and keep the old files only as history.

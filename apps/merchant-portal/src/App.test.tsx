@@ -5,7 +5,7 @@ import { App } from "./App";
 import { ApiError, type Account, type Api, type Session } from "./api";
 
 const SESSION: Session = { account_id: "a1", device_id: "d1", session_token: "tok-1", session_expires_at: "2027-01-01T00:00:00Z" };
-const ACCOUNT: Account = { account_id: "a1", type: "B", handle: "nero", name: "Cafe Nero", email: "cafe@example.com", phone: null, photo: null, tier: "free", status: "active" };
+const ACCOUNT: Account = { account_id: "a1", type: "B", handle: "nero", name: "Cafe Nero", email: "cafe@example.com", phone: null, photo: null, bio: null, tier: "free", status: "active" };
 const TERMINAL = { id: "t1", name: "Counter", allow_refunds: true, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", orb: { id: "o1", uid: "AABBCC000001", model: "Orb 2", software: "1.4.2" } };
 const REFUND = { id: "r1", status: "pending" as const, status_code: "awaiting_approval", amount: 700, payment_id: "p1", payment_amount: 2500, attempt: null, reference: "Order 7", payer: { display_name: "Ada" }, items: null, requested_on_terminal_id: "t1", approver_account_id: null, timestamp: "2026-10-16T09:00:00Z", completed_at: null };
 
@@ -22,7 +22,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     staff: vi.fn().mockResolvedValue([]),
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
-    overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, today: { transactions: 0 }, yesterday: { net: 0 } }),
+    overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0 }, yesterday: { net: 0 } }),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
     products: vi.fn().mockResolvedValue([]),
@@ -144,7 +144,7 @@ describe("refunds, staff, orbs, profile", () => {
   it("shows pending refunds on the overview and approves one after a confirm", async () => {
     const refunds = vi.fn().mockResolvedValueOnce([REFUND]).mockResolvedValueOnce([REFUND]).mockResolvedValue([]);
     const resolveRefund = vi.fn().mockResolvedValue({});
-    const overview = vi.fn().mockResolvedValue({ balance: 0, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 1, amount: 700 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: null, state: null, categories: 0, products: 0, today: { transactions: 0 }, yesterday: { net: 0 } });
+    const overview = vi.fn().mockResolvedValue({ balance: 0, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 1, amount: 700 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: null, state: null, categories: 0, products: 0, best_seller: null, today: { transactions: 0 }, yesterday: { net: 0 } });
     const { user } = await signIn(fakeApi({ refunds, resolveRefund, overview }));
     expect(await screen.findByText(/1 refund \(\$7\.00\) waiting for your approval/)).toBeInTheDocument();
     await user.click(await navLink("Refunds"));
@@ -178,6 +178,21 @@ describe("refunds, staff, orbs, profile", () => {
     await user.click(screen.getByRole("button", { name: "Release" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm Release" }));
     expect(releaseOrb).toHaveBeenCalledWith("o1");
+  });
+
+  it("the profile is one full-width column in this order: profile, payout bank, business details, documents; the bio saves", async () => {
+    const setBio = vi.fn().mockResolvedValue("We roast our own beans.");
+    const { user } = await signIn(fakeApi({ setBio, bank: vi.fn().mockResolvedValue(null) }));
+    await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    await screen.findByRole("form", { name: "Business details" });
+    const titles = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(titles.slice(0, 4)).toEqual(["Business", "Payout Bank", "Business Details", "Business Documents"]);
+    expect(document.querySelectorAll(".two-col").length).toBe(0);
+    const bio = screen.getByLabelText("Bio");
+    expect(screen.getByRole("button", { name: "Save Bio" })).toBeDisabled();
+    await user.type(bio, "We roast our own beans.");
+    await user.click(screen.getByRole("button", { name: "Save Bio" }));
+    expect(setBio).toHaveBeenCalledWith("We roast our own beans.");
   });
 
   it("the profile saves a handle (lowercase letters and numbers only) and the page has its own address", async () => {
@@ -300,7 +315,7 @@ describe("overview", () => {
   const tx = (all: number, pay: number, ref: number) => ({ counts: { all, payments: all, refunds: 0, pending: 0 }, totals: { payments: { count: all, volume: pay }, refunds: { count: 0, volume: ref } }, transactions: [], next_cursor: null });
 
   it("has three large cards (profile, today, catalog) and four small ones, each linking to its page; all from one request", async () => {
-    const overview = vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 2, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 1, writers: 1 }, open_orders: 2, city: "Brooklyn", state: "NY", categories: 2, products: 3, today: { transactions: 7 }, yesterday: { net: 45000 } });
+    const overview = vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 2, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 1, writers: 1 }, open_orders: 2, city: "Brooklyn", state: "NY", categories: 2, products: 3, best_seller: { name: "Latte", sold_today: 5 }, today: { transactions: 7 }, yesterday: { net: 45000 } });
     const api = fakeApi({ overview });
     const { user } = await signIn(api);
     const profile = await screen.findByRole("article", { name: "Profile" });
@@ -315,6 +330,8 @@ describe("overview", () => {
     const catalog = screen.getByRole("article", { name: "Catalog" });
     expect(catalog).toHaveTextContent("3");
     expect(catalog).toHaveTextContent("2 categories");
+    expect(catalog).toHaveTextContent("Today's Best Seller");
+    expect(catalog).toHaveTextContent("Latte");
     expect(overview).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("article", { name: "Terminals" })).toHaveTextContent("2");
     expect(screen.getByRole("article", { name: "Staff" })).toHaveTextContent("1 can approve refunds");
@@ -323,7 +340,7 @@ describe("overview", () => {
     expect(window.location.pathname).toBe("/transactions");
   });
 
-  it("clicking the logo opens the crop window; saving uploads a 256 x 256 JPEG", async () => {
+  it("clicking the profile picture opens the crop window; saving uploads a 256 x 256 JPEG", async () => {
     const uploadPhoto = vi.fn().mockResolvedValue({ photo: "https://x/p.jpg" });
     const bmp = { width: 800, height: 600, close: vi.fn() };
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bmp));
@@ -332,11 +349,11 @@ describe("overview", () => {
     const { user } = await signIn(fakeApi({ uploadPhoto }));
     await screen.findByRole("article", { name: "Profile" });
     expect(screen.queryByRole("dialog")).toBeNull();
-    await user.upload(screen.getByLabelText("Logo"), new File(["x"], "logo.png", { type: "image/png" }));
-    const dlg = await screen.findByRole("dialog", { name: "Business Logo" });
+    await user.upload(screen.getByLabelText("Profile picture"), new File(["x"], "me.png", { type: "image/png" }));
+    const dlg = await screen.findByRole("dialog", { name: "Profile Picture" });
     expect(within(dlg).getByLabelText("Zoom")).toBeInTheDocument();
-    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Save Logo" })).toBeEnabled());
-    await user.click(within(dlg).getByRole("button", { name: "Save Logo" }));
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Save Picture" })).toBeEnabled());
+    await user.click(within(dlg).getByRole("button", { name: "Save Picture" }));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalled());
     expect((uploadPhoto.mock.calls[0]![0] as Blob).type).toBe("image/jpeg");
     vi.unstubAllGlobals();
@@ -345,7 +362,7 @@ describe("overview", () => {
   it("refuses a file that is not an image", async () => {
     await signIn(fakeApi());
     await screen.findByRole("article", { name: "Profile" });
-    const input = screen.getByLabelText("Logo");
+    const input = screen.getByLabelText("Profile picture");
     const user = userEvent.setup({ applyAccept: false });
     await user.upload(input, new File(["x"], "doc.pdf", { type: "application/pdf" }));
     expect(await screen.findByText("Choose a PNG, JPEG or WebP image.")).toBeInTheDocument();

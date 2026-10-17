@@ -57,7 +57,7 @@ v1.use("*", async (c, next) => {
 v1.use("*", withDb);
 // Anything that reads or changes spent_today / sold_today first makes sure the day's reset has happened
 // (the cron usually did it; this is the backstop if a run was missed).
-for (const path of ["/transfers", "/transfers/*", "/payments", "/payments/*", "/terminal/payments", "/terminal/payments/*", "/terminal/products", "/terminal/products/*", "/shop/orders", "/wallets", "/wallets/*"]) v1.use(path, programDay);
+for (const path of ["/transfers", "/transfers/*", "/payments", "/payments/*", "/terminal/payments", "/terminal/payments/*", "/terminal/products", "/terminal/products/*", "/shop/orders", "/wallets", "/wallets/*", "/business/overview", "/business/products"]) v1.use(path, programDay);
 v1.route("/admin", admin);
 v1.route("/auth", auth);
 v1.route("/devices", devices);

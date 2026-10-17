@@ -33,7 +33,7 @@ async function send<T>(base: string, token: string | null, method: string, path:
 export type Session = { account_id: string; device_id: string; session_token: string; session_expires_at: string };
 export type AccountStatus = "active" | "pending" | "declined" | "suspended" | "closed";
 export type Account = {
-  account_id: string; type: "B" | "C"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null;
+  account_id: string; type: "B" | "C"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; bio: string | null;
   tier: string; status: AccountStatus; decline?: { reason: string | null; at: string };
 };
 export type Balance = { balance: number; earmarked: number; balance_pending: number; credit_limit: number; credit_spent: number; available_to_send: number; available_to_pay: number; restricted: boolean };
@@ -52,7 +52,7 @@ export type HandleLookup = { account_id: string; handle: string; type: "B" | "C"
 
 export type Overview = {
   balance: number; balance_pending: number; terminals: { count: number; paired: number }; pending_refunds: { count: number; amount: number };
-  staff: { count: number; writers: number }; open_orders: number; city: string | null; state: string | null; categories: number; products: number;
+  staff: { count: number; writers: number }; open_orders: number; city: string | null; state: string | null; categories: number; products: number; best_seller: { name: string; sold_today: number } | null;
   today: { transactions: number }; yesterday: { net: number };
 };
 export type TxKind = "all" | "payments" | "refunds" | "pending";
@@ -97,8 +97,9 @@ export function createApi(token: string, base: string = API_URL) {
     logout: () => request<null>("POST", "/v1/auth/logout"),
     account: () => request<Account>("GET", "/v1/account"),
     balance: () => request<Balance>("GET", "/v1/balance"),
+    setBio: async (bio: string | null) => (await request<{ bio: string | null }>("PUT", "/v1/account/bio", { bio })).bio,
     setHandle: (handle: string) => request<{ handle: string }>("PUT", "/v1/account/handle", { handle }),
-    /** The logo: any PNG, JPEG or WebP; the API crops it to 256 x 256 JPEG. */
+    /** The profile picture: any PNG, JPEG or WebP; the API crops it to 256 x 256 JPEG. */
     uploadPhoto: (file: Blob) => request<{ photo: string }>("PUT", "/v1/account/photo", file),
     documents: async () => (await request<{ documents: BusinessDocument[] }>("GET", "/v1/account/documents")).documents,
     uploadDocument: (file: Blob) => request<{ document: BusinessDocument; status: AccountStatus }>("POST", "/v1/account/documents", file),

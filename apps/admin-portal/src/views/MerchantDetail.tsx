@@ -140,6 +140,7 @@ function Details({ m }: { m: MerchantDetailData }) {
         {row("Business name", m.name)}
         {row("Legal name", m.legal_name)}
         {row("Handle", m.handle ? `@${m.handle}` : null)}
+        {row("Bio", m.bio ?? null)}
         {row("Email", m.email)}
         {row("Phone", m.phone)}
         {row("Address", address)}
