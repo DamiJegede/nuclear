@@ -438,8 +438,22 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 
 /* Profile: one full-width column; every card title sits 20px above its content */
 .stack { display: grid; gap: 16px; margin-bottom: 8px; }
+.stack .two-col { margin-bottom: 0; align-items: stretch; }
 .card:not(.linkcard) > h2 { margin-bottom: 20px; }
 .bio-label { margin-top: 16px; }
 .bio-row { justify-content: space-between; margin-top: 8px; }
 .bio-row .note { margin: 0; }
 .card textarea { margin-top: 4px; }
+
+/* Cards with an Edit text button top right: plain text until Edit is pressed */
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.card-head h2 { margin: 0; }
+.card:not(.linkcard) > .card-head > h2 { margin-bottom: 0; }
+.edit-link { font-weight: 600; font-size: 14px; }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 24px; }
+/* Label and value share a baseline; every value is regular weight and 13 px (labels stay 12 px bold caps) */
+dl.facts .fact { align-items: baseline; }
+.fact dt { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; flex: none; }
+dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: right; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
+.identity + .facts { margin-top: 4px; }
+.card form .fields { margin-bottom: 12px; }

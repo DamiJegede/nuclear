@@ -76,9 +76,9 @@ account.post("/account/documents", requireOwner, async (c) => {
   return c.json({ document: row, status: a.status === "declined" ? "pending" : a.status }, 201);
 });
 
-// The account's bio: up to 500 characters; an empty text (or null) clears it. Owner only.
+// The account's bio: up to 128 characters; an empty text (or null) clears it. Owner only.
 account.put("/account/bio", requireOwner, async (c) => {
-  const b = z.object({ bio: z.string().trim().max(500).nullable() }).safeParse(await c.req.json().catch(() => null));
+  const b = z.object({ bio: z.string().trim().max(128).nullable() }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request" }, 400);
   const { accountId } = c.get("auth");
   const bio = b.data.bio ? b.data.bio : null;

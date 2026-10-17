@@ -24,7 +24,7 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | photo | R2 key of the account's profile picture (`accounts/<id>-<epoch ms>.jpg`, 256 x 256 JPEG, uploaded after the account exists), or NULL. Older rows may hold an https address. |
 | tier | free, plus, or insider. |
 | status | Account access/lifecycle status: active, pending (a new business awaiting approval), declined (refused; the business may upload a new document, which returns it to pending), suspended or closed. Businesses start pending; customers start active. A pending or declined business can sign in, see its status, upload documents and sign out, and nothing else. |
-| bio | Short text the owner writes about themselves or their business, up to 500 characters; NULL = none. Added by migration 0023 (physically last in the dev database; here at its logical position). |
+| bio | Short text the owner writes about themselves or their business, up to **128 characters** (CHECK); NULL = none. Added by migration 0023 (limit set to 128 by 0024) (physically last in the dev database; here at its logical position). |
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 

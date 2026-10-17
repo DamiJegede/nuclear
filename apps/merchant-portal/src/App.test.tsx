@@ -9,6 +9,7 @@ const ACCOUNT: Account = { account_id: "a1", type: "B", handle: "nero", name: "C
 const TERMINAL = { id: "t1", name: "Counter", allow_refunds: true, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", orb: { id: "o1", uid: "AABBCC000001", model: "Orb 2", software: "1.4.2" } };
 const REFUND = { id: "r1", status: "pending" as const, status_code: "awaiting_approval", amount: 700, payment_id: "p1", payment_amount: 2500, attempt: null, reference: "Order 7", payer: { display_name: "Ada" }, items: null, requested_on_terminal_id: "t1", approver_account_id: null, timestamp: "2026-10-16T09:00:00Z", completed_at: null };
 
+const card = (title: string) => screen.getByRole("heading", { level: 2, name: title }).closest(".card") as HTMLElement;
 const navLink = async (name: string) => within(await screen.findByRole("navigation")).getByRole("link", { name });
 
 function fakeApi(over: Partial<Api> = {}): Api {
@@ -180,31 +181,42 @@ describe("refunds, staff, orbs, profile", () => {
     expect(releaseOrb).toHaveBeenCalledWith("o1");
   });
 
-  it("the profile is one full-width column in this order: profile, payout bank, business details, documents; the bio saves", async () => {
-    const setBio = vi.fn().mockResolvedValue("We roast our own beans.");
-    const { user } = await signIn(fakeApi({ setBio, bank: vi.fn().mockResolvedValue(null) }));
+  it("the profile: business and payout bank share a row, then business details and documents; every card is plain text with an Edit button top right until pressed", async () => {
+    const { user } = await signIn(fakeApi({ bank: vi.fn().mockResolvedValue(null), account: vi.fn().mockResolvedValue({ ...ACCOUNT, bio: "We roast our own beans." }) }));
     await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
-    await screen.findByRole("form", { name: "Business details" });
+    await screen.findByText("Nero LLC");
     const titles = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(titles.slice(0, 4)).toEqual(["Business", "Payout Bank", "Business Details", "Business Documents"]);
-    expect(document.querySelectorAll(".two-col").length).toBe(0);
-    const bio = screen.getByLabelText("Bio");
-    expect(screen.getByRole("button", { name: "Save Bio" })).toBeDisabled();
-    await user.type(bio, "We roast our own beans.");
-    await user.click(screen.getByRole("button", { name: "Save Bio" }));
-    expect(setBio).toHaveBeenCalledWith("We roast our own beans.");
+    expect(document.querySelectorAll(".two-col").length).toBe(1);
+    expect(document.querySelector(".two-col")!.querySelectorAll(":scope > .card").length).toBe(2);
+    // read-only by default: the facts are text, there are no inputs, and each card has its Edit button
+    expect(within(card("Business")).getByText("We roast our own beans.")).toBeInTheDocument();
+    expect(within(card("Business")).queryByLabelText("Handle")).toBeNull();
+    expect(within(card("Business Details")).getByText("Nero LLC")).toBeInTheDocument();
+    expect(within(card("Business Details")).queryByRole("textbox")).toBeNull();
+    for (const t of ["Business", "Payout Bank", "Business Details", "Business Documents"]) expect(within(card(t)).getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    // Edit reveals the inputs; Cancel hides them again
+    await user.click(within(card("Business Details")).getByRole("button", { name: "Edit" }));
+    expect(within(card("Business Details")).getByLabelText("Legal name")).toHaveValue("Nero LLC");
+    await user.click(within(card("Business Details")).getByRole("button", { name: "Cancel" }));
+    expect(within(card("Business Details")).queryByRole("textbox")).toBeNull();
   });
 
-  it("the profile saves a handle (lowercase letters and numbers only) and the page has its own address", async () => {
+  it("editing the business card saves the handle (lowercase letters and numbers only) and the bio (128 characters)", async () => {
     const setHandle = vi.fn().mockResolvedValue({ handle: "newname" });
-    const { user } = await signIn(fakeApi({ setHandle }));
+    const setBio = vi.fn().mockResolvedValue("We roast our own beans.");
+    const { user } = await signIn(fakeApi({ setHandle, setBio }));
     await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
     expect(window.location.pathname).toBe("/profile");
-    const input = await screen.findByLabelText("Handle");
-    await user.clear(input);
-    await user.type(input, "New_Name!");
-    expect(input).toHaveValue("newname");
-    await user.click(screen.getByRole("button", { name: "Save Handle" }));
+    await user.click(within(await screen.findByRole("heading", { level: 2, name: "Business" }).then((h) => h.closest(".card") as HTMLElement)).getByRole("button", { name: "Edit" }));
+    const handle = await screen.findByLabelText("Handle");
+    await user.clear(handle);
+    await user.type(handle, "New_Name!");
+    expect(handle).toHaveValue("newname");
+    expect(screen.getByLabelText("Bio")).toHaveAttribute("maxlength", "128");
+    await user.type(screen.getByLabelText("Bio"), "We roast our own beans.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(setBio).toHaveBeenCalledWith("We roast our own beans."));
     expect(setHandle).toHaveBeenCalledWith("newname");
   });
 });
@@ -290,6 +302,8 @@ describe("business details and payout bank", () => {
       bank: vi.fn().mockResolvedValue(null), saveProfile, saveBank,
     }));
     await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    await screen.findByText("Nero LLC");
+    await user.click(within(card("Business Details")).getByRole("button", { name: "Edit" }));
     const form = await screen.findByRole("form", { name: "Business details" });
     expect(within(form).getByLabelText("Legal name")).toHaveValue("Nero LLC");
     expect(within(form).getByLabelText("Tax ID")).toHaveAttribute("placeholder", expect.stringContaining("6789"));
@@ -301,6 +315,7 @@ describe("business details and payout bank", () => {
     await user.click(within(form).getByRole("button", { name: "Save Details" }));
     expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ legal_name: "Nero LLC", city: "Albany", website: "https://nero.example" }));
     expect(saveProfile.mock.calls[0]![0]).not.toHaveProperty("tax_id");
+    await user.click(within(card("Payout Bank")).getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Add Bank" }));
     const dlg = screen.getByRole("dialog");
     await user.type(within(dlg).getByLabelText("Routing number"), "11a0000000");

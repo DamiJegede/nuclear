@@ -35,11 +35,11 @@ const get = (p: string, t = B) => call("GET", "/v1/business" + p, { token: t });
 eq("only an approved business owner uses it: customers 403, pending 403, no session 401", [(await get("/profile", ada.session_token)).json.error, (await get("/profile", pend.session_token)).json.error, (await call("GET", "/v1/business/profile")).status], ["business_account_required", "account_not_approved", 401]);
 
 // ---- bio (every account can have one)
-eq("a bio is saved trimmed, shown on the account and the admin page, cleared with empty text, and limited to 500 characters", [
+eq("a bio is saved trimmed, shown on the account and the admin page, cleared with empty text, and limited to 128 characters", [
   (await call("PUT", "/v1/account/bio", { token: B, body: { bio: "  We roast our own beans.  " } })).json.bio,
   (await call("GET", "/v1/account", { token: B })).json.bio,
   (await call("GET", `/v1/admin/merchants/${biz.account_id}`, { token: OP })).json.merchant.bio,
-  (await call("PUT", "/v1/account/bio", { token: B, body: { bio: "x".repeat(501) } })).status,
+  (await call("PUT", "/v1/account/bio", { token: B, body: { bio: "x".repeat(129) } })).status,
   (await call("PUT", "/v1/account/bio", { token: ada.session_token, body: { bio: "Hi, I'm Ada" } })).json.bio,
   (await call("GET", `/v1/admin/users/${ada.account_id}`, { token: OP })).json.user.bio], ["We roast our own beans.", "We roast our own beans.", "We roast our own beans.", 400, "Hi, I'm Ada", "Hi, I'm Ada"]);
 eq("empty text clears it", [(await call("PUT", "/v1/account/bio", { token: B, body: { bio: "" } })).json.bio, (await q("select bio from accounts where id=$1", [biz.account_id]))[0].bio], [null, null]);
