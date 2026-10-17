@@ -70,6 +70,7 @@ export type DayRange = { from?: string; to?: string };
 export type Profile = { legal_name: string; display_name: string; tax_id_last4: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
 export type ProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
 export type PayoutBank = { id: string; last4: string; status: string; created_at: string };
+export type Payout = { id: string; kind: "payout" | "collection"; amount: number; status: string; status_code: string | null; timestamp: string; completed_at: string | null; bank_last4: string | null };
 export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
 export type Product = {
   id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
@@ -139,6 +140,7 @@ export function createApi(token: string, base: string = API_URL) {
     saveProfile: async (input: ProfileInput) => (await request<{ profile: Profile }>("PUT", "/v1/business/profile", input)).profile,
     bank: async () => (await request<{ bank: PayoutBank | null }>("GET", "/v1/business/bank")).bank,
     saveBank: async (input: { routing_number: string; account_number: string }) => (await request<{ bank: PayoutBank }>("PUT", "/v1/business/bank", input)).bank,
+    payouts: async () => (await request<{ payouts: Payout[] }>("GET", "/v1/business/payouts")).payouts,
     removeBank: () => request<null>("DELETE", "/v1/business/bank"),
     categories: async () => (await request<{ categories: Category[] }>("GET", "/v1/business/categories")).categories,
     createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,

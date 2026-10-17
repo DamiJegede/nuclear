@@ -159,6 +159,20 @@ business.put("/bank", async (c) => {
   return c.json({ bank: bankJson(out.bank) }, 201);
 });
 
+// Settlements to and from the payout bank: type 'settle' transactions (a positive daily net is a payout to the bank, a negative one a collection
+// from it). The settlement job is not built yet, so this is empty until it runs; the table is the transactions table, no separate payouts table.
+business.get("/payouts", async (c) => {
+  const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).safeParse(c.req.query());
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  const id = c.get("auth").accountId;
+  const rows = await c.get("sql")<{ id: string; amount: bigint; status: string; status_code: string | null; ts: Date; completed_at: Date | null; payout: boolean; last4: string | null }[]>`
+    select t.id, t.amount, t.status, t.status_code, t."timestamp" as ts, t.completed_at, (t.to_bank_account_id is not null) as payout, ba.last4
+      from transactions t left join bank_accounts ba on ba.id = coalesce(t.to_bank_account_id, t.from_bank_account_id)
+     where t.type = 'settle' and (t.from_account_id = ${id} or t.to_account_id = ${id})
+     order by t."timestamp" desc, t.id desc limit ${q.data.limit}`;
+  return c.json({ payouts: rows.map((r) => ({ id: r.id, kind: r.payout ? "payout" : "collection", amount: Number(r.amount), status: r.status, status_code: r.status_code, timestamp: r.ts, completed_at: r.completed_at, bank_last4: r.last4 })) });
+});
+
 business.delete("/bank", async (c) => {
   const { accountId } = c.get("auth");
   await c.get("sql").begin(async (tx) => {

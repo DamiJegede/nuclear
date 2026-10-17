@@ -343,6 +343,7 @@ Sends, purchases, settlements, refunds and adjustments are recorded here, includ
 | to_bank_account_id | Nullable foreign key to bank_accounts.id; populated for a positive merchant daily-net payout (type settle). |
 | amount | Positive amount in integer minor units. |
 | related_transaction_id | Nullable foreign key to transactions.id; required for refund to identify the original completed pay transaction. Corrections may also reference their original operation under defined adjustment rules. |
+| settlement_id | Nullable foreign key to settlements.id; set only on `settle` transactions (a CHECK enforces it) to the run that produced them. Added by migration 0025 (physically last in the dev database). |
 | terminal_id | Nullable foreign key to terminals.id for a pay or refund taken on a terminal. A trigger requires the terminal to belong to the merchant (to_account_id for pay, from_account_id for refund). |
 | reference | Nullable merchant order reference (1-64 characters); pay only. |
 | approved_by_account_id | Nullable foreign key to the approving staff member's accounts.id; refund only, set when a staff tap approved it. |
@@ -483,6 +484,24 @@ Apple pass proposal: put the pass UUID in nfc.message and use the approved Apple
 
 An authenticated merchant payment intent supplies merchant and amount; a tag URL identifies/verifies the spending credential and is never itself a debit endpoint. After verification, enforce tag, wallet, account and balance limits and commit the debit idempotently. SDM freshness does not cryptographically bind the physical tag to the amount or merchant; session/intent binding and the desired customer confirmation policy remain to be specified.
 
+## settlements
+
+One row per settlement run, i.e. per daily cutoff (migration 0025; the settlement job that writes it is not built yet). The run is created first, which claims its `cutoff_date`, then writes one `settle` transaction per merchant with a non-zero net, then closes.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key. |
+| cutoff_date | The program date (America/New_York) being settled. Unique: one run per date, so a rerun or a second cron cannot settle the same day twice. |
+| cutoff_at | The exact instant the merchants' nets were computed at; immutable once set. |
+| status | running (default), submitted (sent to the bank), completed or failed. Completed requires completed_at. |
+| merchants | Number of merchants with a settle transaction in this run. |
+| payout_total, collection_total | Cents paid out to merchants' banks and collected from them (both non-negative). |
+| provider_reference | Bank or ACH batch identifier. |
+| failure_code | Why a failed run failed. |
+| created_at, completed_at, updated_at | Timestamps. |
+
+Per-merchant history stays in `transactions` (type `settle`, `settlement_id` pointing here, idempotency key `settle:<cutoff date>` per merchant, so a merchant can never be settled twice for a date). A missed cron is caught up the way the daily reset is: the next run settles every date after the last completed `cutoff_date`.
+
 ## ledger_entries
 
 Adopted in the schema plan: append-only monetary postings underlying the product transactions and balance summaries. This is one additional internal table, not a separate product flow.
@@ -517,6 +536,7 @@ The dev database (nuclear-dev) will be rebuilt from scratch into a new database 
 | Table | Column | Logical position | Added by |
 | --- | --- | --- | --- |
 | accounts | bio | before created_at | 0023 |
+| transactions | settlement_id | after related_transaction_id (end of the table today) | 0025 |
 | orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
 | shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |
 

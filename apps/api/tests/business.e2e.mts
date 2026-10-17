@@ -65,6 +65,21 @@ const bank = await call("PUT", "/v1/business/bank", { token: B, body: { routing_
 eq("a payout bank is saved and only its last four come back", [bank.status, bank.json.bank.last4, bank.json.bank.status, JSON.stringify(bank.json).includes("000123456789")], [201, "6789", "active", false]);
 await call("PUT", "/v1/business/bank", { token: B, body: { routing_number: "110000000", account_number: "99887766" } });
 eq("replacing it marks the old one removed and the page shows the new one", [(await get("/bank")).json.bank.last4, (await q("select status from bank_accounts where account_id=$1 order by created_at", [biz.account_id])).map((r: any) => r.status), (await call("GET", `/v1/admin/merchants/${biz.account_id}`, { token: OP })).json.merchant.bank.last4], ["7766", ["removed", "active"], "7766"]);
+const bankId = (await q("select bank_account_id id from businesses where account_id=$1", [biz.account_id]))[0].id;
+eq("no payouts yet (the settlement job is not built)", (await get("/payouts")).json.payouts, []);
+await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 123400, 'completed', now(), 'settle-1')", [biz.account_id, bankId]);
+await q("insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 500, 'pending', null, 'settle-2')", [biz.account_id, bankId]);
+await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 777, 'completed', now(), 'settle-x')", [other.account_id, (await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1,'110000000','12345678','5678') returning id", [other.account_id]))[0].id]);
+const po = (await get("/payouts")).json.payouts;
+eq("settlements show as payouts (to the bank) and collections (from it), newest first, with the bank's last four; never another business's", [po.map((p: any) => [p.kind, p.amount, p.status, p.bank_last4]), (await call("GET", "/v1/business/payouts", { token: O })).json.payouts.map((p: any) => p.amount)], [[["collection", 500, "pending", "7766"], ["payout", 123400, "completed", "7766"]], [777]]);
+const run = (await q("insert into settlements (cutoff_date, cutoff_at) values ('2026-10-16', now()) returning id"))[0].id;
+await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key, settlement_id) values ('settle', $1, $1, $2, 100, 'completed', now(), 'settle:2026-10-16', $3)", [biz.account_id, bankId, run]);
+const refuse = async (sqlText: string, params: unknown[] = []) => { try { await q(sqlText, params); return "accepted"; } catch { return "refused"; } };
+eq("settlements: one run per cutoff date; completed needs a time; only settle transactions may point at a run", [
+  await refuse("insert into settlements (cutoff_date, cutoff_at) values ('2026-10-16', now())"),
+  await refuse("insert into settlements (cutoff_date, cutoff_at, status) values ('2026-10-15', now(), 'completed')"),
+  await refuse("insert into settlements (cutoff_date, cutoff_at, payout_total) values ('2026-10-14', now(), -1)"),
+  (await q("select count(*)::int n from transactions where settlement_id = $1", [run]))[0].n], ["refused", "refused", "refused", 1]);
 eq("removing the bank clears it", [(await call("DELETE", "/v1/business/bank", { token: B })).status, (await get("/bank")).json.bank, (await q("select bank_account_id from businesses where account_id=$1", [biz.account_id]))[0].bank_account_id], [204, null, null]);
 
 // ---- categories and products
@@ -119,4 +134,5 @@ await q(`insert into checkouts (account_id, terminal_id, total, status) select $
 await q(`insert into checkout_items (checkout_id, name, unit_price, quantity) select id, 'Thing', 100, 1 from checkouts where account_id = $1 and total = 100`, [biz.account_id]);
 const listed = (await get("/checkouts?status=open&limit=50")).json.checkouts;
 eq("a page of orders carries its items (every one has its line)", [listed.length, listed.filter((c: any) => c.items.length === 1).length], [30, 30]);
+eq("only a settle transaction may point at a settlement run (a payment cannot)", [(await q("select count(*)::int n from transactions where type = 'pay'"))[0].n > 0, await refuse("update transactions set settlement_id = (select id from settlements limit 1) where type = 'pay'")], [true, "refused"]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

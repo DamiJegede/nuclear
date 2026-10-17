@@ -24,6 +24,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
     overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0 }, yesterday: { net: 0 } }),
+    payouts: vi.fn().mockResolvedValue([]),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
     products: vi.fn().mockResolvedValue([]),
@@ -219,6 +220,20 @@ describe("refunds, staff, orbs, profile", () => {
     await waitFor(() => expect(setBio).toHaveBeenCalledWith("We roast our own beans."));
     expect(setHandle).toHaveBeenCalledWith("newname");
   });
+});
+
+it("the payout bank card lists payouts and collections (empty until settlements run)", async () => {
+  const payouts = vi.fn().mockResolvedValue([
+    { id: "s1", kind: "payout", amount: 123400, status: "completed", status_code: null, timestamp: "2026-10-16T05:00:00Z", completed_at: "2026-10-16T09:00:00Z", bank_last4: "0884" },
+    { id: "s2", kind: "collection", amount: 500, status: "pending", status_code: null, timestamp: "2026-10-17T05:00:00Z", completed_at: null, bank_last4: "0884" },
+  ]);
+  const { user } = await signIn(fakeApi({ payouts, bank: vi.fn().mockResolvedValue({ id: "b1", last4: "0884", status: "active", created_at: "2026-10-01T00:00:00Z" }) }));
+  await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+  const bank = await screen.findByRole("heading", { level: 2, name: "Payout Bank" }).then((h) => h.closest(".card") as HTMLElement);
+  expect(await within(bank).findByText("$1,234.00")).toBeInTheDocument();
+  expect(within(bank).getByText("−$5.00")).toBeInTheDocument();
+  expect(bank).toHaveTextContent("Collection");
+  expect(bank).toHaveTextContent("completed");
 });
 
 const PRODUCT = { id: "pr1", category_id: "c1", name: "Latte", currency: "USD", price: 450, discount: 50, effective_price: 400, photo: null, stock: 10, active: true, status: "available" as const, total_sold: 30, sold_today: 4, created_at: "2026-10-01T00:00:00Z" };

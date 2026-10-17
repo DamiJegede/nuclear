@@ -461,3 +461,9 @@ dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: ri
 /* Per-view Refresh: a small icon button */
 .icon-btn { padding: 0; width: 32px; height: 32px; display: inline-grid; place-items: center; border-radius: 8px; }
 .head-actions { align-items: center; }
+
+/* Payouts list inside the Payout Bank card */
+.sub-title { margin: 20px 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.payout-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; }
+.payout-list li { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto auto; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.payout-list li:last-child { border-bottom: 0; }

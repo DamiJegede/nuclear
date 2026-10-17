@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { ApiError, type Account, type Api, type BusinessDocument, type Device, type PayoutBank as Bank, type Profile as BusinessProfile } from "../api";
+import { ApiError, type Account, type Api, type BusinessDocument, type Device, type Payout, type PayoutBank as Bank, type Profile as BusinessProfile } from "../api";
+import { money } from "../format";
 import { digitsOnly } from "../inputs";
 import { drop } from "../cache";
 import { usePageTitle } from "../title";
@@ -31,7 +32,7 @@ const Fact = ({ label, children }: { label: string; children: ReactNode }) => (
 export function Profile({ api, account, onChanged, onError }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void }) {
   usePageTitle("Profile");
   const [n, setN] = useState(0);                       // Refresh rebuilds the cards so each asks the API again
-  const refresh = () => { drop("documents", "bank", "profile", "devices"); onChanged(); setN((v) => v + 1); };
+  const refresh = () => { drop("documents", "bank", "payouts", "profile", "devices"); onChanged(); setN((v) => v + 1); };
   return (
     <section>
       <div className="head"><h1>Profile</h1><div className="head-actions"><RefreshButton onClick={refresh} /></div></div>
@@ -276,6 +277,7 @@ function BusinessDetails({ api, onError }: { api: Api; onError: (e: unknown) => 
 /** Where settlements will be paid. Only the last four digits of the account are ever shown; Edit reveals the change and remove buttons. */
 function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   const { data, failed, retry } = useList<Bank | null>(useCallback(() => api.bank(), [api]), onError, "bank");
+  const payouts = useList<Payout[]>(useCallback(() => api.payouts(), [api]), onError, "payouts");
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -313,7 +315,23 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
           {data && <button type="button" className="ghost" onClick={() => { setError(null); setRemoving(true); }}>Remove</button>}
         </div>
       )}
-      <p className="hint">Payouts aren't switched on yet. This is where your settlements will go.</p>
+      <h3 className="sub-title">Payouts</h3>
+      {payouts.failed && !payouts.data ? <p className="error" role="alert">Couldn't load payouts. <button className="link" onClick={payouts.retry}>Try Again</button></p>
+        : !payouts.data ? <p className="muted" role="status">Loading…</p>
+        : payouts.data.length === 0 ? <p className="dim">No payouts yet.</p>
+        : (
+          <ul className="payout-list">
+            {payouts.data.map((p) => (
+              <li key={p.id}>
+                <span className="when">{p.completed_at ? new Date(p.completed_at).toLocaleDateString() : new Date(p.timestamp).toLocaleDateString()}</span>
+                <span>{p.kind === "payout" ? "Payout" : "Collection"}{p.bank_last4 ? <span className="muted note">•••• {p.bank_last4}</span> : null}</span>
+                <span className="num">{p.kind === "collection" ? "−" : ""}{money(p.amount)}</span>
+                <span className={`pill ${p.status === "completed" ? "available" : p.status === "failed" || p.status === "returned" ? "closed" : "pending"}`}>{p.status}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      <p className="hint">Payouts aren't switched on yet. Settlements will be listed here once they start.</p>
       {adding && (
         <Modal title={data ? "Replace Payout Bank" : "Add Payout Bank"} onClose={() => setAdding(false)} locked={busy}>
           <form onSubmit={save} className="modal-form">
