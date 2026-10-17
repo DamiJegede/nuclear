@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import type { Account, Api, Overview as OverviewData } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
@@ -10,7 +11,7 @@ import { PhotoCrop } from "./PhotoCrop";
 export function Overview({ api, account, onChanged, onError, go }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void; go: (page: string) => void }) {
   usePageTitle("Overview");
   // One request for the whole page (it used to be ten, each repeating the sign-in checks).
-  const { data, failed, retry } = useList<OverviewData>(useCallback(() => api.overview(), [api]), onError);
+  const { data, failed, retry } = useList<OverviewData>(useCallback(() => api.overview(), [api]), onError, "overview");
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -30,7 +31,7 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
 
   return (
     <section>
-      <div className="head"><h1>Overview</h1><button type="button" className="ghost" onClick={retry}>Refresh</button></div>
+      <div className="head"><h1>Overview</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
       {refundCount > 0 && (
         <div className="banner bad" role="status">
           {int(refundCount)} refund{refundCount === 1 ? "" : "s"} ({money(pendingTotal)}) waiting for your approval. <button type="button" className="link" onClick={() => go("refunds")}>Review Refunds</button>

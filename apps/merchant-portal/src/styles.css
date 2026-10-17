@@ -409,8 +409,8 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 /* Hover or keyboard focus inverts the whole card (the opposite of the page), like the admin portal's selected look. */
 .linkcard:hover, .linkcard:focus-within { background: var(--pop-bg); color: var(--pop-text); border-color: var(--pop-bg); }
 .linkcard:hover h2, .linkcard:focus-within h2, .linkcard:hover .sub, .linkcard:focus-within .sub, .linkcard:hover .muted, .linkcard:focus-within .muted, .linkcard:hover .tile-label, .linkcard:focus-within .tile-label { color: var(--pop-muted); }
-.linkcard:hover .tile-rule, .linkcard:focus-within .tile-rule { border-top-color: var(--pop-muted); }
-.linkcard:hover .avatar, .linkcard:focus-within .avatar { background: var(--pop-soft); border-color: var(--pop-muted); }
+.linkcard:hover .tile-rule, .linkcard:focus-within .tile-rule { border-top-color: #86efac; }   /* light green on hover */
+.linkcard:hover .avatar, .linkcard:focus-within .avatar { background: var(--pop-soft); }
 .linkcard:hover .avatar-initials, .linkcard:focus-within .avatar-initials { color: var(--pop-text); }
 .linkcard :focus-visible { outline-color: var(--pop-text); }
 .linkcard h2 { margin: 0 0 4px; }
@@ -426,7 +426,7 @@ textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(
 .tile-name { font-size: 24px; font-weight: 700; display: block; overflow-wrap: anywhere; line-height: 1.2; }
 .tile-line { margin: 4px 0 0; font-size: 15px; }
 .photo-btn { position: relative; z-index: 1; padding: 0; background: transparent; border-radius: 50%; flex: none; display: block; }
-.photo-btn .avatar { width: 104px; height: 104px; font-size: 38px; }
+.photo-btn .avatar { width: 104px; height: 104px; font-size: 38px; border: 0; }
 .photo-hint { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
 .photo-btn:hover .photo-hint, .photo-btn:focus-visible .photo-hint { opacity: 1; }
 .crop { display: grid; justify-items: center; gap: 12px; }
@@ -457,3 +457,7 @@ dl.facts .fact { align-items: baseline; }
 dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: right; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
 .identity + .facts { margin-top: 4px; }
 .card form .fields { margin-bottom: 12px; }
+
+/* Per-view Refresh: a small icon button */
+.icon-btn { padding: 0; width: 32px; height: 32px; display: inline-grid; place-items: center; border-radius: 8px; }
+.head-actions { align-items: center; }

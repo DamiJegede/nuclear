@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import { ApiError, type Api, type Terminal } from "../api";
 import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
@@ -11,7 +12,7 @@ const tokenFile = (t: Issued) => `Nuclear Business terminal session\nTerminal: $
 /** Terminals: create, rename, refund permission, sign a terminal in (new session token) or out, and pair or unpair its Orb. */
 export function Terminals({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   usePageTitle("Terminals");
-  const { data, failed, retry } = useList<Terminal[]>(useCallback(() => api.terminals(), [api]), onError);
+  const { data, failed, retry } = useList<Terminal[]>(useCallback(() => api.terminals(), [api]), onError, "terminals");
   const [form, setForm] = useState<Terminal | "new" | null>(null);
   const [action, setAction] = useState<{ t: Terminal; kind: "session" | "revoke" | "unpair" } | null>(null);
   const [orbFor, setOrbFor] = useState<Terminal | null>(null);
@@ -35,7 +36,7 @@ export function Terminals({ api, onError }: { api: Api; onError: (e: unknown) =>
 
   return (
     <section>
-      <div className="head"><h1>Terminals</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Terminal</button></div></div>
+      <div className="head"><h1>Terminals</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Terminal</button><RefreshButton onClick={retry} /></div></div>
       <div className="card flush">
         {failed && !data ? <p className="error pad" role="alert">Couldn't load terminals. <button className="link" onClick={retry}>Try Again</button></p>
           : !data ? <p className="muted pad" role="status">Loading…</p>

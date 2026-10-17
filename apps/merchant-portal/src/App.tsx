@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { clearCache } from "./cache";
 import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
 import { usePageTitle } from "./title";
 import { Catalog } from "./views/Catalog";
@@ -64,7 +65,7 @@ export function App({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const clear = useCallback((why?: string) => { writeToken(null); setToken(null); setAccount(null); setPage("overview", true); setNotice(why ?? null); }, [setPage]);
+  const clear = useCallback((why?: string) => { clearCache(); writeToken(null); setToken(null); setAccount(null); setPage("overview", true); setNotice(why ?? null); }, [setPage]);
   const onError = useCallback((e: unknown) => {
     if (e instanceof ApiError && e.status === 401) clear("Your session ended. Sign in again.");
     else if (e instanceof ApiError && e.code === "account_not_approved") setAccount((a) => (a ? { ...a, status: (e.extra?.status as Account["status"]) ?? "pending" } : a));
@@ -80,7 +81,7 @@ export function App({
   usePageTitle(undefined);
 
   if (!token || !api) {
-    return <Login signIn={signIn} signUp={signUp} notice={notice} onSignedIn={(s) => { writeToken(s.session_token); setNotice(null); setToken(s.session_token); }} />;
+    return <Login signIn={signIn} signUp={signUp} notice={notice} onSignedIn={(s) => { clearCache(); writeToken(s.session_token); setNotice(null); setToken(s.session_token); }} />;
   }
   if (!account) return <div className="login"><p className="muted" role="status">Loading…</p></div>;
   if (account.type !== "B") {

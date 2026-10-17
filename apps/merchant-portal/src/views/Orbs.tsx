@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import type { Api, OwnedOrb, Terminal } from "../api";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
@@ -11,7 +12,7 @@ export function Orbs({ api, onError }: { api: Api; onError: (e: unknown) => void
     const [orbs, terminals] = await Promise.all([api.orbs(), api.terminals()]);
     return { orbs, terminals };
   }, [api]);
-  const { data, failed, retry } = useList<{ orbs: OwnedOrb[]; terminals: Terminal[] }>(load, onError);
+  const { data, failed, retry } = useList<{ orbs: OwnedOrb[]; terminals: Terminal[] }>(load, onError, "orbs");
   const [target, setTarget] = useState<OwnedOrb | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function Orbs({ api, onError }: { api: Api; onError: (e: unknown) => void
 
   return (
     <section>
-      <div className="head"><h1>Orbs</h1></div>
+      <div className="head"><h1>Orbs</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
       <div className="card flush">
         {failed && !data ? <p className="error pad" role="alert">Couldn't load Orbs. <button className="link" onClick={retry}>Try Again</button></p>
           : !data ? <p className="muted pad" role="status">Loading…</p>

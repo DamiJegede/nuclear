@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { RefreshButton } from "./RefreshButton";
 import { ApiError, type Api, type Category, type Product } from "../api";
 import { dollarsToCents, int, money } from "../format";
 import { decimalOnly, digitsOnly } from "../inputs";
+import { peek, put } from "../cache";
 import { usePageTitle } from "../title";
 import { Modal } from "./Modal";
 
@@ -21,8 +23,10 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try { const [categories, products] = await Promise.all([api.categories(), api.products()]); setData({ categories, products }); setFailed(false); }
+  const load = useCallback(async (force = false) => {
+    const hit = force ? undefined : peek<Load>("catalog");
+    if (hit) { setData(hit); setFailed(false); return; }          // back to the page: no request
+    try { const [categories, products] = await Promise.all([api.categories(), api.products()]); const d = { categories, products }; put("catalog", d); setData(d); setFailed(false); }
     catch (e) { setFailed(true); onError(e); }
   }, [api, onError]);
   useEffect(() => { void load(); }, [load]);
@@ -45,14 +49,14 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
     try { await api.updateProduct(p.id, { active: !p.active }); await load(); } catch (e) { onError(e); }
   }
 
-  if (!data) return <section><h1>Catalog</h1>{failed ? <p className="error" role="alert">Couldn't load the catalog. <button className="link" onClick={() => void load()}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
+  if (!data) return <section><h1>Catalog</h1>{failed ? <p className="error" role="alert">Couldn't load the catalog. <button className="link" onClick={() => void load(true)}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
   const term = q.trim().toLowerCase();
   const rows = data.products.filter((p) => (filter === "" || p.category_id === filter) && (!term || p.name.toLowerCase().includes(term)));
   const catName = (id: string | null) => data.categories.find((c) => c.id === id)?.name ?? "—";
 
   return (
     <section>
-      <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button></div></div>
+      <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button><RefreshButton onClick={() => void load(true)} /></div></div>
       <div className="catalog">
         <aside className="card categories" aria-label="Categories">
           <h2>Categories</h2>

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import type { Api, Checkout } from "../api";
 import { money } from "../format";
 import { usePageTitle } from "../title";
@@ -11,7 +12,7 @@ const TABS = [["open", "Open"], ["paid", "Paid"], ["canceled", "Canceled"], ["ex
 export function Orders({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   usePageTitle("Orders");
   const [tab, setTab] = useState<Checkout["status"]>("open");
-  const { data, failed, retry } = useList<Checkout[]>(useCallback(() => api.checkouts(tab), [api, tab]), onError);
+  const { data, failed, retry } = useList<Checkout[]>(useCallback(() => api.checkouts(tab), [api, tab]), onError, `orders:${tab}`);
   const [open, setOpen] = useState<string | null>(null);
   const [target, setTarget] = useState<Checkout | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,7 +28,7 @@ export function Orders({ api, onError }: { api: Api; onError: (e: unknown) => vo
 
   return (
     <section>
-      <div className="head"><h1>Orders</h1></div>
+      <div className="head"><h1>Orders</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
       <div className="tabbar" role="tablist" aria-label="Orders">
         {TABS.map(([v, label]) => <button key={v} type="button" role="tab" aria-selected={tab === v} className={tab === v ? "subtab active" : "subtab"} onClick={() => setTab(v)}>{label}</button>)}
       </div>

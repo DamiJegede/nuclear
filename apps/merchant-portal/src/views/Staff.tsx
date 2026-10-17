@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import { ApiError, type Api, type HandleLookup, type StaffMember } from "../api";
 import { usePageTitle } from "../title";
 import { useList, day } from "../useList";
@@ -9,7 +10,7 @@ const ROLE_TEXT = { read: "Read: can look up orders", write: "Write: can approve
 /** People who work for the business: add by handle, change between read and write, remove. */
 export function Staff({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   usePageTitle("Staff");
-  const { data, failed, retry } = useList<StaffMember[]>(useCallback(() => api.staff(), [api]), onError);
+  const { data, failed, retry } = useList<StaffMember[]>(useCallback(() => api.staff(), [api]), onError, "staff");
   const [adding, setAdding] = useState(false);
   const [remove, setRemove] = useState<StaffMember | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,7 +29,7 @@ export function Staff({ api, onError }: { api: Api; onError: (e: unknown) => voi
 
   return (
     <section>
-      <div className="head"><h1>Staff</h1><div className="head-actions"><button type="button" onClick={() => setAdding(true)}>Add Staff</button></div></div>
+      <div className="head"><h1>Staff</h1><div className="head-actions"><button type="button" onClick={() => setAdding(true)}>Add Staff</button><RefreshButton onClick={retry} /></div></div>
       {error && !remove && <p className="error" role="alert">{error}</p>}
       <div className="card flush">
         {failed && !data ? <p className="error pad" role="alert">Couldn't load staff. <button className="link" onClick={retry}>Try Again</button></p>

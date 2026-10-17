@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { RefreshButton } from "./RefreshButton";
 import type { Api, DayRange, TxKind, TxPage, TxRow } from "../api";
 import { int, money } from "../format";
+import { peek, put } from "../cache";
 import { usePageTitle } from "../title";
 
 const KINDS: { kind: TxKind; label: string }[] = [
@@ -71,9 +73,12 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
   const [failed, setFailed] = useState(false);
   const [more, setMore] = useState(false);
 
-  const load = useCallback(async (k: TxKind, r: DayRange) => {
+  const load = useCallback(async (k: TxKind, r: DayRange, force = false) => {
+    const key = `tx:${k}|${r.from ?? ""}|${r.to ?? ""}`;
+    const hit = force ? undefined : peek<TxPage>(key);
+    if (hit) { setRows(hit.transactions); setCounts(hit.counts); setTotals(hit.totals); setNext(hit.next_cursor); setFailed(false); return; }   // back to a page already seen: no request
     setRows(null);
-    try { const p = await api.transactions(k, undefined, r); setRows(p.transactions); setCounts(p.counts); setTotals(p.totals); setNext(p.next_cursor); setFailed(false); }
+    try { const p = await api.transactions(k, undefined, r); put(key, p); setRows(p.transactions); setCounts(p.counts); setTotals(p.totals); setNext(p.next_cursor); setFailed(false); }
     catch (e) { setFailed(true); onError(e); }
   }, [api, onError]);
   useEffect(() => {
@@ -91,7 +96,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
 
   return (
     <section>
-      <div className="head"><h1>Transactions</h1></div>
+      <div className="head"><h1>Transactions</h1><div className="head-actions"><RefreshButton onClick={() => { if (!badRange) void load(kind, range, true); }} /></div></div>
       <div className="period-bar">
         <label className="period-field"><span className="sr-only">Period</span>
           <select value={period} onChange={(e) => setPeriod(e.target.value as Period)}>{PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</select>
@@ -119,7 +124,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
         ))}
       </div>
       <div className="card flush">
-        {failed && !rows ? <p className="error pad" role="alert">Couldn't load transactions. <button className="link" onClick={() => void load(kind, range)}>Try Again</button></p>
+        {failed && !rows ? <p className="error pad" role="alert">Couldn't load transactions. <button className="link" onClick={() => void load(kind, range, true)}>Try Again</button></p>
           : !rows ? <p className="muted pad" role="status">Loading…</p>
           : rows.length === 0 ? <p className="muted pad">No transactions here yet.</p>
           : (

@@ -383,3 +383,47 @@ describe("overview", () => {
     expect(await screen.findByText("Choose a PNG, JPEG or WebP image.")).toBeInTheDocument();
   });
 });
+
+describe("page cache", () => {
+  it("going back to a page shows what it already loaded without asking the API again; Refresh asks again", async () => {
+    const overview = vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0 }, yesterday: { net: 0 } });
+    const terminals = vi.fn().mockResolvedValue([TERMINAL]);
+    const transactions = vi.fn().mockResolvedValue({ counts: { all: 0, payments: 0, refunds: 0, pending: 0 }, totals: { payments: { count: 0, volume: 0 }, refunds: { count: 0, volume: 0 } }, transactions: [], next_cursor: null });
+    const { user } = await signIn(fakeApi({ overview, terminals, transactions }));
+    await screen.findByRole("article", { name: "Today" });
+    await user.click(await navLink("Terminals"));
+    await screen.findByRole("row", { name: /Counter/ });
+    await user.click(await navLink("Overview"));
+    expect(await screen.findByRole("article", { name: "Today" })).toBeInTheDocument();
+    await user.click(await navLink("Terminals"));
+    expect(await screen.findByRole("row", { name: /Counter/ })).toBeInTheDocument();
+    expect(overview).toHaveBeenCalledTimes(1);
+    expect(terminals).toHaveBeenCalledTimes(1);
+    // transactions: the same filter and period is also remembered
+    await user.click(await navLink("Transactions"));
+    await screen.findByText("No transactions here yet.");
+    await user.click(await navLink("Overview"));
+    await user.click(await navLink("Transactions"));
+    await screen.findByText("No transactions here yet.");
+    expect(transactions).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByRole("banner")).queryByRole("button", { name: "Refresh" })).toBeNull();   // not in the top bar
+    // Refresh (the icon button in the view's header) pulls this view again, and only this view
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(transactions).toHaveBeenCalledTimes(2));
+    expect(overview).toHaveBeenCalledTimes(1);
+    expect(terminals).toHaveBeenCalledTimes(1);
+  });
+
+  it("a change the person makes empties the cache (reads keep it), so other pages pull fresh data next time", async () => {
+    const real = await import("./api");
+    const { put, peek } = await import("./cache");
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(init.method === "GET" ? { refunds: [] } : {}), { status: 200 })));
+    const api = real.createApi("tok", "http://x");
+    put("overview", { any: 1 });
+    await api.refunds("pending");
+    expect(peek("overview")).toEqual({ any: 1 });
+    await api.resolveRefund("r1", "approve");
+    expect(peek("overview")).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+});

@@ -1,3 +1,5 @@
+import { clearCache } from "./cache";
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, public extra?: Record<string, unknown>) {
     super(code);
@@ -87,7 +89,12 @@ export type Api = ReturnType<typeof createApi>;
 
 /** Calls made as a signed-in business owner. The session token is held by the caller, never logged. */
 export function createApi(token: string, base: string = API_URL) {
-  const request = <T>(method: string, path: string, body?: unknown, headers?: Record<string, string>) => send<T>(base, token, method, path, body, headers);
+  // Any successful change (not a read) empties the page cache, so the next visit to a page pulls fresh data.
+  const request = async <T>(method: string, path: string, body?: unknown, headers?: Record<string, string>) => {
+    const r = await send<T>(base, token, method, path, body, headers);
+    if (method !== "GET") clearCache();
+    return r;
+  };
   const id = encodeURIComponent;
   const qs = (o: Record<string, string | number | undefined>) => {
     const p = Object.entries(o).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);

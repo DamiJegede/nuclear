@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { RefreshButton } from "./RefreshButton";
 import type { Api, Refund } from "../api";
 import { money } from "../format";
 import { usePageTitle } from "../title";
@@ -11,7 +12,7 @@ const TABS = [["pending", "Awaiting Approval"], ["completed", "Completed"], ["fa
 export function Refunds({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   usePageTitle("Refunds");
   const [tab, setTab] = useState<Refund["status"]>("pending");
-  const { data, failed, retry } = useList<Refund[]>(useCallback(() => api.refunds(tab), [api, tab]), onError);
+  const { data, failed, retry } = useList<Refund[]>(useCallback(() => api.refunds(tab), [api, tab]), onError, `refunds:${tab}`);
   const [target, setTarget] = useState<{ r: Refund; action: "approve" | "reject" } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function Refunds({ api, onError }: { api: Api; onError: (e: unknown) => v
 
   return (
     <section>
-      <div className="head"><h1>Refunds</h1></div>
+      <div className="head"><h1>Refunds</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
       <div className="tabbar" role="tablist" aria-label="Refunds">
         {TABS.map(([v, label]) => <button key={v} type="button" role="tab" aria-selected={tab === v} className={tab === v ? "subtab active" : "subtab"} onClick={() => setTab(v)}>{label}</button>)}
       </div>
