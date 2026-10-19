@@ -17,6 +17,7 @@ import { handles } from "./routes/handles";
 import { checkouts, terminalCheckouts } from "./routes/checkouts";
 import { payments, terminalPayments } from "./routes/payments";
 import { refunds, terminalRefunds } from "./routes/refunds";
+import { employeeClaims, org } from "./routes/org";
 import { shop } from "./routes/shop";
 import { staff } from "./routes/staff";
 import { tags } from "./routes/tags";
@@ -48,7 +49,7 @@ const v1 = new Hono<AppContext>();
 v1.use("*", async (c, next) => {
   if (c.req.path.startsWith("/v1/admin")) return next();
   return cors({
-    origin: (origin, ctx) => ((ctx.env.MERCHANT_ORIGINS ?? "").split(",").map((o: string) => o.trim()).filter(Boolean).includes(origin) ? origin : null),
+    origin: (origin, ctx) => (((ctx.env.MERCHANT_ORIGINS ?? "") + "," + (ctx.env.ORG_ORIGINS ?? "")).split(",").map((o: string) => o.trim()).filter(Boolean).includes(origin) ? origin : null),
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["authorization", "content-type", "idempotency-key"],
     maxAge: 600,
@@ -64,6 +65,8 @@ v1.route("/devices", devices);
 v1.route("/handles", handles);
 v1.route("/photos", photos);
 v1.route("/business", business);
+v1.route("/org", org);
+v1.route("/employee/claims", employeeClaims);
 v1.route("/wallets", wallets);
 v1.route("/payments", payments);
 v1.route("/terminals", terminals);

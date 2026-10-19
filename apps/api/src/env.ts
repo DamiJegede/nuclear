@@ -33,6 +33,8 @@ export interface Env {
   BANK_ENCRYPTION_KEY?: string;
   /** Browser origins allowed to call the business API from a browser (the merchant portal), comma-separated. */
   MERCHANT_ORIGINS?: string;
+  /** Browser origins allowed to call the customer API from the organization portal, comma-separated. */
+  ORG_ORIGINS?: string;
   /** Browser origins allowed to call /v1/admin/* (comma-separated), e.g. the admin portal's URL. */
   ADMIN_ORIGINS?: string;
   /** Program daily associated-value cap in cents (draft target $2,000). Configurable until finalized. */

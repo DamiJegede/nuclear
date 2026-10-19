@@ -2,6 +2,7 @@ import { connect } from "../db";
 import type { Env } from "../env";
 import { easternDate, ensureDay } from "./dailyReset";
 import { sweep } from "./throttle";
+import { remindUnclaimed } from "./orgMail";
 
 /**
  * The daily job. Cloudflare fires it at 04:00 and 05:00 UTC, which brackets midnight in New York in
@@ -17,7 +18,10 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
     await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})
               on conflict (key) do update set value = excluded.value`;
-    return { ...(await ensureDay(sql, easternDate(new Date(scheduledTime)))), swept };
+    const day = await ensureDay(sql, easternDate(new Date(scheduledTime)));
+    // The monthly nudge to employees who have not claimed their employer credit (see lib/orgMail.ts); never blocks the reset.
+    const reminders = await remindUnclaimed(env, sql).catch((err) => (console.error("reminders failed", err), null));
+    return { ...day, swept, reminders };
   } finally {
     await sql.end();
   }

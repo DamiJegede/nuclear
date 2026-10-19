@@ -30,6 +30,8 @@ export type SystemStats = {
     /** Every posting event balances: total debits equal total credits. */
     ledger_balanced: boolean;
     earmarks_within_balances: boolean;
+    /** Money held for employees who have not claimed (ledger bucket employee_escrow) equals the sum of employees.balance. */
+    escrow_matches_employees: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
@@ -71,7 +73,9 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
                              then case direction when 'credit' then amount else -amount end end), 0)::bigint as funded,
            coalesce(sum(case when bucket = 'credit_receivable' and account_id is not null
                              then case direction when 'debit' then amount else -amount end end), 0)::bigint as credit,
-           coalesce(sum(case direction when 'debit' then amount else -amount end), 0)::bigint as net
+           coalesce(sum(case direction when 'debit' then amount else -amount end), 0)::bigint as net,
+           coalesce(sum(case when bucket = 'employee_escrow' then case direction when 'credit' then amount else -amount end end), 0)::bigint as escrow,
+           (select coalesce(sum(balance), 0)::bigint from employees) as employees_held
       from ledger_entries`;
 
   const [over] = await sql<{ n: number }[]>`
@@ -153,6 +157,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       credit_difference: creditDiff,
       ledger_balanced: Number(led!.net) === 0,
       earmarks_within_balances: over!.n === 0,
+      escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,

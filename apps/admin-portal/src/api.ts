@@ -20,6 +20,7 @@ export type Stats = {
     credit_difference: number;
     ledger_balanced: boolean;
     earmarks_within_balances: boolean;
+    escrow_matches_employees: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };

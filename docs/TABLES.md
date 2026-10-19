@@ -15,7 +15,7 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | Field | Description |
 | --- | --- |
 | id | Primary key identifying the consumer or business account. |
-| type | C for consumer; B for business. |
+| type | C for consumer; B for business; O for organization (an employer that credits employees, migration 0030). |
 | handle | Public unique account handle: 4-12 characters, letters and digits only, stored lowercase and matched case-insensitively. Nullable: not collected at signup. Only the primary/root account, from its own authenticated session, can set or change it; delegated wallet sessions, wallets and members never have or edit handles. Uniquely indexed; resolves to the account id. |
 | name | Account name. |
 | phone | Contact phone number. |
@@ -334,7 +334,7 @@ Sends, purchases, settlements, refunds and adjustments are recorded here, includ
 | Field | Description |
 | --- | --- |
 | id | Primary key identifying the operation. |
-| type | fund, send, pay, settle, refund, adjustment, or purchase. A purchase is a store purchase of bands/cards: from the buyer's account and wallet to the platform (no to_account); the posting debits the buyer's funded_balance and credits platform_clearing (migration 0010). |
+| type | fund, send, pay, settle, refund, adjustment, purchase, allocate or claim. allocate (migration 0030): an organization holds money for an employee who has not claimed yet, from the organization's account and wallet with no to_account; the posting debits funded_balance and credits employee_escrow. claim: the employee takes it, to the employee's account and wallet with no from_account; the posting debits employee_escrow and credits funded_balance. A purchase is a store purchase of bands/cards: from the buyer's account and wallet to the platform (no to_account); the posting debits the buyer's funded_balance and credits platform_clearing (migration 0010). |
 | from_account_id | Nullable foreign key to accounts.id; source owner. Required for fund/send/pay/settle/refund; NULL reserved for defined system adjustments. |
 | to_account_id | Nullable foreign key to accounts.id; destination owner. Required for fund/send/pay/settle/refund; NULL reserved for defined system adjustments. |
 | from_wallet_id | Nullable foreign key to wallets.id; populated for send/pay. |
@@ -375,6 +375,30 @@ Explicit endpoint foreign keys replace polymorphic from/to; tag_id/pass_id repla
 For each operation, populate the source/destination account owner IDs too; consumer self-funding normally has the same account on both sides. Enforce foreign keys plus type-specific required/forbidden endpoint constraints. Enforce wallet and bank ownership consistency with the corresponding account through composite foreign keys and supporting unique constraints. Foreign keys alone do not enforce business account type; that validation requires an additional database constraint mechanism. Credential references are mutually exclusive and allowed only for pay; online pay can have neither. Validate credential authority at execution time without requiring its current wallet assignment to remain the same forever.
 
 Index the account activity paths with timestamp/id for pagination and index referencing columns used for joins and reverse lookups; foreign keys do not automatically create all referencing indexes. Exact indexes will be finalized with representative queries. related_transaction_id is adopted. Enforce refund reference to completed pay, original merchant and wallet, and total completed/concurrent reserved refunds no greater than the original amount. Parent payment/attempt/payout relationships and system-adjustment endpoints remain to be specified before implementation. No migration has been applied.
+
+## employees
+
+Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an organization credits.
+
+| Field | Description |
+| --- | --- |
+| id | UUID primary key. |
+| org_account_id | The organization (account type O) that credits this person. |
+| employee_account_id | Nullable: the consumer account that claimed, NULL until then. |
+| employee_id | The organization's own alphanumeric, immutable employee identifier; unique within the organization. |
+| name | Updated from each CSV. |
+| email | Updated from each CSV; where the claim and reminder emails go. |
+| balance | Bigint cents held in escrow while the person has no account; 0 once claimed. Reconciled against the employee_escrow ledger bucket. |
+| claim_token_hash | SHA-256 of the emailed claim token (the token is never stored); NULL once claimed. Replaced by each reminder. |
+| reminded_at | When the person was last emailed about held money. |
+| created_at | Row creation time. |
+| updated_at | Last change. |
+
+There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in credit_batch_rows and the transactions.
+
+## credit_batches and credit_batch_rows
+
+Migration 0030. credit_batches: one row per CSV run (id, org_account_id, idempotency_key unique per organization, row_count, total, sent, held, created_at); the batch is a single database transaction. credit_batch_rows: one row per employee credited (id, batch_id, employee_ref, amount, mode `sent` or `held`, transaction_id unique, created_at).
 
 ## Merchant refunds, settlement and historical integrity
 
@@ -514,7 +538,7 @@ Adopted in the schema plan: append-only monetary postings underlying the product
 | posting_key | Stable event key grouping balanced entries, e.g. payment completion, funding release, or bank return. A funding or transaction can have several events. |
 | line_no | Entry number within the posting event; unique with the applicable funding_id or transaction_id and posting_key for retry safety. |
 | account_id | Nullable reference to accounts.id; NULL denotes a platform/system entry. |
-| bucket | Accounting bucket, including customer funded balance, approved-credit receivables and defined bank/platform accounts; no customer pending-funds bucket grants spending authority. Wallet spenders share an account bucket. |
+| bucket | Accounting bucket, including customer funded balance, approved-credit receivables and defined bank/platform accounts; no customer pending-funds bucket grants spending authority. Wallet spenders share an account bucket. Buckets: funded_balance, credit_receivable, pending_funding, bank_settlement, platform_clearing and (migration 0029) employee_escrow, which holds employer-funded credits for employees who have not claimed them yet. |
 | direction | debit or credit. Sign/effect follows the bucket's defined accounting classification. |
 | amount | Positive bigint cents. |
 | created_at | Posting timestamp. |

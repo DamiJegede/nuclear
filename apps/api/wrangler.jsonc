@@ -14,6 +14,8 @@
     "PUBLIC_URL": "https://nuclear-api.a-space.workers.dev",
     // The merchant portal (local dev and hosted) may call the business API from the browser.
     "MERCHANT_ORIGINS": "http://localhost:5174,https://nuclear-merchant.a-space.workers.dev",
+    // The organization portal (local dev and hosted).
+    "ORG_ORIGINS": "http://localhost:5175,https://nuclear-organization.a-space.workers.dev",
     "ADMIN_ORIGINS": "http://localhost:5173,https://nuclear-admin.a-space.workers.dev",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"

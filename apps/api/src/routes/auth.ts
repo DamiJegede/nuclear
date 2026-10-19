@@ -11,7 +11,7 @@ export const auth = new Hono<AppContext>();
 const platform = z.enum(["ios", "android", "web"]);
 
 const signupBody = z.object({
-  type: z.enum(["C", "B"]).default("C"),
+  type: z.enum(["C", "B", "O"]).default("C"),
   name: z.string().trim().min(1).max(120),
   email: z.string().trim().toLowerCase().email().max(254),
   phone: z.string().trim().max(32).optional(),

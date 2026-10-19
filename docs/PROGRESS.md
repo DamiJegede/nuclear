@@ -13,14 +13,15 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `5d6137d5` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `87047686` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `a06a1cfc` |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `fa214554` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, 28 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 32 tables, 30 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 26 API test suites (about 1,230 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 
@@ -73,6 +74,13 @@ Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgr
 - **Profile**: read-only cards with an Edit button top right (business, payout bank with a payouts list, business details, documents), plus sessions.
 - **Page cache**: pages remember what they loaded for five minutes, and a per-view Refresh icon reloads one view.
 - New `/v1/business/*` API for transactions, overview, profile, payout bank, payouts, categories, products and checkouts.
+
+## 5a. Organizations and employee credits (new, 2026-10-19)
+
+- Migration 0029 (`employee_escrow` ledger bucket) and 0030 (account type `O`, `allocate`/`claim` transactions, `employees`, `credit_batches`, `credit_batch_rows`), applied to nuclear-dev.
+- API: `/v1/org/*` and `POST /v1/employee/claims`; CSV batches run as one bulk transaction; escrow for unclaimed employees, claim by emailed one-time token, monthly reminder in the daily cron. Test suite `org` (31 checks); all 26 API suites pass.
+- `apps/organization-portal`: sign-in/sign-up, Overview (wallet, Add Funds, employees, held), Employees, Credits (CSV preview, confirm, run, history), Profile; 13 tests.
+- Deployed: https://nuclear-organization.a-space.workers.dev (`fa214554`). Open: an admin view of organizations, a public claim page, scheduled distributions. See docs/ORGANIZATIONS.md.
 
 ## 5b. Terminal app and Orb firmware (scaffolds)
 
