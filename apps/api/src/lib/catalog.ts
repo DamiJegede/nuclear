@@ -110,12 +110,11 @@ export async function reserveStock(tx: Tx, merchantId: string, lines: StockLine[
 export async function commitStock(tx: Tx, lines: StockLine[]): Promise<void> {
   const want = new Map<string, number>();
   for (const l of lines) want.set(l.productId, (want.get(l.productId) ?? 0) + l.quantity);
-  for (const [id, qty] of [...want].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    await tx`
+  // One round trip; the updates are applied in product-id order (the lock order).
+  await Promise.all([...want].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, qty]) => tx`
       update products
          set stock = case when stock is null then null else stock - ${qty} end,
              total_sold = total_sold + ${qty},
              sold_today = sold_today + ${qty}
-       where id = ${id}`;
-  }
+       where id = ${id}`));
 }

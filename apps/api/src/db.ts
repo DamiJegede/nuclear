@@ -8,6 +8,8 @@ export function connect(env: Env) {
     max: 5,
     fetch_types: false,
     prepare: false,
+    // Tests set globalThis.__sqlTrace to count the statements a request sends (each one is a network round trip in production).
+    ...((globalThis as { __sqlTrace?: (q: string) => void }).__sqlTrace ? { debug: (_c: number, q: string) => (globalThis as { __sqlTrace?: (q: string) => void }).__sqlTrace!(q) } : {}),
     types: {
       // Return bigint (money) as string-safe bigint; never as a lossy JS number.
       bigint: {

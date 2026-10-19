@@ -29,7 +29,12 @@ export async function ensureDay(sql: Sql, day: string): Promise<ResetResult> {
 }
 
 /** Middleware for routes that read or change the daily counters: catches up first if the cron missed a day. */
+const checked = new WeakSet<Request>();
 export const programDay: MiddlewareHandler<AppContext> = async (c, next) => {
-  await ensureDay(c.get("sql"), easternDate(new Date()));
+  // A route can match more than one registered pattern (/wallets and /wallets/*): check once per request.
+  if (!checked.has(c.req.raw)) {
+    checked.add(c.req.raw);
+    await ensureDay(c.get("sql"), easternDate(new Date()));
+  }
   await next();
 };

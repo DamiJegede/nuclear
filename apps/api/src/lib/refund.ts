@@ -113,19 +113,16 @@ async function settle(
         join checkout_items ci on ci.id = x.checkout_item_id
        where ci.product_id is not null
        group by ci.product_id order by ci.product_id`;
-    for (const r of rows) {
-      await tx`update products set stock = stock + ${r.q} where id = ${r.product_id} and stock is not null`;
-    }
+    // Sent together (one round trip), applied in product-id order.
+    await Promise.all(rows.map((r) => tx`update products set stock = stock + ${r.q} where id = ${r.product_id} and stock is not null`));
   }
 
   // Item refunds: the reserved units become refunded units on the order's lines.
-  for (const it of self?.items ?? []) {
-    await tx`
+  await Promise.all((self?.items ?? []).map((it) => tx`
       update checkout_items
          set refund_pending_quantity = refund_pending_quantity - ${it.quantity},
              refunded_quantity = refunded_quantity + ${it.quantity}
-       where id = ${it.checkout_item_id}`;
-  }
+       where id = ${it.checkout_item_id}`));
 
   const bal = await tx<{ account_id: string; credit_spent: bigint }[]>`
     select account_id, credit_spent from balances
@@ -262,11 +259,9 @@ export async function refundCore(tx: Tx, i: RefundInput): Promise<RefundOutcome>
   }
 
   // Accepted: reserve the units on the order's lines (settle() moves them to refunded).
-  for (const it of itemsJson ?? []) {
-    await tx`
+  await Promise.all((itemsJson ?? []).map((it) => tx`
       update checkout_items set refund_pending_quantity = refund_pending_quantity + ${it.quantity}
-       where id = ${it.checkout_item_id}`;
-  }
+       where id = ${it.checkout_item_id}`));
 
   if (queue) {
     const [r] = await tx<RefundRow[]>`select ${tx.unsafe(R_COLS)} from transactions where id = ${refundId}`;
@@ -322,11 +317,9 @@ export async function rejectPending(tx: Tx, merchantAccountId: string, refundId:
   const [row] = await tx<RefundRow[]>`
     update transactions set status = 'failed', status_code = 'rejected'
      where id = ${refundId} returning ${tx.unsafe(R_COLS)}`;
-  for (const it of row!.items ?? []) {
-    await tx`
+  await Promise.all((row!.items ?? []).map((it) => tx`
       update checkout_items set refund_pending_quantity = refund_pending_quantity - ${it.quantity}
-       where id = ${it.checkout_item_id}`;
-  }
+       where id = ${it.checkout_item_id}`));
   const s = await sums(tx, orig.id);
   return { kind: "declined", row: row!, replayed: false, remaining: orig.amount - s.completed - s.pending };
 }

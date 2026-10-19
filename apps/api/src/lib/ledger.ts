@@ -1,4 +1,4 @@
-import { creditWallet, debitWallet, spendable } from "./walletFunds";
+import { earmarkedTotalQuery, spendableFrom } from "./walletFunds";
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 
@@ -44,8 +44,7 @@ export type SendOutcome =
   | { kind: "error"; status: 404 | 409 | 422; error: string };
 
 /** Incoming value counted against a recipient's program day: released loads + incoming sends. */
-async function incomingToday(tx: Tx, accountId: string): Promise<bigint> {
-  const [row] = await tx<{ total: bigint }[]>`
+const incomingTodayQuery = (tx: Tx, accountId: string) => tx<{ total: bigint }[]>`
     with start as (
       select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t
     )
@@ -57,6 +56,9 @@ async function incomingToday(tx: Tx, accountId: string): Promise<bigint> {
       coalesce((select sum(amount) from fundings, start
                  where account_id = ${accountId} and released_at >= start.t), 0)
     )::bigint as total`;
+
+async function incomingToday(tx: Tx, accountId: string): Promise<bigint> {
+  const [row] = await incomingTodayQuery(tx, accountId);
   return row!.total;
 }
 
@@ -75,24 +77,28 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     return { kind: "error", status: 404, error: "wallet_not_found" };
   }
   const wanted = i.authWalletId ?? i.fromWalletId;
-  const [from] = wanted
-    ? await sql<{ id: string; account_id: string }[]>`
-        select id, account_id from wallets where id = ${wanted} and account_id = ${i.actorAccountId}`
-    : await sql<{ id: string; account_id: string }[]>`
-        select id, account_id from wallets
-         where account_id = ${i.actorAccountId} and type = 'default'`;
-  if (!from) return { kind: "error", status: 404, error: "wallet_not_found" };
-
-  const [to] = await sql<{ id: string; account_id: string; type: string }[]>`
-    select w.id, w.account_id, a.type from wallets w join accounts a on a.id = w.account_id
-     where w.id = ${i.toWalletId}`;
-  if (!to) return { kind: "error", status: 404, error: "recipient_not_found" };
-  if (to.id === from.id) return { kind: "error", status: 422, error: "same_wallet" };
-  // Wallets of one account share funds; budget changes authority, it does not move money.
-  if (to.account_id === from.account_id) return { kind: "error", status: 422, error: "same_account" };
-  if (to.type !== "C") return { kind: "error", status: 422, error: "recipient_not_eligible" };
 
   return sql.begin(async (tx): Promise<SendOutcome> => {
+    // Resolve and authorize both endpoints in one round trip, on the transaction's connection (parallel queries outside a transaction
+    // would each take a pool connection).
+    const [[from], [to]] = await Promise.all([
+      wanted
+        ? tx<{ id: string; account_id: string }[]>`
+            select id, account_id from wallets where id = ${wanted} and account_id = ${i.actorAccountId}`
+        : tx<{ id: string; account_id: string }[]>`
+            select id, account_id from wallets
+             where account_id = ${i.actorAccountId} and type = 'default'`,
+      tx<{ id: string; account_id: string; type: string }[]>`
+        select w.id, w.account_id, a.type from wallets w join accounts a on a.id = w.account_id
+         where w.id = ${i.toWalletId}`,
+    ]);
+    if (!from) return { kind: "error", status: 404, error: "wallet_not_found" };
+    if (!to) return { kind: "error", status: 404, error: "recipient_not_found" };
+    if (to.id === from.id) return { kind: "error", status: 422, error: "same_wallet" };
+    // Wallets of one account share funds; budget changes authority, it does not move money.
+    if (to.account_id === from.account_id) return { kind: "error", status: 422, error: "same_account" };
+    if (to.type !== "C") return { kind: "error", status: 422, error: "recipient_not_eligible" };
+
     const ins = await tx<{ id: string }[]>`
       insert into transactions (type, from_account_id, to_account_id, from_wallet_id, to_wallet_id,
                                 amount, status, idempotency_key)
@@ -119,21 +125,25 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     }
     const txId = ins[0].id;
 
-    // Lock both balance rows in a stable order, then the sender wallet's counters.
-    const bal = await tx<{ account_id: string; balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
-      select account_id, balance, credit_limit, credit_spent from balances
-       where account_id in (${from.account_id}, ${to.account_id})
-       order by account_id for no key update`;
+    // One round trip for all the reads, sent together and run in this order on the server: both balance rows (stable order), then the
+    // sender wallet, then the plain reads (the lock order is unchanged).
+    const [bal, [sw], [sa], [rw], [ra], [em], [inc]] = await Promise.all([
+      tx<{ account_id: string; balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
+        select account_id, balance, credit_limit, credit_spent from balances
+         where account_id in (${from.account_id}, ${to.account_id})
+         order by account_id for no key update`,
+      tx<{ status: string; allow_send: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
+        select status, allow_send, daily_limit, spent_today, balance from wallets where id = ${from.id} for no key update`,
+      tx<{ status: string }[]>`select status from accounts where id = ${from.account_id}`,
+      tx<{ status: string }[]>`select status from wallets where id = ${to.id} for share`,
+      tx<{ status: string }[]>`select status from accounts where id = ${to.account_id}`,
+      earmarkedTotalQuery(tx, from.account_id),
+      incomingTodayQuery(tx, to.account_id),
+    ]);
     const sb = bal.find((r) => r.account_id === from.account_id);
     if (!sb || bal.length !== 2) throw new Error("balances row missing");
 
-    const [sw] = await tx<{ status: string; allow_send: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
-      select status, allow_send, daily_limit, spent_today, balance from wallets where id = ${from.id} for no key update`;
-    const [sa] = await tx<{ status: string }[]>`select status from accounts where id = ${from.account_id}`;
-    const [rw] = await tx<{ status: string }[]>`select status from wallets where id = ${to.id} for share`;
-    const [ra] = await tx<{ status: string }[]>`select status from accounts where id = ${to.account_id}`;
-
-    const funds = await spendable(tx, from.account_id, sb.balance, sw ? sw.balance : null);
+    const funds = spendableFrom(sb.balance, sw ? sw.balance : null, em!.total);
     let code: string | null = null;
     if (!sa || sa.status !== "active" || !sw || sw.status !== "active") code = "sender_unavailable";
     else if (!sw.allow_send) code = "send_not_allowed";
@@ -141,7 +151,7 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     else if (!rw || rw.status !== "active" || !ra || ra.status !== "active") code = "recipient_unavailable";
     else if (funds.funds < i.amount) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, no credit
     else if (sw.daily_limit !== null && sw.spent_today + i.amount > sw.daily_limit) code = "spend_limit_exceeded";
-    else if ((await incomingToday(tx, to.account_id)) + i.amount > i.dailyCap) code = "recipient_limit_exceeded";
+    else if (inc!.total + i.amount > i.dailyCap) code = "recipient_limit_exceeded";
 
     if (code) {
       const [t] = await tx<TxRow[]>`
@@ -151,18 +161,20 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     }
 
     const amt = i.amount.toString();
-    await tx`update balances set balance = balance - ${amt} where account_id = ${from.account_id}`;
-    await tx`update balances set balance = balance + ${amt} where account_id = ${to.account_id}`;
-    await tx`update wallets set spent_today = spent_today + ${amt} where id = ${from.id}`;
-    await debitWallet(tx, from.id, i.amount);
-    await creditWallet(tx, to.id, i.amount);   // money sent to an earmarked wallet is that wallet's to spend
-    await tx`
-      insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
-      values (${txId}, 'send', 1, ${from.account_id}, 'funded_balance', 'debit', ${amt}),
-             (${txId}, 'send', 2, ${to.account_id}, 'funded_balance', 'credit', ${amt})`;
-    const [t] = await tx<TxRow[]>`
-      update transactions set status = 'completed', completed_at = now()
-       where id = ${txId} returning ${tx.unsafe(TX_COLS)}`;
+    // Every write in one round trip (sent together, applied in this order).
+    const [, , , , , [t]] = await Promise.all([
+      tx`update balances set balance = balance - ${amt} where account_id = ${from.account_id}`,
+      tx`update balances set balance = balance + ${amt} where account_id = ${to.account_id}`,
+      // The sender's day counter, and its earmark when it has one.
+      tx`update wallets set spent_today = spent_today + ${amt}, balance = case when balance is not null then balance - ${amt} else balance end where id = ${from.id}`,
+      // Money sent to an earmarked wallet is that wallet's to spend.
+      tx`update wallets set balance = balance + ${amt} where id = ${to.id} and balance is not null`,
+      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
+         values (${txId}, 'send', 1, ${from.account_id}, 'funded_balance', 'debit', ${amt}),
+                (${txId}, 'send', 2, ${to.account_id}, 'funded_balance', 'credit', ${amt})`,
+      tx<TxRow[]>`update transactions set status = 'completed', completed_at = now()
+                   where id = ${txId} returning ${tx.unsafe(TX_COLS)}`,
+    ]);
     return { kind: "ok", tx: t!, replayed: false };
   }) as Promise<SendOutcome>;
 }

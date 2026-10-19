@@ -152,11 +152,18 @@ export async function payCheckout(tx: Tx, i: PayCheckoutInput): Promise<PayOutco
   let decline: string | null = null;
   let created = false;
 
+  let preItems: { product_id: string | null; quantity: number }[] | null = null;
   if (i.checkoutId) {
-    const [c] = await tx<(CheckoutRow & { is_expired: boolean })[]>`
-      select ${tx.unsafe(CO_COLS)}, (expires_at is not null and expires_at <= now()) as is_expired
-        from checkouts where id = ${i.checkoutId} and account_id = ${i.merchantAccountId}
-         for no key update`;
+    // The checkout lock and its items go out together (one round trip; the lock is taken first).
+    const [[c], items0] = await Promise.all([
+      tx<(CheckoutRow & { is_expired: boolean })[]>`
+        select ${tx.unsafe(CO_COLS)}, (expires_at is not null and expires_at <= now()) as is_expired
+          from checkouts where id = ${i.checkoutId} and account_id = ${i.merchantAccountId}
+           for no key update`,
+      tx<{ product_id: string | null; quantity: number }[]>`
+        select product_id, quantity from checkout_items where checkout_id = ${i.checkoutId}`,
+    ]);
+    preItems = items0;
     if (!c) throw new Error("checkout missing");
     checkout = c;
     if (c.status !== "open") {
@@ -177,7 +184,7 @@ export async function payCheckout(tx: Tx, i: PayCheckoutInput): Promise<PayOutco
     created = true;
   }
 
-  const items = await tx<{ product_id: string | null; quantity: number }[]>`
+  const items = preItems ?? await tx<{ product_id: string | null; quantity: number }[]>`
     select product_id, quantity from checkout_items where checkout_id = ${checkout.id}`;
   const lines = stockLines(items);
   if (!decline) decline = await reserveStock(tx, i.merchantAccountId, lines);
@@ -191,8 +198,7 @@ export async function payCheckout(tx: Tx, i: PayCheckoutInput): Promise<PayOutco
   });
 
   if (out.kind === "ok" && !out.replayed) {
-    await commitStock(tx, lines);
-    await tx`update checkouts set status = 'paid' where id = ${checkout.id}`;
+    await Promise.all([commitStock(tx, lines), tx`update checkouts set status = 'paid' where id = ${checkout.id}`]);
   } else if (out.kind === "declined" && !out.replayed && created) {
     // A one-step checkout that failed to settle is dead; the POS starts a new one.
     await tx`update checkouts set status = 'canceled' where id = ${checkout.id}`;

@@ -50,15 +50,17 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
       return next();
     }
 
+    // The session check and the "last used" stamp are one statement (one round trip, one connection).
     const [dev] = await sql<{ id: string; account_id: string; wallet_id: string | null; account_status: string; account_type: string }[]>`
-      select d.id, d.account_id, d.wallet_id, a.status as account_status, a.type as account_type
-        from devices d
-        join accounts a on a.id = d.account_id and a.status in ('active', 'pending', 'declined')
-        left join wallets w on w.id = d.wallet_id
+      update devices d set last_accessed_at = now()
        where d.session_token_hash = ${hashToken(token)}
          and d.revoked_at is null
          and d.session_expires_at > now()
-         and (d.wallet_id is null or w.status = 'active')`;
+         and exists (select 1 from accounts a where a.id = d.account_id and a.status in ('active', 'pending', 'declined'))
+         and (d.wallet_id is null or exists (select 1 from wallets w where w.id = d.wallet_id and w.status = 'active'))
+      returning d.id, d.account_id, d.wallet_id,
+                (select status from accounts where id = d.account_id) as account_status,
+                (select type from accounts where id = d.account_id) as account_type`;
     if (!dev) return c.json({ error: "unauthorized" }, 401);
 
     const kind: SessionKind = dev.wallet_id ? "wallet" : "owner";
@@ -69,7 +71,6 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
     }
 
     c.set("auth", { deviceId: dev.id, accountId: dev.account_id, kind, walletId: dev.wallet_id });
-    await sql`update devices set last_accessed_at = now() where id = ${dev.id}`;
     await next();
   };
 }
