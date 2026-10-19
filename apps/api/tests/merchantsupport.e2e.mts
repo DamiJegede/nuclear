@@ -22,7 +22,7 @@ const signup = async (name: string, email: string, type = "C") => { const j = (a
 const shop = await signup("Cafe Nero", "cafe@example.com", "B"); const other = await signup("Other Shop", "other@example.com", "B");
 const S = shop.session_token, M = shop.account_id;
 await q("insert into businesses (account_id, legal_name, display_name, city, state, post_code, country, website) values ($1, 'Nero Holdings LLC', 'Cafe Nero', 'Springfield', 'NY', '10001', 'US', 'https://nero.example')", [M]);
-await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1, '021000021', '123456789', '4321')", [M]);
+await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1, 'SANDBOX', 'SANDBOX', '4321')", [M]);
 await q("update businesses set bank_account_id = (select id from bank_accounts where account_id=$1) where account_id=$1", [M]);
 await call("PUT", "/v1/account/handle", { token: S, body: { handle: "nero" } });
 const t1 = (await call("POST", "/v1/terminals", { token: S, body: { name: "Counter" } })).json, t2 = (await call("POST", "/v1/terminals", { token: S, body: { name: "Bar", allow_refunds: false } })).json;

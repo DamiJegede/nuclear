@@ -29,6 +29,8 @@ export interface Env {
    * `wrangler secret put MFA_ENCRYPTION_KEY`. Without it admin MFA enrollment and sign-in return 503.
    */
   MFA_ENCRYPTION_KEY?: string;
+  /** AES-256 key (base64, 32 bytes) encrypting bank routing and account numbers at rest. Losing it makes every stored number unrecoverable: keep a copy in the password manager. Without it, saving a payout bank returns 503. */
+  BANK_ENCRYPTION_KEY?: string;
   /** Browser origins allowed to call the business API from a browser (the merchant portal), comma-separated. */
   MERCHANT_ORIGINS?: string;
   /** Browser origins allowed to call /v1/admin/* (comma-separated), e.g. the admin portal's URL. */

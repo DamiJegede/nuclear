@@ -291,8 +291,8 @@ Every sign-in failure (unknown id, wrong password, wrong code, disabled, locked)
 | --- | --- |
 | id | Primary key identifying the bank account record. |
 | account_id | Foreign key to the consumer/business owner. |
-| routing_number | Routing information, protected in storage; not an integer. |
-| account_number | Account number, encrypted if retained; not exposed in normal app responses. |
+| routing_number | The 9-digit routing number, stored as **plain text** (it is public: the Fed publishes the directory; migrations 0027/0028 enforce the format). Customer sandbox loads hold the placeholder `SANDBOX`. Not returned by the merchant endpoints (only `last4` of the account number is). |
+| account_number | The account number, stored **encrypted** (AES-256-GCM, `v1.` prefix, bound to the account and field; migration 0026 enforces the format), kept so settlements can be originated and the payout bank can move to another provider. Only `last4` is ever shown; full reads go through one audited function. |
 | last4 | Last four digits for display. |
 | provider_account_id | Nullable linked-bank-account resource identifier assigned by the banking provider. |
 | status | Bank-link operational status. |

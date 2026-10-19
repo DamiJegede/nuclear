@@ -14,12 +14,12 @@ const IMAGES = {
 };
 const JPEG_OUT = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9]);
 const IMG = { input: (_s: ReadableStream) => { const ch: any = { transform: () => ch, output: async () => ({ response: () => new Response(JPEG_OUT) }) }; return ch; } };
-const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", IMAGES, IMG };
+const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", IMAGES, IMG, BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
-const raw = (method: string, path: string, o: { body?: unknown; token?: string; key?: string; type?: string; bytes?: Uint8Array } = {}) =>
-  app.fetch(new Request("http://x" + path, { method, headers: { "content-type": o.type ?? "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...(o.key ? { "idempotency-key": o.key } : {}) }, body: o.bytes ?? (o.body === undefined ? undefined : JSON.stringify(o.body)) }), env, ctx);
+const raw = (method: string, path: string, o: { body?: unknown; token?: string; key?: string; type?: string; bytes?: Uint8Array; e?: any } = {}) =>
+  app.fetch(new Request("http://x" + path, { method, headers: { "content-type": o.type ?? "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...(o.key ? { "idempotency-key": o.key } : {}) }, body: o.bytes ?? (o.body === undefined ? undefined : JSON.stringify(o.body)) }), o.e ?? env, ctx);
 const call = async (m: string, p: string, o: any = {}) => { const r = await raw(m, p, o); const t = await r.text(); let j: any = null; try { j = t ? JSON.parse(t) : null; } catch { /* binary */ } return { status: r.status, json: j }; };
 
 const sign = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { type, name, email, password: "correct horse battery" } })).json;
@@ -69,7 +69,7 @@ const bankId = (await q("select bank_account_id id from businesses where account
 eq("no payouts yet (the settlement job is not built)", (await get("/payouts")).json.payouts, []);
 await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 123400, 'completed', now(), 'settle-1')", [biz.account_id, bankId]);
 await q("insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 500, 'pending', null, 'settle-2')", [biz.account_id, bankId]);
-await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 777, 'completed', now(), 'settle-x')", [other.account_id, (await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1,'110000000','12345678','5678') returning id", [other.account_id]))[0].id]);
+await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 777, 'completed', now(), 'settle-x')", [other.account_id, (await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1,'SANDBOX','SANDBOX','5678') returning id", [other.account_id]))[0].id]);
 const po = (await get("/payouts")).json.payouts;
 eq("settlements show as payouts (to the bank) and collections (from it), newest first, with the bank's last four; never another business's", [po.map((p: any) => [p.kind, p.amount, p.status, p.bank_last4]), (await call("GET", "/v1/business/payouts", { token: O })).json.payouts.map((p: any) => p.amount)], [[["collection", 500, "pending", "7766"], ["payout", 123400, "completed", "7766"]], [777]]);
 const run = (await q("insert into settlements (cutoff_date, cutoff_at) values ('2026-10-16', now()) returning id"))[0].id;
@@ -80,6 +80,25 @@ eq("settlements: one run per cutoff date; completed needs a time; only settle tr
   await refuse("insert into settlements (cutoff_date, cutoff_at, status) values ('2026-10-15', now(), 'completed')"),
   await refuse("insert into settlements (cutoff_date, cutoff_at, payout_total) values ('2026-10-14', now(), -1)"),
   (await q("select count(*)::int n from transactions where settlement_id = $1", [run]))[0].n], ["refused", "refused", "refused", 1]);
+// the numbers are stored encrypted, bound to their account and field, and every full read is audited
+const stored = (await q("select routing_number r, account_number a, last4 from bank_accounts where id=$1", [bankId]))[0];
+eq("the account number is stored encrypted (v1.) and never as digits; the public routing number is plain; only the last four are readable", [stored.r, stored.a.startsWith("v1."), /[0-9]{6}/.test(stored.a), stored.last4], ["110000000", true, false, "7766"]);
+const { revealBank } = await import("../src/lib/bank.ts");
+const { decryptBankField } = await import("../src/lib/bankCrypto.ts");
+const KEYB = env.BANK_ENCRYPTION_KEY as string;
+const sqlc = postgres(PG_URL, { max: 1, onnotice: () => {} }) as any;
+const shown = await revealBank(sqlc, env, bankId, { type: "system", label: "test" }, "unit test");
+eq("revealBank returns the routing number and the decrypted account number and writes a bank.revealed audit row with the reason", [shown, (await q("select details->>'reason' r from logs where action='bank.revealed'")).map((x: any) => x.r)], [{ routing_number: "110000000", account_number: "99887766" }, ["unit test"]]);
+eq("an encrypted number does not decrypt for another account or the other field, or with the wrong key, or when altered", [
+  (() => { try { decryptBankField(KEYB, other.account_id, "account", stored.a); return "decrypted"; } catch { return "refused"; } })(),
+  (() => { try { decryptBankField(KEYB, biz.account_id, "routing", stored.a); return "decrypted"; } catch { return "refused"; } })(),   // the other field
+  (() => { try { decryptBankField(randomBytes(32).toString("base64"), biz.account_id, "account", stored.a); return "decrypted"; } catch { return "refused"; } })(),
+  (() => { try { decryptBankField(KEYB, biz.account_id, "account", stored.a.slice(0, -2) + "AA"); return "decrypted"; } catch { return "refused"; } })()], ["refused", "refused", "refused", "refused"]);
+eq("without the encryption key a bank cannot be saved (503) and nothing is stored", [(await call("PUT", "/v1/business/bank", { token: B, body: { routing_number: "110000000", account_number: "12345678" }, e: { ...env, BANK_ENCRYPTION_KEY: undefined } })).status], [503]);
+eq("the database refuses a plain account number, a routing number that is not 9 digits, and an encrypted-looking routing number; a plain 9-digit routing number with an encrypted account number is accepted", await Promise.all([
+  ["110000000", "12345678"], ["12345", "SANDBOX"], ["v1.AAAAAAAAAAAAAAAAAAAAAAAA", "SANDBOX"], ["110000000", stored.a],
+].map(async ([r, a]) => { try { await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1, $2, $3, '5678')", [biz.account_id, r, a]); return "accepted"; } catch { return "refused"; } })), ["refused", "refused", "refused", "accepted"]);
+await sqlc.end();
 eq("removing the bank clears it", [(await call("DELETE", "/v1/business/bank", { token: B })).status, (await get("/bank")).json.bank, (await q("select bank_account_id from businesses where account_id=$1", [biz.account_id]))[0].bank_account_id], [204, null, null]);
 
 // ---- categories and products

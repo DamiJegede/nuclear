@@ -2,7 +2,7 @@
 // Gives about 70% of the test merchants a `businesses` profile (legal name, address, website, map position) and adds a few
 // brand-new PENDING businesses, each with an uploaded business document, so approving and declining can be tried in the admin portal.
 //   node scripts/seed-businesses.mjs [--pending 6] [--banks-only]
-// It also gives every ACTIVE merchant that has a profile a test payout bank account (routing 110000000, a random 11-digit account number).
+// It also gives every ACTIVE merchant that has a profile a test payout bank account (routing 110000000, a random 11-digit account number, saved through the API so it is stored encrypted).
 // Reads ADMIN_API_TOKEN from apps/api/.dev.vars (never printed). Profiles are written with `pscale` (there is no API for them yet);
 // the pending businesses sign up and upload through the real API. API_URL overrides the target. Safe to run again: it only tops up.
 import { readFileSync } from "node:fs";
@@ -110,13 +110,16 @@ for (const m of made) console.log("  -", m.name);
 }
 
 // ---- 3. a test payout bank for every active merchant that has a profile and no bank yet ----------
-const banked = JSON.parse(sql(`
-  WITH targets AS (
-    SELECT b.account_id FROM businesses b JOIN accounts a ON a.id = b.account_id
-     WHERE a.status = 'active' AND a.type = 'B' AND b.bank_account_id IS NULL),
-  nums AS (SELECT account_id, lpad((floor(random() * 99999999999))::bigint::text, 11, '0') AS num FROM targets),
-  ins AS (
-    INSERT INTO bank_accounts (account_id, routing_number, account_number, last4)
-    SELECT account_id, '110000000', num, right(num, 4) FROM nums RETURNING id, account_id, last4)
-  UPDATE businesses b SET bank_account_id = ins.id FROM ins WHERE b.account_id = ins.account_id RETURNING b.account_id`)).rows ?? [];
-console.log(`payout banks added: ${banked.length}`);
+// Through the real API (the merchant signs in with the demo password and saves a bank), so the numbers are stored encrypted.
+const need = (JSON.parse(sql(`SELECT a.email FROM accounts a JOIN businesses b ON b.account_id = a.id
+   WHERE a.status = 'active' AND a.type = 'B' AND b.bank_account_id IS NULL AND a.email LIKE '%@seed.nuclear.test'`)).rows ?? []).map((r) => r.email);
+let banked = 0;
+for (const email of need) {
+  const login = await api("POST", "/v1/auth/login", { body: { email, password: PASSWORD, platform: "web" } });
+  if (login.status !== 200) continue;
+  const acct = String(Math.floor(Math.random() * 1e11)).padStart(11, "0");
+  const r = await api("PUT", "/v1/business/bank", { token: login.json.session_token, body: { routing_number: "110000000", account_number: acct } });
+  if (r.status === 201) banked++;
+  await api("POST", "/v1/auth/logout", { token: login.json.session_token });
+}
+console.log(`payout banks added: ${banked}`);

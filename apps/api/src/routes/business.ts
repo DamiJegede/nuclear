@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
+import { encryptBankField } from "../lib/bankCrypto";
 import { checkoutJson, getCheckout, getItems, listCheckouts } from "../lib/checkout";
 import { imageUrl } from "../lib/images";
 import { MERCHANT_TX_KINDS, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
@@ -144,12 +145,17 @@ business.put("/bank", async (c) => {
   if (!b.success) return c.json({ error: "invalid_request" }, 400);
   if (!abaOk(b.data.routing_number)) return c.json({ error: "invalid_routing_number" }, 422);
   const { accountId } = c.get("auth");
+  // The account number is stored encrypted, bound to this account; only its last four digits stay readable. The routing number is public
+  // (it identifies the bank), so it is stored as plain digits: that keeps it usable for bank names, batching and checks.
+  if (!c.env.BANK_ENCRYPTION_KEY) return c.json({ error: "encryption_unavailable" }, 503);
+  const routing = b.data.routing_number;
+  const account = encryptBankField(c.env.BANK_ENCRYPTION_KEY, accountId, "account", b.data.account_number);
   const out = await c.get("sql").begin(async (tx) => {
     const [p] = await tx<{ bank_account_id: string | null }[]>`select bank_account_id from businesses where account_id = ${accountId} for no key update`;
     if (!p) return { error: "profile_required" as const };
     const [n] = await tx<{ id: string; last4: string; status: string; created_at: Date }[]>`
       insert into bank_accounts (account_id, routing_number, account_number, last4)
-      values (${accountId}, ${b.data.routing_number}, ${b.data.account_number}, ${b.data.account_number.slice(-4)}) returning id, last4, status, created_at`;
+      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}) returning id, last4, status, created_at`;
     await tx`update businesses set bank_account_id = ${n!.id} where account_id = ${accountId}`;
     if (p.bank_account_id) await tx`update bank_accounts set status = 'removed' where id = ${p.bank_account_id} and account_id = ${accountId}`;
     return { bank: n! };

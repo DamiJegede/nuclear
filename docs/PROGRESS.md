@@ -1,6 +1,6 @@
 # Nuclear: progress
 
-A record of what has been built, what is live, and what is still open. For rules and conventions see `AGENTS.md`; for the data model see `docs/TABLES.md`.
+A record of what has been built, what is live, and what is still open. For rules and conventions see `../AGENTS.md`; for the data model see `TABLES.md` (this folder).
 
 Last updated 2026-10-19.
 
@@ -13,11 +13,11 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `ca882827` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `5d6137d5` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `a06a1cfc` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, 26 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, 28 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
 Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
@@ -82,7 +82,7 @@ Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgr
 
 ## 7. Database
 
-26 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, and settlements. `docs/TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
+28 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, and settlements. `TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
 
 ## 8. Tooling and data
 
@@ -93,8 +93,8 @@ Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgr
 
 - **Settlement job** not built: the `settlements` table and `settle` transaction type exist, but nothing runs the daily cutoff, so there are no payouts yet.
 - **Email sending**: approval and merchant emails are not delivered until `EMAIL_FROM` is set to an address on a domain verified in Cloudflare Email Service. Until then the text is kept in the Logs.
-- **Bank numbers** are stored encrypted (AES-256-GCM, key `BANK_ENCRYPTION_KEY`, done 2026-10-19). Remaining: copy the key into the password manager, and consider a KMS or HSM-held key before launch.
+- **Bank account numbers** are stored encrypted (AES-256-GCM, key `BANK_ENCRYPTION_KEY`, done 2026-10-19); routing numbers are public and stored as plain digits. Remaining: copy the key into the password manager, and consider a KMS or HSM-held key before launch.
 - **Not built**: pass issuance, real bank linking and funding, merchant staff logins, merchant two-step verification, password reset, email verification, credit-limit approval flow, per-transaction caps and recipient allow-lists for agents.
 - **Passkeys** (discussed, not built): need a final domain decided first.
 - **Admin portal page cache**: only the merchant portal has it so far.
-- **Before launch**: rebuild into a fresh database with consolidated migrations (see the rebuild table in `docs/TABLES.md`), and resize the database from its current 1/16 vCPU PS-5.
+- **Before launch**: rebuild into a fresh database with consolidated migrations (see the rebuild table in `TABLES.md`), and resize the database from its current 1/16 vCPU PS-5.
