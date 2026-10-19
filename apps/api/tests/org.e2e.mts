@@ -107,6 +107,20 @@ const cus2 = await sign("Cus Two", "cus2@example.com");
 eq("claim: the fresh link claims for the holder's account", [(await call("POST", "/v1/employee/claims", { token: cus2.session_token, body: { token: newSam } })).json.claimed, await bal(cus2.account_id), await held()], [5000, 5000, 700]);
 await sqlc.end();
 
+// ---- removing employees
+const emp = async (eid: string) => (await q("select id, status from employees where employee_id=$1", [eid]))[0];
+const rm = async (eid: string) => call("DELETE", `/v1/org/employees/${(await emp(eid)).id}`, { token: acme.session_token });
+const e003 = await emp("E003");
+const blocked = await call("DELETE", `/v1/org/employees/${e003.id}`, { token: acme.session_token });
+eq("remove: refused while money is held for the employee", [blocked.status, blocked.json.error, blocked.json.held, (await emp("E003")).status], [409, "has_held_balance", 700, "active"]);
+eq("remove: another organization cannot remove them", (await call("DELETE", `/v1/org/employees/${e003.id}`, { token: (await sign("Other Org", "other@org.test", "O")).session_token })).status, 404);
+eq("remove: a claimed employee can be removed, then no longer shows or counts", [(await rm("E001")).status, (await q("select status, claim_token_hash is null as t from employees where employee_id='E001'"))[0],
+  (await call("GET", "/v1/org/employees", { token: acme.session_token })).json.employees.map((e: any) => e.employee_id).sort(),
+  (await call("GET", "/v1/org/overview", { token: acme.session_token })).json.employees.total], [204, { status: "removed", t: true }, ["E002", "E003"], 2]);
+eq("remove: removing twice is a 404", (await rm("E001")).status, 404);
+eq("remove: a removed employee mentioned in a later CSV is active again", [(await batch(acme, [{ employee_id: "E001", name: "Eve Back", email: "eve@example.com", amount: 100 }], "b-3")).status, (await emp("E001")).status], [201, "active"]);
+eq("remove: the books still reconcile", [(await reconciled()).ledger_balanced, (await reconciled()).escrow_matches_employees], [true, true]);
+
 // ---- guards
 eq("guards: claimed employees cannot hold money; a held balance needs no account", (await q("select count(*)::int n from employees where employee_account_id is not null and balance <> 0"))[0].n, 0);
 eq("guards: a suspended organization cannot run a batch", await (async () => { await q("update accounts set status='suspended' where id=$1", [acme.account_id]); return (await batch(acme, [{ employee_id: "Z1", name: "Z", email: "z@example.com", amount: 1 }], "susp")).status; })(), 401);

@@ -56,7 +56,7 @@ export function Credits({ api, onError }: { api: Api; onError: (e: unknown) => v
     <section>
       <div className="head"><h1>Credits</h1><div className="head-actions"><RefreshButton onClick={() => { batches.retry(); overview.retry(); }} /></div></div>
 
-      <div className="card">
+      <div className="card upload">
         <h2>Upload a CSV</h2>
         <p className="hint">One row per employee with the columns <strong>employee_id</strong>, <strong>name</strong>, <strong>email</strong> and <strong>amount</strong> (in dollars). The whole file is credited together or not at all. Employees who haven't joined Nuclear yet are emailed a link and their credit is held for them until they claim it.</p>
         <div className="row">

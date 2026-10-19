@@ -72,7 +72,7 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
       select ${i.orgId}, e.employee_id, e.name, e.email
         from jsonb_to_recordset(${JSON.stringify(i.rows.map((r) => ({ employee_id: r.employee_id, name: r.name, email: r.email })))}::text::jsonb)
              as e(employee_id text, name text, email text)
-      on conflict (org_account_id, employee_id) do update set name = excluded.name, email = excluded.email
+      on conflict (org_account_id, employee_id) do update set name = excluded.name, email = excluded.email, status = 'active'
       returning id, employee_id, employee_account_id`;
     const byKey = new Map(emps.map((e) => [e.employee_id, e]));
 

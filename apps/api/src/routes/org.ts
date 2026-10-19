@@ -39,7 +39,7 @@ org.get("/overview", async (c) => {
     sql<{ total: number; claimed: number; unclaimed: number; held: bigint }[]>`
       select count(*)::int as total, (count(*) filter (where employee_account_id is not null))::int as claimed,
              (count(*) filter (where employee_account_id is null))::int as unclaimed, coalesce(sum(balance), 0) as held
-        from employees where org_account_id = ${id}`,
+        from employees where org_account_id = ${id} and status = 'active'`,
     sql<BatchRow[]>`select id, row_count, total, sent, held, created_at from credit_batches where org_account_id = ${id} order by created_at desc, id desc limit 1`,
   ]);
   const e = emp[0]!;
@@ -62,11 +62,31 @@ org.get("/employees", async (c) => {
   const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date }[]>`
     select id, employee_id, name, email, balance, (employee_account_id is not null) as claimed, reminded_at, created_at
       from employees
-     where org_account_id = ${id}
+     where org_account_id = ${id} and status = 'active'
        ${q ? sql`and (name ilike ${like} or email ilike ${like} or employee_id ilike ${like})` : sql``}
        ${status === "claimed" ? sql`and employee_account_id is not null` : status === "unclaimed" ? sql`and employee_account_id is null` : sql``}
      order by created_at desc, id desc limit 500`;
   return c.json({ employees: rows.map((r) => ({ ...r, balance: n(r.balance) })) });
+});
+
+// Removing an employee hides them. Refused while money is held for them (they must claim it first), so nothing is ever stranded.
+org.delete("/employees/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const sql = c.get("sql");
+  const orgId = c.get("auth").accountId;
+  const out = await sql.begin(async (tx) => {
+    const [e] = await tx<{ id: string; balance: bigint; status: string; employee_id: string }[]>`
+      select id, balance, status, employee_id from employees where id = ${id.data} and org_account_id = ${orgId} for no key update`;
+    if (!e || e.status !== "active") return { status: 404 as const };
+    if (e.balance > 0n) return { status: 409 as const, balance: Number(e.balance) };
+    await tx`update employees set status = 'removed', claim_token_hash = null where id = ${e.id}`;
+    return { status: 204 as const, employee_id: e.employee_id };
+  });
+  if (out.status === 404) return c.json({ error: "not_found" }, 404);
+  if (out.status === 409) return c.json({ error: "has_held_balance", held: out.balance }, 409);
+  await customerLog(c, orgId, null, "org.employee_removed", { employee_id: out.employee_id });
+  return c.body(null, 204);
 });
 
 // ---- Credit batches ----

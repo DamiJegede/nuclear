@@ -391,6 +391,7 @@ Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an 
 | balance | Bigint cents held in escrow while the person has no account; 0 once claimed. Reconciled against the employee_escrow ledger bucket. |
 | claim_token_hash | SHA-256 of the emailed claim token (the token is never stored); NULL once claimed. Replaced by each reminder. |
 | reminded_at | When the person was last emailed about held money. |
+| status | active or removed (migration 0031). A removed employee is hidden everywhere and gets no reminders; removal is refused while money is held (CHECK: removed means balance 0 and no token); a later CSV that mentions the employee_id makes them active again. |
 | created_at | Row creation time. |
 | updated_at | Last change. |
 
@@ -563,5 +564,6 @@ The dev database (nuclear-dev) will be rebuilt from scratch into a new database 
 | transactions | settlement_id | after related_transaction_id (end of the table today) | 0025 |
 | orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
 | shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |
+| employees | status | before created_at (end of the table today) | 0031 |
 
 Also in the fresh schema: the CHECK constraints from 0021 (photo columns hold only R2 keys), `accounts.status` with pending and declined (0020), `uploads` (0020, `businesses.business_doc` never created), `logs` and `orders` (0018, no `tag_orders` or `tag_model_photos`), and `shop`/`orders` as described above. Consolidate migrations 0001-0023 into one initial migration for the new database, with the columns in document order, and keep the old files only as history.

@@ -20,6 +20,7 @@ Header `employee_id,name,email,amount` (any order). `employee_id` is letters and
 - `GET /overview`: `balance`, `employees {total, claimed, unclaimed}`, `held`, `last_batch`.
 - `GET /employees?q&status=claimed|unclaimed`: up to 500, newest first.
 - `POST /credit-batches {rows:[{employee_id,name,email,amount}]}` with `Idempotency-Key`: 201 (200 on a retry with the same key and rows, 409 `idempotency_mismatch` if the rows differ). Errors: 422 `insufficient_balance` (`required`, `available`), 422 `recipient_unavailable` (`employee_ids`), 422 `duplicate_employee_id`, 400 `invalid_request`. The answer carries `emails {sent, failed, not_configured}`; a held credit whose email was not sent is retried by the daily cron.
+- `DELETE /employees/:id`: removes (hides) an employee, 204; 409 `has_held_balance` while money is held for them (they must claim first); 404 if not theirs or already removed. A later CSV with the same employee_id makes them active again.
 - `GET /credit-batches`, `GET /credit-batches/:id` (rows with `mode` sent|held).
 - `POST /v1/employee/claims {token}`: any consumer owner session. 404 `invalid_token`, 422 `consumer_account_required`.
 - Funding the organization's wallet uses the existing load route.
@@ -30,7 +31,7 @@ Lock order: the organization's `balances` row, then the recipients' `balances` r
 
 ## Tables (migration 0030)
 
-- **employees**: id, org_account_id, employee_account_id (NULL until claimed), employee_id, name, email, balance (held; 0 once claimed), claim_token_hash (SHA-256; the token itself is never stored; NULL once claimed), reminded_at (when last emailed), created_at, updated_at. Unique (org_account_id, employee_id). CHECK: a claimed employee holds no balance and no token.
+- **employees**: id, org_account_id, employee_account_id (NULL until claimed), employee_id, name, email, balance (held; 0 once claimed), claim_token_hash (SHA-256; the token itself is never stored; NULL once claimed), reminded_at (when last emailed), status (active|removed, migration 0031), created_at, updated_at. Unique (org_account_id, employee_id). CHECK: a claimed employee holds no balance and no token.
 - **credit_batches**: id, org_account_id, idempotency_key (unique per organization), row_count, total, sent, held, created_at.
 - **credit_batch_rows**: id, batch_id, employee_ref, amount, mode (sent|held), transaction_id (unique), created_at.
 - `accounts.type` gains **O**; `transactions.type` gains **allocate** (from the organization, no destination) and **claim** (to the employee, no source).

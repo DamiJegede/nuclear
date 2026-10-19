@@ -22,6 +22,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     batches: vi.fn().mockResolvedValue([BATCH]),
     batch: vi.fn().mockResolvedValue({ batch: BATCH, rows: [{ employee_id: "E002", name: "Sam Two", email: "sam@example.com", amount: 5000, mode: "held", transaction_id: "t1" }] }),
     runBatch: vi.fn().mockResolvedValue({ batch: BATCH, emails: { sent: 2, failed: 0, not_configured: 0 } }),
+    removeEmployee: vi.fn().mockResolvedValue(null),
     addFunds: vi.fn().mockResolvedValue({}),
     uploadPhoto: vi.fn(),
     ...over,
@@ -95,6 +96,25 @@ describe("organization portal", () => {
     expect(screen.getByText("$50.00")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Status"), "unclaimed");
     await waitFor(() => expect(api.employees).toHaveBeenLastCalledWith("", "unclaimed"));
+  });
+
+  it("removes an employee after a confirmation", async () => {
+    const api = fakeApi();
+    const user = await open(api, "/employees");
+    await screen.findByText("Eve One");
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]!);
+    expect(api.removeEmployee).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("dialog", { name: "Remove Employee" })).getByRole("button", { name: "Confirm Remove" }));
+    await waitFor(() => expect(api.removeEmployee).toHaveBeenCalledWith("e1"));
+  });
+
+  it("explains why an employee with held money cannot be removed", async () => {
+    const api = fakeApi({ removeEmployee: vi.fn().mockRejectedValue(new ApiError(409, "has_held_balance", { held: 5000 })) });
+    const user = await open(api, "/employees");
+    await screen.findByText("Sam Two");
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[1]!);
+    await user.click(within(screen.getByRole("dialog", { name: "Remove Employee" })).getByRole("button", { name: "Confirm Remove" }));
+    expect(await screen.findByText(/need to claim it before they can be removed/)).toBeInTheDocument();
   });
 
   it("previews a CSV, asks for confirmation, and runs it as one batch", async () => {

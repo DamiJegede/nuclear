@@ -74,6 +74,7 @@ export function createApi(token: string, base: string = API_URL) {
     uploadPhoto: (file: Blob) => request<{ photo: string }>("PUT", "/v1/account/photo", file),
     overview: () => request<Overview>("GET", "/v1/org/overview"),
     employees: async (q = "", status: "" | "claimed" | "unclaimed" = "") => (await request<{ employees: Employee[] }>("GET", `/v1/org/employees${qs({ q, status })}`)).employees,
+    removeEmployee: (eid: string) => request<null>("DELETE", `/v1/org/employees/${id(eid)}`),
     batches: async () => (await request<{ batches: Batch[] }>("GET", "/v1/org/credit-batches")).batches,
     batch: (bid: string) => request<{ batch: Batch; rows: BatchRowResult[] }>("GET", `/v1/org/credit-batches/${id(bid)}`),
     /** Runs a CSV batch. The same idempotency key is safe to retry: the batch is applied once. */

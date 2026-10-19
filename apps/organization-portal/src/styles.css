@@ -476,3 +476,10 @@ ul.problems { margin: 6px 0 12px; padding-left: 18px; color: var(--bad); }
 .scroll { max-height: 50vh; overflow-y: auto; }
 .profile-row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
 .profile-row .facts { flex: 1; min-width: 240px; }
+.upload { padding: 24px; }
+.upload > h2 { margin-bottom: 14px; }
+.upload > .hint { margin: 0 0 24px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
+.upload > .row { gap: 12px; margin-bottom: 4px; }
+.upload > .error, .upload > .ok { margin-top: 16px; }
+.upload dl.facts { margin: 24px 0 16px; }
+.upload table { margin-bottom: 8px; }
