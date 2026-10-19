@@ -1,0 +1,18 @@
+[package]
+name = "orb-firmware"
+version = "0.1.0"
+edition = "2021"
+description = "Firmware core for the Nuclear Orb: the NFC tap reader that talks to the merchant terminal app over Bluetooth LE"
+publish = false
+
+[lib]
+name = "orb_firmware"
+path = "src/lib.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

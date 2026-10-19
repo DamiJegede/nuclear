@@ -74,6 +74,11 @@ Quality: 25 API test suites (about 1,200 checks, run on a throwaway local Postgr
 - **Page cache**: pages remember what they loaded for five minutes, and a per-view Refresh icon reloads one view.
 - New `/v1/business/*` API for transactions, overview, profile, payout bank, payouts, categories, products and checkouts.
 
+## 5b. Terminal app and Orb firmware (scaffolds)
+
+- `apps/merchant-terminal` (iPadOS, Swift): a Swift package with the terminal API client (checkouts, tap payments with attempt ids as idempotency keys, lookup, refunds, restock, Orb registration), money helpers, models and the Orb Bluetooth frame format. 7 `swift test` tests pass. The SwiftUI app target is still to be created in Xcode.
+- `apps/orb-firmware` (Rust): compiles, 67 tests pass. `no_std` core following docs/ORB.md: protocol v1 messages and fragmentation, the Orb controller (pairing with proximity gate, authenticated sessions and heartbeat, payment/lookup flow, unresolved attempts, buttonless reset card, USB recovery polling, battery rules), NDEF URL and Text parsing. Swift mirror `OrbMessages.swift` (13 Swift tests, shared golden vectors). Not built: board support (pins, HAL, BLE stack, PN7161/LED/audio drivers), the handshake proof scheme, signed OTA.
+
 ## 6. Performance and reliability
 
 - Fixed an N+1 on checkout lists (paid-orders list 3.6 s → 0.6 s); the merchant Overview is one request instead of ten.
