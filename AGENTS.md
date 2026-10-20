@@ -85,7 +85,7 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 | `0036_benefit_programs.sql` | Applied to nuclear-dev/main (2026-10-20): `employees.fixed_benefit` and `benefit_programs` (one row per organization, created at sign-up) |
 
 All thirty-six are applied and frozen: never edit an applied migration, add a new numbered file. The database
-has 32 tables (demo data from `seed-demo`).
+has 34 tables (demo data from `seed-demo`).
 
 ## Approval rules
 
@@ -186,6 +186,4 @@ Optional vars: `ADMIN_ORIGINS` (browser origins allowed to call `/v1/admin/*`; l
 
 ## Not built yet
 
-Pass issuance, real bank linking and funding, settlement and
-payouts, business onboarding/profile, merchant staff login, rate limiting, password reset and email
-verification, credit-limit approval flow.
+Pass issuance, real bank linking and funding, settlement and payouts, merchant staff login, password reset and email verification, credit-limit approval flow, consumer screens for claiming and Benefits (claim page, Benefits breakdown, Move to another wallet), admin and support views of organizations, employer verification and employee identification, and sending email (`EMAIL_FROM` is not set). See `docs/ORGANIZATIONS.md` ("Not built") for the organization items and `docs/PROGRESS.md` for the full list.

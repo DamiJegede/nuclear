@@ -2,7 +2,7 @@
 
 A record of what has been built, what is live, and what is still open. For rules and conventions see `../AGENTS.md`; for the data model see `TABLES.md` (this folder).
 
-Last updated 2026-10-19.
+Last updated 2026-10-20.
 
 ## What it is
 
@@ -18,10 +18,10 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5b578bbc` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5910bc50` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 32 tables, 36 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 34 tables, 36 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 30 API test suites (about 1,370 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 30 API test suites (about 1,370 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, 37 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 
@@ -75,21 +75,20 @@ Quality: 30 API test suites (about 1,370 checks, run on a throwaway local Postgr
 - **Page cache**: pages remember what they loaded for five minutes, and a per-view Refresh icon reloads one view.
 - New `/v1/business/*` API for transactions, overview, profile, payout bank, payouts, categories, products and checkouts.
 
-## 5a. Organizations and employee credits (new, 2026-10-19)
+## 5a. Organizations, Benefits wallets and Fixed Benefits (2026-10-19 to 2026-10-20)
 
-- Migration 0029 (`employee_escrow` ledger bucket) and 0030 (account type `O`, `allocate`/`claim` transactions, `employees`, `credit_batches`, `credit_batch_rows`), applied to nuclear-dev.
-- API: `/v1/org/*` and `POST /v1/employee/claims`; CSV batches run as one bulk transaction; escrow for unclaimed employees, claim by emailed one-time token, monthly reminder in the daily cron. Test suite `org` (31 checks); all 26 API suites pass.
-- `apps/organization-portal`: sign-in/sign-up, Overview (wallet, Add Funds, employees, held), Employees, Credits (CSV preview, confirm, run, history), Profile; 13 tests.
-- Deployed: https://nuclear-organization.a-space.workers.dev (`5910bc50`). Open: an admin view of organizations, a public claim page, scheduled distributions. See docs/ORGANIZATIONS.md.
-
-- 2026-10-20: **Benefits wallets** (migration 0033): employer-bound wallet type, claims and credits land there, same-account moves with daily headroom, refunds never capped or counted, `benefits_match_ledger` reconciliation; 44-check `benefits` suite, all 27 API suites pass. A Benefits wallet is unrestricted except that it cannot send to another account's wallet (it pays any merchant, by choice or by its tag, and buys from the store). API only (no consumer app yet).
-- 2026-10-20: **Fixed Benefits** built (migration 0036): `benefit_programs` row created at sign-up, Fixed/Flexible choice (two-card window) and Payment Schedule window in the portal, `employees.fixed_benefit` (file, edit, API), the daily scheduler with warn-ahead, 3-day retry and missed handling; plus an end-to-end organization journey test (`orgjourney`, 24 checks) and `programs` (35 checks).
-- 2026-10-20: `benefit_runs` (migration 0035) replaced `credit_batches`: one record for every run (portal CSV, Benefits API, later the scheduler); API and portal say run, `/v1/org/benefit-runs`. 
-- 2026-10-20: **Benefits API** for organizations (migration 0034 `api_keys`, `/v1/benefits-api/*`, array endpoints (create/update, get, credit, remove) plus a balance read; the portal's API page has the one-time key, an intro and two-column documentation with a card per route; 33-check `benefitsapi` suite, 28 API suites pass).
+- **Organizations** (account type `O`, migrations 0029 to 0032): an employer signs up, is active at once, keeps a profile (legal details, documents, sessions) and a funded wallet, and credits employees. Employees who have not claimed are held in escrow (`employee_escrow`, `employees.balance`) and claim with an emailed one-time token; a monthly reminder in the daily cron nudges them. Employees can be removed (hidden) when nothing is held for them.
+- **Benefits wallets** (migration 0033): a wallet type bound to one employer. Claims and credits land there, never in an ordinary wallet. It pays any merchant (by choice or with its tag), buys from the store and takes refunds of its own purchases; the one thing it cannot do is send to another account. A same-account move to an ordinary wallet is bounded by the daily headroom. Refunds are never capped and never counted. Reconciliation checks each Benefits wallet against the ledger (`benefits_match_ledger`).
+- **Benefit runs** (migration 0035): `benefit_runs` and `benefit_run_rows` are the one record of every credit run, whoever starts it (portal CSV, Benefits API or the scheduler); they replaced `credit_batches`.
+- **Benefits API** (migration 0034 `api_keys`): `/v1/benefits-api/*` with a one-time `nk_org_` key; array endpoints to create or update, get, remove and credit employees, plus a balance read.
+- **Fixed and Flexible Benefits** (migration 0036): every organization gets a `benefit_programs` row at sign-up; the portal asks it to choose a mode on its first sign-in. Fixed credits each employee's `fixed_benefit` automatically on a monthly, weekly or biweekly payment date (warning ahead, three days of retries, then missed); Flexible credits only on request. One-off CSV and API credits work in both modes.
+- **Organization portal** (`nuclear-organization`, 37 tests): sign-up and sign-in, the mode and schedule windows, Overview, Employees (with a Fixed Benefit column in Fixed mode), Benefits (program card, CSV upload with Ready to Run checks, run history, a page per run with claimed and not-claimed reports), API (key and documentation) and Profile.
+- **Tests:** 30 API suites pass, including `org`, `benefits`, `benefitsapi`, `programs` and `orgjourney` (an end-to-end organization journey from sign-up to reconciliation).
+- **Open:** consumer claim, balance and move screens; admin and support views of organizations; real bank funding and settlement; employer verification, employee identification and program classification. See `ORGANIZATIONS.md` ("Not built") and the cap-rule note there: only Benefits moves use the opening-value measure.
 
 ## 5b. Terminal app and Orb firmware (scaffolds)
 
-- `apps/merchant-terminal` (iPadOS, Swift): a Swift package with the terminal API client (checkouts, tap payments with attempt ids as idempotency keys, lookup, refunds, restock, Orb registration), money helpers, models and the Orb Bluetooth frame format. 7 `swift test` tests pass. The SwiftUI app target is still to be created in Xcode.
+- `apps/merchant-terminal` (iPadOS, Swift): a Swift package with the terminal API client (checkouts, tap payments with attempt ids as idempotency keys, lookup, refunds, restock, Orb registration), money helpers, models and the Orb Bluetooth frame format. 13 `swift test` tests pass (including the Orb protocol v1 codec and fragmentation). The SwiftUI app target is still to be created in Xcode.
 - `apps/orb-firmware` (Rust): compiles, 67 tests pass. `no_std` core following docs/ORB.md: protocol v1 messages and fragmentation, the Orb controller (pairing with proximity gate, authenticated sessions and heartbeat, payment/lookup flow, unresolved attempts, buttonless reset card, USB recovery polling, battery rules), NDEF URL and Text parsing. Swift mirror `OrbMessages.swift` (13 Swift tests, shared golden vectors). Not built: board support (pins, HAL, BLE stack, PN7161/LED/audio drivers), the handshake proof scheme, signed OTA.
 
 ## 6. Performance and reliability
@@ -100,7 +99,7 @@ Quality: 30 API test suites (about 1,370 checks, run on a throwaway local Postgr
 
 ## 7. Database
 
-28 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, and settlements. `TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
+36 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, settlements, bank number protection, organizations and employee escrow, Benefits wallets, API keys, benefit runs and benefit programs. `TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
 
 ## 8. Tooling and data
 
