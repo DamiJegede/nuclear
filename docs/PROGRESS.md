@@ -13,15 +13,15 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `98681bc6` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `38ff21fe` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5b578bbc` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `349c7155` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 32 tables, 32 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 32 tables, 33 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 26 API test suites (about 1,230 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 27 API test suites (about 1,280 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 
@@ -81,6 +81,8 @@ Quality: 26 API test suites (about 1,230 checks, run on a throwaway local Postgr
 - API: `/v1/org/*` and `POST /v1/employee/claims`; CSV batches run as one bulk transaction; escrow for unclaimed employees, claim by emailed one-time token, monthly reminder in the daily cron. Test suite `org` (31 checks); all 26 API suites pass.
 - `apps/organization-portal`: sign-in/sign-up, Overview (wallet, Add Funds, employees, held), Employees, Credits (CSV preview, confirm, run, history), Profile; 13 tests.
 - Deployed: https://nuclear-organization.a-space.workers.dev (`349c7155`). Open: an admin view of organizations, a public claim page, scheduled distributions. See docs/ORGANIZATIONS.md.
+
+- 2026-10-20: **Benefits wallets** (migration 0033): employer-bound wallet type, claims and credits land there, same-account moves with daily headroom, refunds never capped or counted, `benefits_match_ledger` reconciliation; 44-check `benefits` suite, all 27 API suites pass. A Benefits wallet is unrestricted except that it cannot send to another account's wallet (it pays any merchant, by choice or by its tag, and buys from the store). API only (no consumer app yet).
 
 ## 5b. Terminal app and Orb firmware (scaffolds)
 

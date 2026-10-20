@@ -47,7 +47,7 @@ export async function debitWallet(tx: Tx, walletId: string, amount: bigint) {
 
 export type SetBalanceResult =
   | { ok: true; balance: bigint | null; delta: bigint }
-  | { ok: false; error: "not_found" | "wallet_closed" | "insufficient_shared_balance" | "account_restricted"; available?: bigint };
+  | { ok: false; error: "not_found" | "wallet_closed" | "insufficient_shared_balance" | "account_restricted" | "benefits_wallet_locked"; available?: bigint };
 
 /**
  * Set a wallet's earmark: a number to set money aside (or change it), null to release it back to the
@@ -60,9 +60,11 @@ export async function setWalletBalance(
 ): Promise<SetBalanceResult> {
   const [b] = await tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
     select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`;
-  const [w] = await tx<{ status: string; balance: bigint | null }[]>`
-    select status, balance from wallets where id = ${i.walletId} and account_id = ${i.accountId} for no key update`;
+  const [w] = await tx<{ status: string; balance: bigint | null; type: string }[]>`
+    select status, balance, type from wallets where id = ${i.walletId} and account_id = ${i.accountId} for no key update`;
   if (!b || !w) return { ok: false, error: "not_found" };
+  // A Benefits wallet's money comes only from its employer and leaves only by a payment, a refund back or a same-account move.
+  if (w.type === "benefits") return { ok: false, error: "benefits_wallet_locked" };
   if (w.status === "closed") return { ok: false, error: "wallet_closed" };
 
   const current = w.balance;

@@ -153,7 +153,7 @@ Recovery is triggered by user action, app resume/reconnection, or a completed re
 
 ### Refunds
 
-Authorized staff selects original transaction, amount and reason. Support full/partial refunds bounded by the unrefunded amount, with atomic/idempotent posting. Refund to the original wallet as immediately available funded-balance/payment-credit restoration under refund allocation rules, with related_transaction_id referencing the original payment. Debit the business balance even if it becomes negative. Daily negative merchant net is collected by authorized ACH debit; customer refunds do not wait for bank collection. Refund budget restoration and daily-value treatment remain to be finalized. External bank refunds are outside ordinary consumer cash-out and require separate defined handling.
+Authorized staff selects original transaction, amount and reason. Support full/partial refunds bounded by the unrefunded amount, with atomic/idempotent posting. Refund to the original wallet as immediately available funded-balance/payment-credit restoration under refund allocation rules, with related_transaction_id referencing the original payment. Debit the business balance even if it becomes negative. Daily negative merchant net is collected by authorized ACH debit; customer refunds do not wait for bank collection. Refund spending-budget restoration remains separate. Daily-value treatment finalized 2026-10-20: approved refunds are never limited by and never counted toward the ordinary $2,000 cap (they may exceed it); spending gives no same-day replenishment. New ordinary loads, personal receipts and Benefits moves must fit remaining headroom. See the refund exception in ORGANIZATIONS.md and BALANCE-POLICY.md. External bank refunds are outside ordinary consumer cash-out and require separate defined handling.
 
 ## 7. Online payment
 
@@ -290,7 +290,7 @@ Policy decisions that must be explicit before live financial behavior:
 | Auto-reload measure/trigger/amount | Consent + one outstanding auto load; exact defaults open |
 | Program day and member budget periods | Defined server timezones; exact choice open |
 | Tap consent/step-up and proof protocol | Pre-authorized restricted tap proposal; secure protocol and program consent approval needed |
-| Refund and daily-counter treatment | Immediate customer refunds; business may go negative; daily-value treatment open |
+| Refund and daily-counter treatment | Approved refunds are never capped or counted (2026-10-20); wallet spending-budget restoration remains separate |
 | Settlement schedule, liquidity and reserves | Aggregated automatic payouts; contracted rail/cutoff/liquidity required |
 | Family admin/co-ownership/minor rules | Single owner, spend-only adults, managed minors draft defaults |
 | Digital-pass launch availability | Remains in scope; Apple/Google approvals and reader integration required |

@@ -5,9 +5,11 @@ import { customerLog } from "../lib/audit";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { LINK_TTL, newAgentKey, signWalletLink } from "../crypto";
-import { amountOrZero, n } from "../lib/money";
+import { amount as amountPositive, amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { setWalletBalance } from "../lib/walletFunds";
+import { moveFunds } from "../lib/benefits";
+import { dailyCap } from "./transfers";
 
 export const wallets = new Hono<AppContext>();
 wallets.use("*", requireSession);
@@ -30,10 +32,13 @@ type WalletRow = {
   key_hint: string | null;
   key_last_used_at: Date | null;
   created_at: Date;
+  org_account_id: string | null;
+  organization_name: string | null;
 };
 
 const COLS = `id, account_id, display_name, photo, type, daily_limit, spent_today,
-  allow_pay, allow_send, status, balance, key_hint, key_last_used_at, created_at`;
+  allow_pay, allow_send, status, balance, key_hint, key_last_used_at, created_at,
+  org_account_id, (select o.name from accounts o where o.id = wallets.org_account_id) as organization_name`;
 
 export function walletJson(w: WalletRow) {
   return {
@@ -53,6 +58,8 @@ export function walletJson(w: WalletRow) {
     // The agent API key, if one exists: never the key itself, only what identifies it.
     key: w.key_hint === null ? null : { hint: w.key_hint, last_used_at: w.key_last_used_at },
     created_at: w.created_at,
+    // A Benefits wallet: the employer it is bound to for good. Its balance is real funded money that only pays merchants or moves to another wallet of this account.
+    organization: w.org_account_id ? { id: w.org_account_id, name: w.organization_name } : null,
   };
 }
 
@@ -118,6 +125,26 @@ wallets.post("/", requireOwner, async (c) => {
   return c.json({ wallet: walletJson(row), ...(agentKey ? { key: agentKey.key } : {}) }, 201);
 });
 
+// Move money from a Benefits wallet to another wallet of the SAME account (owner only; never a delegated session or an agent key). The account
+// total is unchanged; the amount competes for the account's daily headroom once; a retry with the same key replays.
+const moveBody = z.object({ from_wallet_id: z.string().uuid(), to_wallet_id: z.string().uuid(), amount: amountPositive });
+wallets.post("/move", requireOwner, async (c) => {
+  const key = c.req.header("idempotency-key")?.trim();
+  if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
+  const body = moveBody.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const { accountId, deviceId } = c.get("auth");
+  const out = await moveFunds(c.get("sql"), {
+    accountId, deviceId, fromWalletId: body.data.from_wallet_id, toWalletId: body.data.to_wallet_id, amount: body.data.amount,
+    idempotencyKey: key, dailyCap: dailyCap(c.env),
+  });
+  if (out.kind === "error") return c.json({ error: out.error }, out.status);
+  const t = out.tx;
+  const move = { id: t.id, status: t.status, status_code: t.status_code, amount: n(t.amount), from_wallet_id: t.from_wallet_id, to_wallet_id: t.to_wallet_id, created_at: t.timestamp, completed_at: t.completed_at };
+  if (out.kind === "declined") return c.json({ error: "declined", status_code: t.status_code, ...(out.headroom !== undefined ? { daily_headroom: n(out.headroom) } : {}), move }, 422);
+  return c.json({ move }, out.replayed ? 200 : 201);
+});
+
 wallets.get("/:id", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   const { accountId, walletId } = c.get("auth");
@@ -175,8 +202,12 @@ wallets.patch("/:id", requireOwner, async (c) => {
       return { error: "default_wallet_cannot_close", status: 409 as const };
     }
 
+    // A Benefits wallet that still holds money cannot be closed: its funds are never released into the shared funds.
+    if (body.data.status === "closed" && cur.type === "benefits" && (cur.balance ?? 0n) > 0n) {
+      return { error: "benefits_wallet_not_empty", status: 422 as const };
+    }
     if (body.data.status === "closed") await tx`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data}`;
-    if (body.data.status === "closed" && cur.balance !== null) {
+    if (body.data.status === "closed" && cur.balance !== null && cur.type !== "benefits") {
       // A closed wallet gives its earmarked funds back to the shared funds.
       await setWalletBalance(tx, { accountId, walletId: id.data, target: null, deviceId: c.get("auth").deviceId });
     }

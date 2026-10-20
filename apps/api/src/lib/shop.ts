@@ -90,8 +90,8 @@ export type PurchaseOutcome =
  */
 export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutcome> {
   const [wallet] = i.walletId
-    ? await sql<{ id: string }[]>`select id from wallets where id = ${i.walletId} and account_id = ${i.accountId}`
-    : await sql<{ id: string }[]>`select id from wallets where account_id = ${i.accountId} and type = 'default'`;
+    ? await sql<{ id: string; type: string }[]>`select id, type from wallets where id = ${i.walletId} and account_id = ${i.accountId}`
+    : await sql<{ id: string; type: string }[]>`select id, type from wallets where account_id = ${i.accountId} and type = 'default'`;
   if (!wallet) return { kind: "error", status: 404, error: "wallet_not_found" };
 
   class StockRace extends Error {}
@@ -177,9 +177,10 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
     const [, , , claimed, [order]] = await Promise.all([
       tx`update balances set balance = balance - ${amt} where account_id = ${i.accountId}`,
       tx`update wallets set spent_today = spent_today + ${amt}, balance = case when balance is not null then balance - ${amt} else balance end where id = ${wallet.id}`,
-      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
-         values (${txId}, 'purchase', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}),
-                (${txId}, 'purchase', 2, null, 'platform_clearing', 'credit', ${amt})`,
+      // A Benefits wallet buys like any other wallet; its debit is attributed to it in the ledger.
+      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
+         values (${txId}, 'purchase', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}, ${wallet.type === "benefits" ? wallet.id : null}),
+                (${txId}, 'purchase', 2, null, 'platform_clearing', 'credit', ${amt}, null)`,
       i.kind === "tag"
         ? tx<{ id: string }[]>`update tag_models set sold = sold + ${i.quantity} where id = ${i.productId} and quantity - sold >= ${i.quantity} returning id`
         : tx<{ id: string }[]>`update shop set sold = sold + ${i.quantity}, stock = case when stock is null then null else stock - ${i.quantity} end

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { amount, n } from "../lib/money";
 import { sandboxFund } from "../lib/ledger";
+import { dailyHeadroom } from "../lib/benefits";
 import { dailyCap } from "./transfers";
 import { handleSchema } from "../lib/handle";
 import { requireOwner, requireSession } from "../session";
@@ -114,7 +115,9 @@ type BalanceRow = {
 };
 const pos = (v: bigint) => (v > 0n ? v : 0n);
 
-// Account-wide funds shared by all wallets. Delegated sessions see availability, not credit detail.
+// Account-wide funds. The total includes Benefits wallets (employer-funded, bound to one employer each); the rest is "ordinary". Funds set
+// aside for specific wallets (earmarks and Benefits) are not available to the other wallets. Delegated sessions see availability, not credit
+// detail; a session on a Benefits wallet sees that wallet's balance and cannot send.
 account.get("/balance", async (c) => {
   const { accountId, walletId } = c.get("auth");
   const sql = c.get("sql");
@@ -123,18 +126,19 @@ account.get("/balance", async (c) => {
      where account_id = ${accountId}`;
   if (!b) return c.json({ error: "not_found" }, 404);
 
-  // Funds set aside for specific wallets are not available to the rest of the account. A delegated
-  // session on an earmarked wallet sees that wallet's balance (a hard limit, no credit).
-  const [e] = await sql<{ total: bigint }[]>`
-    select coalesce(sum(balance), 0)::bigint as total from wallets where account_id = ${accountId} and balance is not null`;
+  const [e] = await sql<{ total: bigint; benefits: bigint }[]>`
+    select coalesce(sum(balance), 0)::bigint as total,
+           coalesce(sum(balance) filter (where type = 'benefits'), 0)::bigint as benefits
+      from wallets where account_id = ${accountId} and balance is not null`;
   const [mine] = walletId
-    ? await sql<{ balance: bigint | null }[]>`select balance from wallets where id = ${walletId}`
+    ? await sql<{ balance: bigint | null; type: string }[]>`select balance, type from wallets where id = ${walletId}`
     : [undefined];
   const restricted = b.balance < 0n || b.credit_spent > b.credit_limit;
   const creditAvailable = pos(b.credit_limit - b.credit_spent);
   const shared = pos(b.balance - e!.total);
   const earmarkedWallet = mine?.balance !== null && mine?.balance !== undefined;
-  const availableToSend = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared;
+  const benefitsWallet = mine?.type === "benefits";
+  const availableToSend = restricted || benefitsWallet ? 0n : earmarkedWallet ? mine!.balance! : shared;
   const availableToPay = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared + creditAvailable;
   const common = {
     available_to_send: n(availableToSend),
@@ -142,10 +146,15 @@ account.get("/balance", async (c) => {
     restricted,
   };
   if (walletId !== null) return c.json(common);
+  const ordinaryEarmarked = e!.total - e!.benefits;
   return c.json({
     ...common,
-    balance: n(b.balance),
-    earmarked: n(e!.total),
+    balance: n(b.balance),                              // total funded: ordinary + Benefits
+    benefits: n(e!.benefits),
+    ordinary: n(b.balance - e!.benefits),
+    ordinary_shared_available: n(shared),               // what unearmarked wallets can draw on
+    earmarked: n(ordinaryEarmarked),                    // ordinary money set aside for specific wallets (Benefits is reported separately)
+    daily_headroom: n(await dailyHeadroom(sql, accountId, dailyCap(c.env))),
     balance_pending: n(b.balance_pending),
     credit_limit: n(b.credit_limit),
     credit_spent: n(b.credit_spent),

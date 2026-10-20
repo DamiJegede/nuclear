@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Sql } from "../db";
 import { hashToken } from "../crypto";
+import { ensureBenefitsWallet } from "./benefits";
 
 /**
  * Employer credits (docs/ORGANIZATIONS.md). An organization (account type O) credits its employees from its own funded balance:
@@ -47,7 +48,7 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${i.orgId} for no key update`,
       tx<{ id: string; status: string; allow_send: boolean }[]>`
         select id, status, allow_send from wallets where account_id = ${i.orgId} and type = 'default' for no key update`,
-      tx<{ status: string; type: string }[]>`select status, type from accounts where id = ${i.orgId}`,
+      tx<{ status: string; type: string; name: string }[]>`select status, type, name from accounts where id = ${i.orgId}`,
     ]);
     if (!bal || !wallet || !org) throw new Error("organization rows missing");
     if (org.type !== "O") return { kind: "error", status: 404, error: "organization_required" };
@@ -76,25 +77,33 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
       returning id, employee_id, employee_account_id`;
     const byKey = new Map(emps.map((e) => [e.employee_id, e]));
 
-    // 4. Recipients that have an account: wallets and statuses, then their balance rows locked in a stable order.
+    // 4. Recipients that have claimed (have an account): their account status, their balance rows locked in a stable order, then the
+    // employer-bound Benefits wallet of each (created at 0 when it does not exist yet; reused otherwise). Credits never go to an ordinary wallet.
     const accountIds = [...new Set(emps.filter((e) => e.employee_account_id).map((e) => e.employee_account_id!))].sort();
     const targets = accountIds.length
-      ? await tx<{ account_id: string; wallet_id: string; w_status: string; a_status: string; a_type: string }[]>`
-          select w.account_id, w.id as wallet_id, w.status as w_status, a.status as a_status, a.type as a_type
-            from wallets w join accounts a on a.id = w.account_id
-           where w.type = 'default' and w.account_id in ${tx(accountIds)}`
+      ? await tx<{ account_id: string; a_status: string; a_type: string }[]>`
+          select id as account_id, status as a_status, type as a_type from accounts where id in ${tx(accountIds)}`
       : [];
-    const bad = targets.filter((t) => t.a_status !== "active" || t.w_status !== "active" || t.a_type !== "C");
+    const badAccounts = targets.filter((t) => t.a_status !== "active" || t.a_type !== "C").map((t) => t.account_id);
     const missing = accountIds.filter((a) => !targets.some((t) => t.account_id === a));
-    if (bad.length || missing.length) {
-      const badIds = new Set([...bad.map((b) => b.account_id), ...missing]);
-      const ids = emps.filter((e) => e.employee_account_id && badIds.has(e.employee_account_id)).map((e) => e.employee_id);
-      throw new BatchRefused("recipient_unavailable", { employee_ids: ids });
-    }
+    const unavailable = (ids: Set<string>) => emps.filter((e) => e.employee_account_id && ids.has(e.employee_account_id)).map((e) => e.employee_id);
+    if (badAccounts.length || missing.length) throw new BatchRefused("recipient_unavailable", { employee_ids: unavailable(new Set([...badAccounts, ...missing])) });
+    const walletOf = new Map<string, string>();
     if (accountIds.length) {
       await tx`select account_id from balances where account_id in ${tx(accountIds)} order by account_id for no key update`;
+      await tx`
+        insert into wallets (account_id, display_name, type, org_account_id, balance, allow_send)
+        select a::uuid, ${`${org.name} Benefits`.slice(0, 80)}, 'benefits', ${i.orgId}, 0, false
+          from jsonb_array_elements_text(${JSON.stringify(accountIds)}::text::jsonb) as t(a)
+        on conflict (account_id, org_account_id) where type = 'benefits' and status <> 'closed' do nothing`;
+      const bw = await tx<{ id: string; account_id: string; status: string }[]>`
+        select id, account_id, status from wallets
+         where org_account_id = ${i.orgId} and type = 'benefits' and status <> 'closed' and account_id in ${tx(accountIds)}
+         order by id for no key update`;
+      const frozen = bw.filter((w) => w.status !== "active").map((w) => w.account_id);
+      if (frozen.length) throw new BatchRefused("recipient_unavailable", { employee_ids: unavailable(new Set(frozen)) });
+      for (const w of bw) walletOf.set(w.account_id, w.id);
     }
-    const walletOf = new Map(targets.map((t) => [t.account_id, t.wallet_id]));
 
     // 5. The batch row, then one transaction per CSV row (one bulk insert).
     const lines = i.rows.map((r, idx) => {
@@ -135,17 +144,22 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
         const t = txByN.get(l.n)!;
         const key = l.held ? "allocate" : "send";
         return [
-          { tx: t.id, key, line: 1, account: i.orgId, bucket: "funded_balance", dir: "debit", amount: l.amount.toString() },
-          { tx: t.id, key, line: 2, account: l.to_account, bucket: l.held ? "employee_escrow" : "funded_balance", dir: "credit", amount: l.amount.toString() },
+          { tx: t.id, key, line: 1, account: i.orgId, bucket: "funded_balance", dir: "debit", amount: l.amount.toString(), wallet: null },
+          { tx: t.id, key, line: 2, account: l.to_account, bucket: l.held ? "employee_escrow" : "funded_balance", dir: "credit", amount: l.amount.toString(), wallet: l.held ? null : l.to_wallet },
         ];
       }),
     );
     const rowsJson = JSON.stringify(lines.map((l) => ({ ref: l.ref, amount: l.amount.toString(), mode: l.held ? "held" : "sent", tx: txByN.get(l.n)!.id })));
     const incoming = JSON.stringify(lines.filter((l) => !l.held).map((l) => ({ account: l.to_account, amount: l.amount.toString() })));
     await Promise.all([
-      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
-         select l.tx, l.key, l.line, l.account, l.bucket, l.dir, l.amount
-           from jsonb_to_recordset(${ledger}::text::jsonb) as l(tx uuid, key text, line int, account uuid, bucket text, dir text, amount bigint)`,
+      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
+         select l.tx, l.key, l.line, l.account, l.bucket, l.dir, l.amount, l.wallet
+           from jsonb_to_recordset(${ledger}::text::jsonb) as l(tx uuid, key text, line int, account uuid, bucket text, dir text, amount bigint, wallet uuid)`,
+      // The Benefits wallets hold their credits (a compartment inside the account total).
+      tx`update wallets w set balance = w.balance + s.amount
+           from (select wallet, sum(amount) as amount
+                   from jsonb_to_recordset(${JSON.stringify(lines.filter((l) => !l.held).map((l) => ({ wallet: l.to_wallet, amount: l.amount.toString() })))}::text::jsonb) as x(wallet uuid, amount bigint) group by wallet) s
+          where w.id = s.wallet`,
       tx`insert into credit_batch_rows (batch_id, employee_ref, amount, mode, transaction_id)
          select ${batchId}, r.ref, r.amount, r.mode, r.tx
            from jsonb_to_recordset(${rowsJson}::text::jsonb) as r(ref uuid, amount bigint, mode text, tx uuid)`,
@@ -175,7 +189,7 @@ class BatchRefused extends Error {
 }
 
 export type ClaimOutcome =
-  | { kind: "ok"; amount: bigint; org_name: string; already: boolean }
+  | { kind: "ok"; amount: bigint; org_name: string; already: boolean; wallet: { id: string; display_name: string; balance: bigint } }
   | { kind: "error"; status: 404 | 409 | 422; error: string };
 
 /**
@@ -190,14 +204,19 @@ export async function claimCredit(sql: Sql, i: { accountId: string; token: strin
         from employees e join accounts o on o.id = e.org_account_id
        where e.claim_token_hash = ${hash} for no key update of e`;
     if (!emp) return { kind: "error", status: 404, error: "invalid_token" };
-    const [[bal], [acct], [wallet]] = await Promise.all([
+    const [[bal], [acct]] = await Promise.all([
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${i.accountId} for no key update`,
       tx<{ type: string; status: string }[]>`select type, status from accounts where id = ${i.accountId}`,
-      tx<{ id: string; status: string }[]>`select id, status from wallets where account_id = ${i.accountId} and type = 'default'`,
     ]);
-    if (!bal || !acct || !wallet) throw new Error("account rows missing");
+    if (!bal || !acct) throw new Error("account rows missing");
     if (acct.type !== "C") return { kind: "error", status: 422, error: "consumer_account_required" };
-    if (acct.status !== "active" || wallet.status !== "active") return { kind: "error", status: 422, error: "account_unavailable" };
+    if (acct.status !== "active") return { kind: "error", status: 422, error: "account_unavailable" };
+
+    // The employer-bound Benefits wallet: created on the first claim, reused by every later claim and credit from the same employer.
+    const made = await ensureBenefitsWallet(tx, i.accountId, emp.org_account_id, emp.org_name);
+    const [wallet] = await tx<{ id: string; status: string; display_name: string; balance: bigint }[]>`
+      select id, status, display_name, balance from wallets where id = ${made.id} for no key update`;
+    if (!wallet || wallet.status !== "active") return { kind: "error", status: 422, error: "account_unavailable" };
 
     const amt = emp.balance;
     let line = 1;
@@ -207,13 +226,14 @@ export async function claimCredit(sql: Sql, i: { accountId: string; token: strin
         values ('claim', ${i.accountId}, ${wallet.id}, ${amt.toString()}, 'completed', ${`claim:${emp.id}`}, now())
         returning id`;
       await Promise.all([
-        tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount)
-           values (${t!.id}, 'claim', ${line++}, null, 'employee_escrow', 'debit', ${amt.toString()}),
-                  (${t!.id}, 'claim', ${line++}, ${i.accountId}, 'funded_balance', 'credit', ${amt.toString()})`,
+        tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
+           values (${t!.id}, 'claim', ${line++}, null, 'employee_escrow', 'debit', ${amt.toString()}, null),
+                  (${t!.id}, 'claim', ${line++}, ${i.accountId}, 'funded_balance', 'credit', ${amt.toString()}, ${wallet.id})`,
         tx`update balances set balance = balance + ${amt.toString()} where account_id = ${i.accountId}`,
+        tx`update wallets set balance = balance + ${amt.toString()} where id = ${wallet.id}`,
       ]);
     }
     await tx`update employees set employee_account_id = ${i.accountId}, balance = 0, claim_token_hash = null where id = ${emp.id}`;
-    return { kind: "ok", amount: amt, org_name: emp.org_name, already: false };
+    return { kind: "ok", amount: amt, org_name: emp.org_name, already: false, wallet: { id: wallet.id, display_name: wallet.display_name, balance: wallet.balance + amt } };
   });
 }

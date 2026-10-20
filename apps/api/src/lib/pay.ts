@@ -97,8 +97,8 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
       select account_id, balance, credit_limit, credit_spent from balances
        where account_id in (${i.payerAccountId}, ${i.merchantAccountId})
        order by account_id for no key update`,
-    tx<{ status: string; allow_pay: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
-      select status, allow_pay, daily_limit, spent_today, balance from wallets
+    tx<{ status: string; allow_pay: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null; type: string }[]>`
+      select status, allow_pay, daily_limit, spent_today, balance, type from wallets
        where id = ${i.payerWalletId} for no key update`,
     tx<{ status: string }[]>`select status from accounts where id = ${i.payerAccountId}`,
     tx<{ status: string; type: string }[]>`select status, type from accounts where id = ${i.merchantAccountId}`,
@@ -132,14 +132,15 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
   const amt = i.amount.toString();
 
   // Debits: payer funded balance and/or credit receivable. Credit: merchant funded balance.
-  const lines: { account_id: string; bucket: string; direction: "debit" | "credit"; amount: string }[] = [];
+  const lines: { account_id: string; bucket: string; direction: "debit" | "credit"; amount: string; wallet_id: string | null }[] = [];
   if (fromBalance > 0n) {
-    lines.push({ account_id: i.payerAccountId, bucket: "funded_balance", direction: "debit", amount: fromBalance.toString() });
+    // A Benefits wallet's money is attributed to the wallet in the ledger.
+    lines.push({ account_id: i.payerAccountId, bucket: "funded_balance", direction: "debit", amount: fromBalance.toString(), wallet_id: w!.type === "benefits" ? i.payerWalletId : null });
   }
   if (fromCredit > 0n) {
-    lines.push({ account_id: i.payerAccountId, bucket: "credit_receivable", direction: "debit", amount: fromCredit.toString() });
+    lines.push({ account_id: i.payerAccountId, bucket: "credit_receivable", direction: "debit", amount: fromCredit.toString(), wallet_id: null });
   }
-  lines.push({ account_id: i.merchantAccountId, bucket: "funded_balance", direction: "credit", amount: amt });
+  lines.push({ account_id: i.merchantAccountId, bucket: "funded_balance", direction: "credit", amount: amt, wallet_id: null });
   // Every write in one round trip (sent together, applied in this order). The ledger balance trigger is deferred, so order within the batch is free.
   const [, , , , [r]] = await Promise.all([
     tx`update balances
@@ -153,7 +154,7 @@ export async function payCore(tx: Tx, i: PayInput): Promise<PayOutcome> {
         where id = ${i.payerWalletId}`,
     tx`insert into ledger_entries ${tx(
       lines.map((l, idx) => ({ transaction_id: txId, posting_key: "pay", line_no: idx + 1, ...l })),
-      "transaction_id", "posting_key", "line_no", "account_id", "bucket", "direction", "amount",
+      "transaction_id", "posting_key", "line_no", "account_id", "bucket", "direction", "amount", "wallet_id",
     )}`,
     tx<PayRow[]>`update transactions set status = 'completed', completed_at = now()
                   where id = ${txId} returning ${tx.unsafe(PAY_COLS)}`,

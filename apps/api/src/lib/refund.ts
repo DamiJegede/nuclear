@@ -151,19 +151,22 @@ async function settle(
                         credit_spent = credit_spent - ${creditRestore.toString()}
      where account_id = ${orig.from_account_id}`;
 
-  const lines: { account_id: string; bucket: string; direction: "debit" | "credit"; amount: string }[] = [
-    { account_id: merchantAccountId, bucket: "funded_balance", direction: "debit", amount: amt },
+  // The refund goes back to the wallet that paid: a Benefits wallet gets its own money back (never ordinary headroom; refunds are never
+  // capped and never counted against the daily value).
+  const [pw] = orig.from_wallet_id ? await tx<{ type: string }[]>`select type from wallets where id = ${orig.from_wallet_id}` : [];
+  const lines: { account_id: string; bucket: string; direction: "debit" | "credit"; amount: string; wallet_id: string | null }[] = [
+    { account_id: merchantAccountId, bucket: "funded_balance", direction: "debit", amount: amt, wallet_id: null },
   ];
   if (toBalance > 0n) {
-    lines.push({ account_id: orig.from_account_id, bucket: "funded_balance", direction: "credit", amount: toBalance.toString() });
+    lines.push({ account_id: orig.from_account_id, bucket: "funded_balance", direction: "credit", amount: toBalance.toString(), wallet_id: pw?.type === "benefits" ? orig.from_wallet_id : null });
   }
   if (creditRestore > 0n) {
-    lines.push({ account_id: orig.from_account_id, bucket: "credit_receivable", direction: "credit", amount: creditRestore.toString() });
+    lines.push({ account_id: orig.from_account_id, bucket: "credit_receivable", direction: "credit", amount: creditRestore.toString(), wallet_id: null });
   }
   await tx`
     insert into ledger_entries ${tx(
       lines.map((l, idx) => ({ transaction_id: refundId, posting_key: "refund", line_no: idx + 1, ...l })),
-      "transaction_id", "posting_key", "line_no", "account_id", "bucket", "direction", "amount",
+      "transaction_id", "posting_key", "line_no", "account_id", "bucket", "direction", "amount", "wallet_id",
     )}`;
 
   const [r] = await tx<RefundRow[]>`

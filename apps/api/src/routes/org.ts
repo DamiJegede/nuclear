@@ -82,13 +82,14 @@ org.get("/employees", async (c) => {
   const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
   const status = c.req.query("status");
   if (status && !["claimed", "unclaimed"].includes(status)) return c.json({ error: "invalid_request" }, 400);
-  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date }[]>`
-    select id, employee_id, name, email, balance, (employee_account_id is not null) as claimed, reminded_at, created_at
-      from employees
-     where org_account_id = ${id} and status = 'active'
-       ${q ? sql`and (name ilike ${like} or email ilike ${like} or employee_id ilike ${like})` : sql``}
-       ${status === "claimed" ? sql`and employee_account_id is not null` : status === "unclaimed" ? sql`and employee_account_id is null` : sql``}
-     order by created_at desc, id desc limit 500`;
+  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date; benefits_wallet_id: string | null }[]>`
+    select e.id, e.employee_id, e.name, e.email, e.balance, (e.employee_account_id is not null) as claimed, e.reminded_at, e.created_at,
+           (select w.id from wallets w where w.account_id = e.employee_account_id and w.org_account_id = e.org_account_id and w.type = 'benefits' and w.status <> 'closed') as benefits_wallet_id
+      from employees e
+     where e.org_account_id = ${id} and e.status = 'active'
+       ${q ? sql`and (e.name ilike ${like} or e.email ilike ${like} or e.employee_id ilike ${like})` : sql``}
+       ${status === "claimed" ? sql`and e.employee_account_id is not null` : status === "unclaimed" ? sql`and e.employee_account_id is null` : sql``}
+     order by e.created_at desc, e.id desc limit 500`;
   return c.json({ employees: rows.map((r) => ({ ...r, balance: n(r.balance) })) });
 });
 
@@ -174,5 +175,5 @@ employeeClaims.post("/", async (c) => {
   const out = await claimCredit(c.get("sql"), { accountId, token: parsed.data.token });
   if (out.kind === "error") return c.json({ error: out.error }, out.status);
   await customerLog(c, accountId, null, "employee.claimed", { amount: Number(out.amount), organization: out.org_name });
-  return c.json({ claimed: n(out.amount), organization: out.org_name });
+  return c.json({ claimed: n(out.amount), organization: out.org_name, wallet: { id: out.wallet.id, display_name: out.wallet.display_name, type: "benefits", balance: n(out.wallet.balance) } });
 });

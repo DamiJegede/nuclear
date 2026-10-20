@@ -32,6 +32,8 @@ export type SystemStats = {
     earmarks_within_balances: boolean;
     /** Money held for employees who have not claimed (ledger bucket employee_escrow) equals the sum of employees.balance. */
     escrow_matches_employees: boolean;
+    /** Every Benefits wallet's balance equals the funded_balance postings attributed to it. */
+    benefits_match_ledger: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
@@ -75,7 +77,10 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
                              then case direction when 'debit' then amount else -amount end end), 0)::bigint as credit,
            coalesce(sum(case direction when 'debit' then amount else -amount end), 0)::bigint as net,
            coalesce(sum(case when bucket = 'employee_escrow' then case direction when 'credit' then amount else -amount end end), 0)::bigint as escrow,
-           (select coalesce(sum(balance), 0)::bigint from employees) as employees_held
+           (select coalesce(sum(balance), 0)::bigint from employees) as employees_held,
+           (select count(*)::int from wallets w where w.type = 'benefits'
+              and w.balance <> coalesce((select sum(case l.direction when 'credit' then l.amount else -l.amount end) from ledger_entries l
+                                          where l.wallet_id = w.id and l.bucket = 'funded_balance'), 0)) as benefits_off
       from ledger_entries`;
 
   const [over] = await sql<{ n: number }[]>`
@@ -158,6 +163,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       ledger_balanced: Number(led!.net) === 0,
       earmarks_within_balances: over!.n === 0,
       escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
+      benefits_match_ledger: Number(led!.benefits_off) === 0,
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,

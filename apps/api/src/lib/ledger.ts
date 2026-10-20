@@ -43,14 +43,22 @@ export type SendOutcome =
   | { kind: "declined"; tx: TxRow; replayed: boolean }
   | { kind: "error"; status: 404 | 409 | 422; error: string };
 
-/** Incoming value counted against a recipient's program day: released loads + incoming sends. */
-const incomingTodayQuery = (tx: Tx, accountId: string) => tx<{ total: bigint }[]>`
+/**
+ * Incoming ORDINARY value counted against an account's program day: released loads + incoming sends + Benefits-to-ordinary moves.
+ * Money sent into a Benefits wallet (an employer's credit) is not ordinary value and is not counted; refunds are never counted.
+ */
+export const incomingTodayQuery = (tx: Tx, accountId: string) => tx<{ total: bigint }[]>`
     with start as (
       select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t
     )
     select (
+      coalesce((select sum(t.amount) from transactions t, start
+                 where t.to_account_id = ${accountId} and t.type = 'send'
+                   and t.status = 'completed' and t.completed_at >= start.t
+                   and not exists (select 1 from wallets w where w.id = t.to_wallet_id and w.type = 'benefits')), 0)
+      +
       coalesce((select sum(amount) from transactions, start
-                 where to_account_id = ${accountId} and type = 'send'
+                 where to_account_id = ${accountId} and type = 'move'
                    and status = 'completed' and completed_at >= start.t), 0)
       +
       coalesce((select sum(amount) from fundings, start
@@ -83,18 +91,21 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     // would each take a pool connection).
     const [[from], [to]] = await Promise.all([
       wanted
-        ? tx<{ id: string; account_id: string }[]>`
-            select id, account_id from wallets where id = ${wanted} and account_id = ${i.actorAccountId}`
-        : tx<{ id: string; account_id: string }[]>`
-            select id, account_id from wallets
+        ? tx<{ id: string; account_id: string; wtype: string }[]>`
+            select id, account_id, type as wtype from wallets where id = ${wanted} and account_id = ${i.actorAccountId}`
+        : tx<{ id: string; account_id: string; wtype: string }[]>`
+            select id, account_id, type as wtype from wallets
              where account_id = ${i.actorAccountId} and type = 'default'`,
-      tx<{ id: string; account_id: string; type: string }[]>`
-        select w.id, w.account_id, a.type from wallets w join accounts a on a.id = w.account_id
+      tx<{ id: string; account_id: string; type: string; wtype: string }[]>`
+        select w.id, w.account_id, a.type, w.type as wtype from wallets w join accounts a on a.id = w.account_id
          where w.id = ${i.toWalletId}`,
     ]);
     if (!from) return { kind: "error", status: 404, error: "wallet_not_found" };
     if (!to) return { kind: "error", status: 404, error: "recipient_not_found" };
     if (to.id === from.id) return { kind: "error", status: 422, error: "same_wallet" };
+    // Benefits money never leaves the account as a transfer, and only its bound employer can put money into a Benefits wallet.
+    if (from.wtype === "benefits") return { kind: "error", status: 422, error: "benefits_wallet_not_transferable" };
+    if (to.wtype === "benefits") return { kind: "error", status: 422, error: "recipient_not_eligible" };
     // Wallets of one account share funds; budget changes authority, it does not move money.
     if (to.account_id === from.account_id) return { kind: "error", status: 422, error: "same_account" };
     if (to.type !== "C") return { kind: "error", status: 422, error: "recipient_not_eligible" };
