@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearCache } from "./cache";
 import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
 import { usePageTitle } from "./title";
-import { Credits } from "./views/Credits";
+import { BatchDetail } from "./views/BatchDetail";
+import { Benefits } from "./views/Benefits";
 import { Employees } from "./views/Employees";
 import { Login } from "./views/Login";
 import { Overview } from "./views/Overview";
@@ -13,20 +14,24 @@ const KEY = "nuclear.organization.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "employees" | "credits" | "profile";
+export type Page = "overview" | "employees" | "benefits" | "batch" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
   { page: "employees", label: "Employees", path: "/employees" },
-  { page: "credits", label: "Credits", path: "/credits" },
+  { page: "benefits", label: "Benefits", path: "/benefits" },
 ];
 const PROFILE_PATH = "/profile";
+const BATCH_PATH = /^\/(?:benefits|credits)\/([0-9a-fA-F-]{36})$/;   // /credits is the old address
 const pageFromPath = (path: string): Page => {
   const clean = path.replace(/\/+$/, "") || "/";
   if (clean === PROFILE_PATH) return "profile";
+  if (BATCH_PATH.test(clean)) return "batch";
+  if (clean === "/credits") return "benefits";
   return NAV.find((n) => n.path === clean)?.page ?? "overview";
 };
-const pathOf = (p: Page) => (p === "profile" ? PROFILE_PATH : NAV.find((n) => n.page === p)!.path);
+const batchIdFromPath = (path: string): string | null => BATCH_PATH.exec(path.replace(/\/+$/, ""))?.[1] ?? null;
+const pathOf = (p: Page, batchId?: string) => (p === "profile" ? PROFILE_PATH : p === "batch" ? `/benefits/${batchId}` : NAV.find((n) => n.page === p)!.path);
 
 export function App({
   makeApi = createApi,
@@ -43,13 +48,15 @@ export function App({
   const [notice, setNotice] = useState<string | null>(null);
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
 
-  const setPage = useCallback((p: Page, replace = false) => {
-    const url = pathOf(p);
+  const [batchId, setBatchId] = useState<string | null>(() => batchIdFromPath(window.location.pathname));
+  const setPage = useCallback((p: Page, replace = false, id?: string) => {
+    const url = pathOf(p, id);
     if (window.location.pathname !== url) window.history[replace ? "replaceState" : "pushState"](null, "", url);
+    setBatchId(p === "batch" ? id ?? null : null);
     setPageState(p);
   }, []);
   useEffect(() => {
-    const onPop = () => setPageState(pageFromPath(window.location.pathname));
+    const onPop = () => { setPageState(pageFromPath(window.location.pathname)); setBatchId(batchIdFromPath(window.location.pathname)); };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -83,7 +90,7 @@ export function App({
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Organization</span></div>
         <nav aria-label="Sections">
           {NAV.map((n) => (
-            <a key={n.page} href={n.path} className={page === n.page ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}>{n.label}</a>
+            <a key={n.page} href={n.path} className={page === n.page || (n.page === "benefits" && page === "batch") ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}>{n.label}</a>
           ))}
         </nav>
         <div className="who">
@@ -94,8 +101,9 @@ export function App({
       <main>
         {page === "overview" && <Overview api={api} account={account} onError={onError} go={(p) => setPage(p as Page)} />}
         {page === "employees" && <Employees api={api} onError={onError} />}
-        {page === "credits" && <Credits api={api} onError={onError} />}
-        {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} />}
+        {page === "benefits" && <Benefits api={api} onError={onError} openBatch={(id) => setPage("batch", false, id)} />}
+        {page === "batch" && batchId && <BatchDetail api={api} id={batchId} onError={onError} back={() => setPage("benefits")} />}
+        {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}
       </main>
     </div>
   );

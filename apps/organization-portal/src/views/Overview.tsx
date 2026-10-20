@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { ApiError, type Account, type Api, type Overview as OverviewData } from "../api";
 import { decimalOnly } from "../inputs";
-import { dollarsToCents, int, money } from "../format";
+import { dollarsToCents, fit, int, money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
 import { Avatar } from "./Avatar";
@@ -32,7 +32,7 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
 
         <article className="card" aria-label="Wallet">
           <h2>Wallet</h2>
-          <p className="big xl">{money(data.balance)}</p>
+          <p className={`big ${fit(money(data.balance))}`}>{money(data.balance)}</p>
           <p className="sub">available to credit employees</p>
           <hr className="tile-rule" />
           <button type="button" onClick={() => setAdding(true)}>Add Funds</button>
@@ -40,7 +40,7 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
 
         <article className="card linkcard" aria-label="Employees">
           <h2><a href="/employees" className="stretched" onClick={nav("employees")}>Employees</a></h2>
-          <p className="big xl">{int(data.employees.total)}</p>
+          <p className={`big ${fit(int(data.employees.total))}`}>{int(data.employees.total)}</p>
           <p className="sub">{int(data.employees.claimed)} claimed • {int(data.employees.unclaimed)} not yet</p>
           <hr className="tile-rule" />
           <h3 className="tile-label">Held for Unclaimed</h3>
@@ -50,7 +50,7 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
 
       <div className="grid">
         <article className="card linkcard" aria-label="Last batch">
-          <h2><a href="/credits" className="stretched" onClick={nav("credits")}>Last Credit Batch</a></h2>
+          <h2><a href="/benefits" className="stretched" onClick={nav("benefits")}>Last Benefit Batch</a></h2>
           {last ? (
             <>
               <p className="big">{money(last.total)}</p>

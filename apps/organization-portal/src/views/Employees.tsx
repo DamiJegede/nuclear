@@ -40,7 +40,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
       <div className="card flush">
         {failed && !data ? <p className="error pad" role="alert">Couldn't load employees. <button className="link" onClick={retry}>Try Again</button></p>
           : !data ? <p className="muted pad" role="status">Loading…</p>
-          : data.length === 0 ? <p className="muted pad">{q || status ? "No employees match." : "No employees yet. Upload a credit CSV to add them."}</p>
+          : data.length === 0 ? <p className="muted pad">{q || status ? "No employees match." : "No employees yet. Upload a benefits CSV to add them."}</p>
           : (
             <table>
               <thead><tr><th scope="col">Name</th><th scope="col">Employee ID</th><th scope="col">Email</th><th scope="col">Status</th><th scope="col" className="num">Held</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>

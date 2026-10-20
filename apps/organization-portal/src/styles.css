@@ -483,3 +483,43 @@ ul.problems { margin: 6px 0 12px; padding-left: 18px; color: var(--bad); }
 .upload > .error, .upload > .ok { margin-top: 16px; }
 .upload dl.facts { margin: 24px 0 16px; }
 .upload table { margin-bottom: 8px; }
+.big.x2 { font-size: 40px; line-height: 1.1; margin: 6px 0 4px; }
+.big.x3 { font-size: 34px; line-height: 1.15; margin: 6px 0 4px; }
+.big.x4 { font-size: 29px; line-height: 1.2; margin: 6px 0 4px; }
+.big.x5 { font-size: 23px; line-height: 1.25; margin: 6px 0 4px; }
+.big { overflow-wrap: anywhere; }
+.ready { display: flex; gap: 24px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.ready-main { flex: 1; min-width: 260px; }
+.ready-main > h2 { margin-bottom: 8px; font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.ready-main > .hint { margin: 0 0 18px; }
+ul.checks { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+ul.checks li { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+ul.checks .mark { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 700; }
+ul.checks .pass .mark { background: var(--good-bg); color: var(--good); }
+ul.checks .fail .mark { background: var(--bad-bg); color: var(--bad); }
+.ready-main > .row { margin: 16px 0 0; }
+.ready-run { display: flex; align-items: flex-start; }
+button.run-btn { display: inline-flex; align-items: center; gap: 8px; background: #16a34a; color: #fff; padding: 11px 20px; font-size: 15px; }
+button.run-btn:hover:not(:disabled) { background: #15803d; }
+button.run-btn:disabled { background: #16a34a; }
+
+/* Running batch: a plain spinner */
+.running { display: grid; justify-items: center; gap: 4px; padding: 8px 0 4px; text-align: center; }
+.running-title { font-size: 17px; font-weight: 600; margin: 16px 0 0 !important; }
+.running .hint { margin: 2px 0 0; }
+.spinner { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+.crumb { margin: 0 0 8px; font-size: 13px; }
+.crumb a { color: var(--muted); text-decoration: none; }
+.crumb a:hover { color: var(--text); }
+.batch-when { margin: -8px 0 16px; font-size: 13px; }
+.report-bar { justify-content: space-between; align-items: center; flex-wrap: wrap; margin: 20px 0 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg-btn { background: transparent; color: var(--muted); border-radius: 0; padding: 8px 14px; font-weight: 500; }
+.seg-btn.on { background: var(--surface); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.dim { color: var(--muted); font-weight: 400; }
+.ready { margin-bottom: 20px; }
+.modal p.done { display: flex; align-items: center; gap: 12px; font-size: 16px; margin: 4px 0 8px; }
+.done-mark { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--good-bg); color: var(--good); font-weight: 700; }

@@ -76,7 +76,7 @@ eq("overview: balance, employee counts, held total and the last batch", [ov.bala
 const list = (await call("GET", "/v1/org/employees?status=unclaimed&q=sam", { token: acme.session_token })).json.employees;
 eq("employees: list with filters shows the held balance", list.map((e: any) => [e.employee_id, e.balance, e.claimed]), [["E002", 5000, false]]);
 const det = (await call("GET", `/v1/org/credit-batches/${b1.json.batch.id}`, { token: acme.session_token })).json;
-eq("batch detail: one row per employee with its mode", det.rows.map((r: any) => [r.employee_id, r.amount, r.mode]), [["E001", 2500, "held"], ["E002", 5000, "held"]]);
+eq("batch detail: one row per employee with its mode and claim state, summarised", [det.rows.map((r: any) => [r.employee_id, r.amount, r.mode, r.claimed, r.balance]), det.summary], [[["E001", 2500, "held", false, 2500], ["E002", 5000, "held", false, 5000]], { claimed: 0, unclaimed: 2, still_held: 7500 }]);
 
 // ---- claiming
 const eveToken = tokenFrom(mails.find((m) => m.to === "eve@example.com")!);
@@ -87,6 +87,9 @@ eq("claim: the held credit moves into the employee's balance", [c1.status, c1.js
 eq("claim: the employee is linked, the token is used up, the claim is a transaction", [(await q("select employee_account_id = $1 as linked, balance::int b, claim_token_hash is null as spent from employees where employee_id='E001'", [cus.account_id]))[0], (await q("select type, amount::int a, from_account_id from transactions where type='claim'"))[0]], [{ linked: true, b: 0, spent: true }, { type: "claim", a: 2500, from_account_id: null }]);
 eq("claim: the token cannot be used twice", (await call("POST", "/v1/employee/claims", { token: cus.session_token, body: { token: eveToken } })).status, 404);
 eq("claim: the ledger still balances and escrow matches", [(await reconciled()).ledger_balanced, (await reconciled()).balances_match_ledger, (await reconciled()).escrow_matches_employees], [true, true, true]);
+
+const det2 = (await call("GET", `/v1/org/credit-batches/${b1.json.batch.id}`, { token: acme.session_token })).json;
+eq("batch detail: reflects who has claimed since", [det2.rows.map((r: any) => [r.employee_id, r.claimed, r.balance]), det2.summary], [[["E001", true, 0], ["E002", false, 5000]], { claimed: 1, unclaimed: 1, still_held: 5000 }]);
 
 // ---- the next batch pays a claimed employee directly
 const b2 = await batch(acme, [{ employee_id: "E001", name: "Eve Renamed", email: "eve2@example.com", amount: 1000 }, { employee_id: "E003", name: "New Three", email: "new3@example.com", amount: 700 }], "b-2");
@@ -120,6 +123,17 @@ eq("remove: a claimed employee can be removed, then no longer shows or counts", 
 eq("remove: removing twice is a 404", (await rm("E001")).status, 404);
 eq("remove: a removed employee mentioned in a later CSV is active again", [(await batch(acme, [{ employee_id: "E001", name: "Eve Back", email: "eve@example.com", amount: 100 }], "b-3")).status, (await emp("E001")).status], [201, "active"]);
 eq("remove: the books still reconcile", [(await reconciled()).ledger_balanced, (await reconciled()).escrow_matches_employees], [true, true]);
+
+// ---- organization profile and documents
+eq("profile: empty at first, a business or consumer cannot use it", [(await call("GET", "/v1/org/profile", { token: acme.session_token })).json.profile, (await call("GET", "/v1/org/profile", { token: cus.session_token })).status], [null, 403]);
+const prof = await call("PUT", "/v1/org/profile", { token: acme.session_token, body: { legal_name: "Acme Corporation Inc", display_name: "Acme Corp", tax_id: "12-3456789", address: "1 Main St", city: "Brooklyn", state: "NY", post_code: "11201", country: "us", website: "https://acme.test" } });
+eq("profile: saved, tax ID write-only (last four only)", [prof.status, prof.json.profile.legal_name, prof.json.profile.tax_id_last4, prof.json.profile.country, "tax_id" in prof.json.profile], [200, "Acme Corporation Inc", "6789", "US", false]);
+eq("profile: stored against an organization account", (await q("select account_type from businesses where account_id=$1", [acme.account_id]))[0].account_type, "O");
+eq("profile: omitting the tax ID keeps it; bad input is refused", [(await call("PUT", "/v1/org/profile", { token: acme.session_token, body: { legal_name: "Acme Corporation Inc", display_name: "Acme" } })).json.profile.tax_id_last4, (await call("PUT", "/v1/org/profile", { token: acme.session_token, body: { legal_name: "", display_name: "x" } })).status], ["6789", 400]);
+const pdf = new Blob(["%PDF-1.4\n%test\n"], { type: "application/pdf" });
+const docEnv = { ...env, UPLOADS: { put: async () => ({}) } };
+const docRes = await app.fetch(new Request("http://x/v1/account/documents", { method: "POST", headers: { authorization: `Bearer ${acme.session_token}`, "content-type": "application/pdf" }, body: pdf }), docEnv, ctx);
+eq("documents: an organization can upload a document, and list it", [docRes.status, (await call("GET", "/v1/account/documents", { token: acme.session_token })).json.documents.length], [201, 1]);
 
 // ---- guards
 eq("guards: claimed employees cannot hold money; a held balance needs no account", (await q("select count(*)::int n from employees where employee_account_id is not null and balance <> 0"))[0].n, 0);

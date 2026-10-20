@@ -19,3 +19,7 @@ export function ago(iso: string, now = Date.now()): string {
   const m = Math.round(s / 60);
   return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
+
+/** The size class for a big number: the longer the text, the smaller it is set, so it never spills out of its card. */
+export const fit = (text: string): "xl" | "x2" | "x3" | "x4" | "x5" =>
+  text.length <= 8 ? "xl" : text.length <= 10 ? "x2" : text.length <= 12 ? "x3" : text.length <= 14 ? "x4" : "x5";

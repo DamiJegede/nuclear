@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
 import { n } from "../lib/money";
+import { profileBody, profileJson, type ProfileRow } from "./business";
 import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runCreditBatch } from "../lib/org";
 import { sendCreditEmails } from "../lib/orgMail";
 import { requireOwner, requireSession } from "../session";
@@ -49,6 +50,28 @@ org.get("/overview", async (c) => {
     held: n(e.held),
     last_batch: last[0] ? batchJson(last[0]) : null,
   });
+});
+
+// ---- Organization profile: legal name, tax ID, address and website, kept in the same table as a business profile ----
+org.get("/profile", async (c) => {
+  const [p] = await c.get("sql")<ProfileRow[]>`select legal_name, display_name, tax_id, address, city, state, post_code, country, website from businesses where account_id = ${c.get("auth").accountId}`;
+  return c.json({ profile: profileJson(p) });
+});
+
+org.put("/profile", async (c) => {
+  const b = profileBody.safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const { accountId } = c.get("auth");
+  const d = b.data;
+  const [p] = await c.get("sql")<ProfileRow[]>`
+    insert into businesses (account_id, account_type, legal_name, display_name, tax_id, address, city, state, post_code, country, website)
+    values (${accountId}, 'O', ${d.legal_name}, ${d.display_name}, ${d.tax_id ?? null}, ${d.address}, ${d.city}, ${d.state}, ${d.post_code}, ${d.country}, ${d.website})
+    on conflict (account_id) do update set legal_name = excluded.legal_name, display_name = excluded.display_name,
+      tax_id = coalesce(excluded.tax_id, businesses.tax_id), address = excluded.address, city = excluded.city, state = excluded.state,
+      post_code = excluded.post_code, country = excluded.country, website = excluded.website
+    returning legal_name, display_name, tax_id, address, city, state, post_code, country, website`;
+  await customerLog(c, accountId, null, "org.profile_saved", { fields: Object.keys(d) });
+  return c.json({ profile: profileJson(p) });
 });
 
 // ---- Employees ----
@@ -128,11 +151,17 @@ org.get("/credit-batches/:id", async (c) => {
   const [b] = await sql<BatchRow[]>`
     select id, row_count, total, sent, held, created_at from credit_batches where id = ${id.data} and org_account_id = ${c.get("auth").accountId}`;
   if (!b) return c.json({ error: "not_found" }, 404);
-  const rows = await sql<{ employee_id: string; name: string; email: string; amount: bigint; mode: string; transaction_id: string }[]>`
-    select e.employee_id, e.name, e.email, r.amount, r.mode, r.transaction_id
+  // Each row carries the employee's CURRENT claim state (not their state when the batch ran), so the organization can follow up.
+  const rows = await sql<{ employee_id: string; name: string; email: string; amount: bigint; mode: string; transaction_id: string; claimed: boolean; balance: bigint; reminded_at: Date | null; removed: boolean }[]>`
+    select e.employee_id, e.name, e.email, r.amount, r.mode, r.transaction_id,
+           (e.employee_account_id is not null) as claimed, e.balance, e.reminded_at, (e.status = 'removed') as removed
       from credit_batch_rows r join employees e on e.id = r.employee_ref
-     where r.batch_id = ${b.id} order by r.id`;
-  return c.json({ batch: batchJson(b), rows: rows.map((r) => ({ ...r, amount: n(r.amount) })) });
+     where r.batch_id = ${b.id} order by e.employee_id`;
+  return c.json({
+    batch: batchJson(b),
+    summary: { claimed: rows.filter((r) => r.claimed).length, unclaimed: rows.filter((r) => !r.claimed).length, still_held: n(rows.reduce((t, r) => t + r.balance, 0n)) },
+    rows: rows.map((r) => ({ ...r, amount: n(r.amount), balance: n(r.balance) })),
+  });
 });
 
 /** An employee (any consumer account) claims held credit with the token from the email. */

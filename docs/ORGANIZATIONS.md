@@ -1,5 +1,7 @@
 # Organizations: employer-funded staff wallets
 
+The portal calls the CSV page **Benefits** (it was Credits); the API and tables keep the `credit_batches` names.
+
 Implements the first slice of [ADOPTION-STRATEGY.md](ADOPTION-STRATEGY.md) and the ideas in [BRAIN-DUMP.md](BRAIN-DUMP.md). Migration 0030. Free for employers ($0 PEPM); the allowance is the organization's own money, never Nuclear revenue; Nuclear does not do payroll, withholding or tax reporting.
 
 ## Decisions (Dami, 2026-10-19)
@@ -21,8 +23,9 @@ Header `employee_id,name,email,amount` (any order). `employee_id` is letters and
 - `GET /employees?q&status=claimed|unclaimed`: up to 500, newest first.
 - `POST /credit-batches {rows:[{employee_id,name,email,amount}]}` with `Idempotency-Key`: 201 (200 on a retry with the same key and rows, 409 `idempotency_mismatch` if the rows differ). Errors: 422 `insufficient_balance` (`required`, `available`), 422 `recipient_unavailable` (`employee_ids`), 422 `duplicate_employee_id`, 400 `invalid_request`. The answer carries `emails {sent, failed, not_configured}`; a held credit whose email was not sent is retried by the daily cron.
 - `DELETE /employees/:id`: removes (hides) an employee, 204; 409 `has_held_balance` while money is held for them (they must claim first); 404 if not theirs or already removed. A later CSV with the same employee_id makes them active again.
-- `GET /credit-batches`, `GET /credit-batches/:id` (rows with `mode` sent|held).
+- `GET /credit-batches`, `GET /credit-batches/:id` (`batch`, `summary {claimed, unclaimed, still_held}` and rows with `mode` sent|held plus the employee's CURRENT `claimed`, `balance`, `reminded_at`, `removed`; the portal's batch page and its CSV reports are built from this).
 - `POST /v1/employee/claims {token}`: any consumer owner session. 404 `invalid_token`, 422 `consumer_account_required`.
+- `GET|PUT /profile`: legal name, name employees see, tax ID (write-only, last four returned), address, city, state, post code, country, website; the same body and rules as `/v1/business/profile`, stored in `businesses` (migration 0032 lets `account_type` be O). Documents: the existing `GET|POST /v1/account/documents` (PDF, PNG or JPEG, 5 MB, 10 per account), now open to organizations.
 - Funding the organization's wallet uses the existing load route.
 
 ## Money rules

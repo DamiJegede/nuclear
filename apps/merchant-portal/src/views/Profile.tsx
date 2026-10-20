@@ -207,7 +207,11 @@ function Sessions({ api, onError }: { api: Api; onError: (e: unknown) => void })
 
 /** Legal name, tax ID, address and website. Plain text until Edit; the tax ID is write-only (only its last four digits are shown). */
 function BusinessDetails({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
-  const { data, failed, retry } = useList<BusinessProfile | null>(useCallback(() => api.profile(), [api]), onError, "profile");
+  // Wrapped, so "loaded, nothing saved yet" (null) is not mistaken for "still loading".
+  const loaded = useList<{ profile: BusinessProfile | null }>(useCallback(async () => ({ profile: await api.profile() }), [api]), onError, "profile");
+  const { failed, retry } = loaded;
+  const data = loaded.data?.profile ?? null;
+  const ready = loaded.data !== null;
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -238,7 +242,7 @@ function BusinessDetails({ api, onError }: { api: Api; onError: (e: unknown) => 
     finally { setBusy(false); }
   }
 
-  if (!data && !failed) return <div className="card"><h2>Business Details</h2><p className="muted" role="status">Loading…</p></div>;
+  if (!ready && !failed) return <div className="card"><h2>Business Details</h2><p className="muted" role="status">Loading…</p></div>;
   return (
     <EditCard title="Business Details" editing={editing} onToggle={toggle}>
       {editing ? (

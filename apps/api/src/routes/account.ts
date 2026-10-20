@@ -57,7 +57,7 @@ account.post("/account/documents", requireOwner, async (c) => {
   const { accountId } = c.get("auth");
   const sql = c.get("sql");
   const [a] = await sql<{ type: string; status: string; name: string }[]>`select type, status, name from accounts where id = ${accountId}`;
-  if (!a || a.type !== "B") return c.json({ error: "forbidden" }, 403);
+  if (!a || (a.type !== "B" && a.type !== "O")) return c.json({ error: "forbidden" }, 403);   // businesses and organizations
   const mime = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);

@@ -90,8 +90,8 @@ business.get("/transactions", async (c) => {
 });
 
 // ---- Profile --------------------------------------------------------------------------------------
-type ProfileRow = { legal_name: string; display_name: string; tax_id: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
-const profileJson = (p: ProfileRow | undefined) => p ? {
+export type ProfileRow = { legal_name: string; display_name: string; tax_id: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
+export const profileJson = (p: ProfileRow | undefined) => p ? {
   legal_name: p.legal_name, display_name: p.display_name, tax_id_last4: p.tax_id ? p.tax_id.replace(/[^0-9A-Za-z]/g, "").slice(-4) : null,
   address: p.address, city: p.city, state: p.state, post_code: p.post_code, country: p.country, website: p.website,
 } : null;
@@ -102,7 +102,7 @@ business.get("/profile", async (c) => {
 });
 
 const optText = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v ? v : null));
-const profileBody = z.object({
+export const profileBody = z.object({
   legal_name: z.string().trim().min(1).max(160),
   display_name: z.string().trim().min(1).max(120),
   tax_id: z.string().trim().regex(/^[0-9A-Za-z-]{4,20}$/).optional(),   // omitted = keep the saved one
