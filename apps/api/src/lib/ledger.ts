@@ -1,4 +1,5 @@
 import { earmarkedTotalQuery, spendableFrom } from "./walletFunds";
+import { CAP_COLS, capApplies, capHeadroom, capToday, type CapRow } from "./cap";
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 
@@ -43,34 +44,7 @@ export type SendOutcome =
   | { kind: "declined"; tx: TxRow; replayed: boolean }
   | { kind: "error"; status: 404 | 409 | 422; error: string };
 
-/**
- * Incoming ORDINARY value counted against an account's program day: released loads + incoming sends + Benefits-to-ordinary moves.
- * Money sent into a Benefits wallet (an employer's credit) is not ordinary value and is not counted; refunds are never counted.
- */
-export const incomingTodayQuery = (tx: Tx, accountId: string) => tx<{ total: bigint }[]>`
-    with start as (
-      select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t
-    )
-    select (
-      coalesce((select sum(t.amount) from transactions t, start
-                 where t.to_account_id = ${accountId} and t.type = 'send'
-                   and t.status = 'completed' and t.completed_at >= start.t
-                   and not exists (select 1 from wallets w where w.id = t.to_wallet_id and w.type = 'benefits')), 0)
-      +
-      coalesce((select sum(amount) from transactions, start
-                 where to_account_id = ${accountId} and type = 'move'
-                   and status = 'completed' and completed_at >= start.t), 0)
-      +
-      coalesce((select sum(amount) from fundings, start
-                 where account_id = ${accountId} and released_at >= start.t), 0)
-    )::bigint as total`;
 
-async function incomingToday(tx: Tx, accountId: string): Promise<bigint> {
-  const [row] = await incomingTodayQuery(tx, accountId);
-  return row!.total;
-}
-
-export { incomingToday };
 
 /**
  * Wallet -> wallet transfer of funded balance (never credit). One DB transaction: idempotent
@@ -138,20 +112,21 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
 
     // One round trip for all the reads, sent together and run in this order on the server: both balance rows (stable order), then the
     // sender wallet, then the plain reads (the lock order is unchanged).
-    const [bal, [sw], [sa], [rw], [ra], [em], [inc]] = await Promise.all([
-      tx<{ account_id: string; balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
-        select account_id, balance, credit_limit, credit_spent from balances
-         where account_id in (${from.account_id}, ${to.account_id})
-         order by account_id for no key update`,
+    const [bal, [sw], [sa], [rw], [ra], [em]] = await Promise.all([
+      tx<({ account_id: string; credit_limit: bigint; credit_spent: bigint } & CapRow)[]>`
+        select b.account_id, b.balance, b.credit_limit, b.credit_spent, ${tx.unsafe(CAP_COLS)}
+          from balances b join accounts a on a.id = b.account_id
+         where b.account_id in (${from.account_id}, ${to.account_id})
+         order by b.account_id for no key update of b`,
       tx<{ status: string; allow_send: boolean; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
         select status, allow_send, daily_limit, spent_today, balance from wallets where id = ${from.id} for no key update`,
       tx<{ status: string }[]>`select status from accounts where id = ${from.account_id}`,
       tx<{ status: string }[]>`select status from wallets where id = ${to.id} for share`,
       tx<{ status: string }[]>`select status from accounts where id = ${to.account_id}`,
       earmarkedTotalQuery(tx, from.account_id),
-      incomingTodayQuery(tx, to.account_id),
     ]);
     const sb = bal.find((r) => r.account_id === from.account_id);
+    const rb = bal.find((r) => r.account_id === to.account_id);
     if (!sb || bal.length !== 2) throw new Error("balances row missing");
 
     const funds = spendableFrom(sb.balance, sw ? sw.balance : null, em!.total);
@@ -162,7 +137,7 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     else if (!rw || rw.status !== "active" || !ra || ra.status !== "active") code = "recipient_unavailable";
     else if (funds.funds < i.amount) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, no credit
     else if (sw.daily_limit !== null && sw.spent_today + i.amount > sw.daily_limit) code = "spend_limit_exceeded";
-    else if (inc!.total + i.amount > i.dailyCap) code = "recipient_limit_exceeded";
+    else if (rb && capApplies(rb) && capHeadroom(rb, i.dailyCap) < i.amount) code = "recipient_limit_exceeded";   // one daily rule: cap - opening - added today
 
     if (code) {
       const [t] = await tx<TxRow[]>`
@@ -175,7 +150,10 @@ export async function sendFunds(sql: Sql, i: SendInput): Promise<SendOutcome> {
     // Every write in one round trip (sent together, applied in this order).
     const [, , , , , [t]] = await Promise.all([
       tx`update balances set balance = balance - ${amt} where account_id = ${from.account_id}`,
-      tx`update balances set balance = balance + ${amt} where account_id = ${to.account_id}`,
+      // The recipient: more balance, and (a consumer's) today's additions go up; a stale row rolls to today first.
+      rb && capApplies(rb)
+        ? tx`update balances set balance = balance + ${amt}, ordinary_opening = ${capToday(rb).opening.toString()}, added_today = ${(capToday(rb).added + i.amount).toString()}, opening_day = greatest(opening_day, ${rb.today}::date) where account_id = ${to.account_id}`
+        : tx`update balances set balance = balance + ${amt} where account_id = ${to.account_id}`,
       // The sender's day counter, and its earmark when it has one.
       tx`update wallets set spent_today = spent_today + ${amt}, balance = case when balance is not null then balance - ${amt} else balance end where id = ${from.id}`,
       // Money sent to an earmarked wallet is that wallet's to spend.
@@ -243,11 +221,14 @@ export async function sandboxFund(
     }
     const fundingId = ins[0].id;
 
-    const [b] = await tx<{ balance: bigint; credit_spent: bigint }[]>`
-      select balance, credit_spent from balances where account_id = ${i.accountId} for no key update`;
+    const [b] = await tx<({ credit_spent: bigint } & CapRow)[]>`
+      select b.balance, b.credit_spent, ${tx.unsafe(CAP_COLS)}
+        from balances b join accounts a on a.id = b.account_id
+       where b.account_id = ${i.accountId} for no key update of b`;
     if (!b) throw new Error("balances row missing");
 
-    if ((await incomingToday(tx, i.accountId)) + i.amount > i.dailyCap) {
+    // One daily rule for a consumer's ordinary money: cap - opening value - added today. Organizations and businesses are exempt.
+    if (capApplies(b) && capHeadroom(b, i.dailyCap) < i.amount) {
       const [f] = await tx<FundingRow[]>`
         update fundings set status = 'failed', failure_code = 'daily_value_limit_exceeded'
          where id = ${fundingId} returning ${tx.unsafe(F_COLS)}`;
@@ -259,9 +240,11 @@ export async function sandboxFund(
     const toBalance = i.amount - repay;
     const amt = i.amount.toString();
 
+    // The whole load counts as today's addition (even the part that repays credit); a stale row rolls to today first.
     await tx`
       update balances set balance = balance + ${toBalance.toString()},
                           credit_spent = credit_spent - ${repay.toString()}
+                          ${capApplies(b) ? tx`, ordinary_opening = ${capToday(b).opening.toString()}, added_today = ${(capToday(b).added + i.amount).toString()}, opening_day = greatest(opening_day, ${b.today}::date)` : tx``}
        where account_id = ${i.accountId}`;
 
     const [t] = await tx<{ id: string }[]>`

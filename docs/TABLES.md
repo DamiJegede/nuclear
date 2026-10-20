@@ -26,6 +26,9 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | status | Account access/lifecycle status: active, pending (a new business awaiting approval), declined (refused; the business may upload a new document, which returns it to pending), suspended or closed. Businesses start pending; customers start active. A pending or declined business can sign in, see its status, upload documents and sign out, and nothing else. |
 | bio | Short text the owner writes about themselves or their business, up to **128 characters** (CHECK); NULL = none. Added by migration 0023 (limit set to 128 by 0024) (physically last in the dev database; here at its logical position). |
 | created_at | Creation timestamp. |
+| ordinary_opening | Migration 0037. Bigint: the account's ordinary funded value (balance minus its Benefits wallets) at the start of the program day (America/New_York). Only meaningful for consumer accounts. Rolled once a day by ensureDay. Logically after balance_pending (physically last today). |
+| opening_day | Migration 0037. The program day ordinary_opening and added_today are for. A row older than today rolls itself (opening = what is held now, added = 0) the next time it is locked. |
+| added_today | Migration 0037. Nonnegative bigint of ordinary money added today: released bank loads, incoming sends, Benefits-to-ordinary moves. Never refunds, claims or employer credits into Benefits wallets; never reduced by spending, sending or reversals. The daily headroom is cap - ordinary_opening - added_today - balance_pending (never below 0). |
 | updated_at | Last update timestamp. |
 
 No money balance columns on accounts; these live in balances. Handles are normalized to lowercase before storage (`^[a-z0-9]{4,12}$`) and enforced by a unique index; a small reserved list (e.g. admin, nuclear, support) is rejected by the application. Resolving a handle returns the account id and default wallet for recipient selection.
@@ -619,6 +622,7 @@ The dev database (nuclear-dev) will be rebuilt from scratch into a new database 
 | orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
 | shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |
 | employees | status | before created_at (end of the table today) | 0031 |
+| balances | ordinary_opening, opening_day, added_today | after balance_pending (end of the table today) | 0037 |
 | employees | fixed_benefit | before created_at, after status (end of the table today) | 0036 |
 | wallets | org_account_id | after account_id (end of the table today) | 0033 |
 | ledger_entries | wallet_id | after account_id (end of the table today) | 0033 |

@@ -37,8 +37,17 @@ const earlier = async (accountId: string, days = 2) => {
   await q("alter table ledger_entries enable trigger ledger_entries_no_update");
   await q(`update transactions set "timestamp" = "timestamp" - interval '${days} days', completed_at = completed_at - interval '${days} days' where from_account_id = $1 or to_account_id = $1`, [accountId]);
   await q(`update fundings set created_at = created_at - interval '${days} days', released_at = released_at - interval '${days} days' where account_id = $1`, [accountId]);
+  // ... and it is a new program day: what the account holds now is its opening value, with nothing added yet (what ensureDay does for everyone)
+  await q("update balances set ordinary_opening = balance - coalesce((select sum(balance) from wallets where account_id = $1 and type = 'benefits'), 0), added_today = 0, opening_day = (now() at time zone 'America/New_York')::date where account_id = $1", [accountId]);
 };
 
+const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
+  insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${accountId}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
+  insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${accountId}', bank, ${cents}, 'bk-' || gen_random_uuid(), 'created') returning id into fid;
+  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${accountId}', '${accountId}', bank, ${cents}, 'completed', 'bk-' || gen_random_uuid(), now()) returning id into tid;
+  update balances set balance = balance + ${cents} where account_id = '${accountId}';
+  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', ${cents}), (fid, 'release', 2, '${accountId}', 'funded_balance', 'credit', ${cents});
+  update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 const acme = await sign("Acme", "hr@acme.test", "O");
 const other = await sign("Globex", "hr@globex.test", "O");
 const shop = await sign("Shop", "shop@x.test", "B");
@@ -46,13 +55,6 @@ await q("update accounts set status='active' where id=$1", [shop.account_id]);
 const term = (await call("POST", "/v1/terminals", { token: shop.session_token, body: { name: "T", allow_refunds: true } })).json;
 const termId = term.terminal.id, termTok = term.session_token;
 // Organizations hold more than the daily load cap allows through the API, so their wallets are funded directly (a completed funding with its ledger lines).
-const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
-  insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${accountId}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
-  insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${accountId}', bank, ${cents}, 'bankroll', 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${accountId}', '${accountId}', bank, ${cents}, 'completed', 'bankroll', now()) returning id into tid;
-  update balances set balance = balance + ${cents} where account_id = '${accountId}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', ${cents}), (fid, 'release', 2, '${accountId}', 'funded_balance', 'credit', ${cents});
-  update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 await bankroll(acme.account_id, 5_000_000); await bankroll(other.account_id, 5_000_000);   // $50,000 each
 // ---- 1. claims create the employer-bound Benefits wallet
 const newbie = await sign("Nora New", "nora@x.test");                       // no money of her own
@@ -133,7 +135,7 @@ const [a, b] = await Promise.all([move(hana, hb.id, hdw, 40_000, "h-sim-1"), mov
 eq("headroom: two simultaneous $400 moves cannot both succeed", [[a.status, b.status].sort(), (await balance(hana)).daily_headroom], [[201, 422], 10_000]);
 const hkid = (await call("POST", "/v1/wallets", { token: hana.session_token, body: { display_name: "K2", type: "person", balance: 0 } })).json.wallet;
 eq("headroom: the allowance is account-wide, not per destination wallet (exact cap passes, the next cent fails)", [(await move(hana, hb.id, hkid.id, 10_000, "h-exact")).status, (await move(hana, hb.id, hdw, 1, "h-cent")).json.status_code, (await balance(hana)).daily_headroom], [201, "daily_value_limit_exceeded", 0]);
-eq("headroom: moves compete with bank loads for the same room (ordinary loads are capped by what moved in today)", [(await fund(hana, 150_001, "f-h2")).status, (await fund(hana, 150_000, "f-h3")).status], [422, 201]);
+eq("headroom: moves, loads and incoming sends share ONE rule: with $1,500 held at the start of the day and $500 moved in, there is no room left for a load", [(await fund(hana, 150_001, "f-h2")).status, (await fund(hana, 1, "f-h3")).status, (await balance(hana)).daily_headroom], [422, 422, 0]);
 // next program day: the move and the spending become history, and the actual ordinary funds are the new opening value
 await earlier(hana.account_id, 2);
 const next = await balance(hana);
@@ -177,14 +179,14 @@ eq("refund: an ordinary purchase refunds into the ordinary wallet, never Benefit
 eq("refund: refunds never count toward the daily value (headroom is unchanged)", (await balance(rita)).daily_headroom, room0);
 eq("refund: a duplicate callback replays and credits once", [(await refund(po.json.payment.id, "rf-o", { mode: "partial", amount: 15_000 })).status, (await balance(rita)).ordinary], [200, 75_000]);
 eq("refund: the remainder refunds too (cumulative bounds still hold)", [(await refund(po.json.payment.id, "rf-o2")).json.refund.amount, (await refund(po.json.payment.id, "rf-o3")).json.error], [25_000, "already_refunded"]);
-// an over-cap refund is never rejected
+// an over-cap refund is never rejected. Ordinary money above the cap can only arrive through a bank load that settled late (always accepted):
+// simulated by funding directly, as a settled provider load would.
 const olga = await sign("Olga Over", "olga@x.test");
-await fund(olga, 190_000, "f-olga"); await earlier(olga.account_id);
+await bankroll(olga.account_id, 250_000); await earlier(olga.account_id);
 const pol = await pay(olga, { terminal_id: termId, amount: 40_000, from_wallet_id: await defaultWallet(olga) }, "o-pay");
-await fund(olga, 50_000, "f-olga2");                                            // today's addition: 190,000 - 40,000 + 50,000 = 200,000
 const rof = await refund(pol.json.payment.id, "o-ref");
 const ob = await balance(olga);
-eq("refund: an approved refund may push ordinary funds over $2,000 and is never rejected", [rof.status, ob.ordinary, ob.daily_headroom], [201, 240_000, 0]);
+eq("refund: ordinary funds above $2,000 (a late-settled load) are usable, and an approved refund is never rejected or counted", [pol.status, rof.status, ob.ordinary, ob.daily_headroom], [201, 201, 250_000, 0]);
 eq("refund: reconciliation holds after all of it", [(await reconciled()).ledger_balanced, (await reconciled()).balances_match_ledger, (await reconciled()).benefits_match_ledger, (await reconciled()).escrow_matches_employees], [true, true, true, true]);
 eq("benefits: org-side views expose the Benefits wallet id of claimed employees, never a balance", (await call("GET", "/v1/org/employees?status=claimed", { token: acme.session_token })).json.employees.every((e: any) => typeof e.benefits_wallet_id === "string" && !("benefits_balance" in e)), true);
 console.log(`\n${pass} passed, ${fail} failed`);

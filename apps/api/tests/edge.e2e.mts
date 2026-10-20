@@ -150,6 +150,6 @@ eq("refund: payments from a closed wallet's key still refund to the account (the
 
 // ======== 7. the books after all of that ======================================================================
 const stats = (await call("GET", "/v1/admin/stats", { token: OP })).json;
-eq("after every scenario the books reconcile and no wallet is over-earmarked", stats.reconciliation, { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true });
+eq("after every scenario the books reconcile and no wallet is over-earmarked", stats.reconciliation, { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true });
 eq("no wallet or account balance is negative anywhere, no earmark exceeds its account", [(await q("select count(*)::int n from wallets where balance < 0"))[0].n, (await q("select count(*)::int n from (select w.account_id from wallets w join balances b on b.account_id=w.account_id where w.balance is not null group by w.account_id, b.balance having sum(w.balance) > b.balance) x"))[0].n], [0, 0]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

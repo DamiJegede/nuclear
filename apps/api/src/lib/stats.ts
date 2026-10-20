@@ -34,6 +34,8 @@ export type SystemStats = {
     escrow_matches_employees: boolean;
     /** Every Benefits wallet's balance equals the funded_balance postings attributed to it. */
     benefits_match_ledger: boolean;
+    /** Every consumer account's opening value and added-today counter on the balances row equal what the ledger and transactions say for today. */
+    daily_caps_match_ledger: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
@@ -82,6 +84,24 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
               and w.balance <> coalesce((select sum(case l.direction when 'credit' then l.amount else -l.amount end) from ledger_entries l
                                           where l.wallet_id = w.id and l.bucket = 'funded_balance'), 0)) as benefits_off
       from ledger_entries`;
+
+  const [caps] = await sql<{ n: number }[]>`
+    with start as (select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t),
+    opened as (
+      select l.account_id, sum(case when l.wallet_id is null then (case l.direction when 'credit' then l.amount else -l.amount end) else 0 end) as v
+        from ledger_entries l, start where l.bucket = 'funded_balance' and l.created_at < start.t group by l.account_id),
+    added as (
+      select account_id, sum(amount) as v from (
+        select t.to_account_id as account_id, t.amount from transactions t, start
+         where t.status = 'completed' and t.completed_at >= start.t
+           and ((t.type = 'send' and not exists (select 1 from wallets w where w.id = t.to_wallet_id and w.type = 'benefits')) or t.type = 'move')
+        union all
+        select f.account_id, f.amount from fundings f, start where f.released_at >= start.t) x group by account_id)
+    select count(*)::int as n
+      from balances b join accounts a on a.id = b.account_id
+      left join opened o on o.account_id = b.account_id left join added d on d.account_id = b.account_id
+     where a.type = 'C' and b.opening_day = (now() at time zone ${PROGRAM_TZ})::date
+       and (b.ordinary_opening <> coalesce(o.v, 0) or b.added_today <> coalesce(d.v, 0))`;
 
   const [over] = await sql<{ n: number }[]>`
     select count(*)::int as n from (
@@ -164,6 +184,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       earmarks_within_balances: over!.n === 0,
       escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
       benefits_match_ledger: Number(led!.benefits_off) === 0,
+      daily_caps_match_ledger: caps!.n === 0,
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,

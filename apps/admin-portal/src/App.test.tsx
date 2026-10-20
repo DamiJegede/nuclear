@@ -12,7 +12,7 @@ const v = (count: number, volume: number) => ({ count, volume });
 const STATS: Stats = {
   as_of: new Date().toISOString(),
   scheme: { balance: 15000, consumer_balance: 12100, merchant_balance: 2900, merchant_debt: 0, pending: 900, credit_outstanding: 400, credit_limit: 1000 },
-  reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true },
+  reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true },
   users: { total: 1234, active: 1200, suspended: 30, closed: 4, new_today: 7, new_7d: 56, new_30d: 200, wallets: 1890 },
   merchants: { total: 42, active: 40, transacting: 31, terminals: 55 },
   payments: {
@@ -250,7 +250,7 @@ describe("overview", () => {
   it("raises an alert with the gaps when they do not", async () => {
     const bad: Stats = {
       ...STATS,
-      reconciliation: { balances_match_ledger: false, balance_difference: 700, credit_matches_ledger: false, credit_difference: -500, ledger_balanced: false, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true },
+      reconciliation: { balances_match_ledger: false, balance_difference: 700, credit_matches_ledger: false, credit_difference: -500, ledger_balanced: false, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true },
     };
     await signIn(fakeApi({ stats: vi.fn().mockResolvedValue(bad) }));
     const alert = await screen.findByText("Books do not reconcile");

@@ -24,6 +24,12 @@ export async function ensureDay(sql: Sql, day: string): Promise<ResetResult> {
     if (won.length === 0) return { reset: false, wallets: 0, products: 0 };
     const w = await tx`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
     const p = await tx`update products set sold_today = 0 where sold_today <> 0 returning id`;
+    // The daily value cap: every consumer account starts the day with its actual ordinary value (balance minus Benefits wallets) as the
+    // opening value and nothing added yet. (An account that is somehow missed rolls itself the next time its row is locked.)
+    await tx`
+      update balances b set ordinary_opening = b.balance - coalesce((select sum(w.balance) from wallets w where w.account_id = b.account_id and w.type = 'benefits'), 0),
+                            added_today = 0, opening_day = ${day}::date
+        from accounts a where a.id = b.account_id and a.type = 'C' and b.opening_day < ${day}::date`;
     return { reset: true, wallets: w.length, products: p.length };
   }) as Promise<ResetResult>;
 }

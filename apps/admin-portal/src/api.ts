@@ -22,6 +22,7 @@ export type Stats = {
     earmarks_within_balances: boolean;
     escrow_matches_employees: boolean;
     benefits_match_ledger: boolean;
+    daily_caps_match_ledger: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };

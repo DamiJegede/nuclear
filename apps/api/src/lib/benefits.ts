@@ -1,6 +1,6 @@
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
-import { PROGRAM_TZ, incomingTodayQuery } from "./ledger";
+import { CAP_COLS, capApplies, capHeadroom, capToday, type CapRow } from "./cap";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
 
@@ -23,33 +23,10 @@ export async function ensureBenefitsWallet(tx: Tx, accountId: string, orgId: str
   return w!;
 }
 
-/**
- * Ordinary opening value: the account's funded money at 00:00 America/New_York of today, minus what sat in Benefits wallets. Computed from
- * the append-only ledger (so there is nothing to snapshot or reset): all funded_balance postings before the day started, less the ones
- * attributed to Benefits wallets.
- */
-export const openingQuery = (tx: Tx, accountId: string) => tx<{ total: bigint; benefits: bigint }[]>`
-  with start as (select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t)
-  select coalesce(sum(case l.direction when 'credit' then l.amount else -l.amount end), 0)::bigint as total,
-         coalesce(sum(case when l.wallet_id is not null then case l.direction when 'credit' then l.amount else -l.amount end end), 0)::bigint as benefits
-    from ledger_entries l, start
-   where l.account_id = ${accountId} and l.bucket = 'funded_balance' and l.created_at < start.t`;
-
-/**
- * Room left today for money entering the ordinary compartment: the cap minus the ordinary opening value minus today's ordinary additions
- * (released loads, incoming sends, Benefits-to-ordinary moves). Spending and sending never restore it. Refunds are never counted and are
- * never limited. Read it while holding the account's balances lock when the answer decides a move.
- */
-export function headroomFrom(cap: bigint, opening: { total: bigint; benefits: bigint }, incoming: bigint): bigint {
-  const left = cap - (opening.total - opening.benefits) - incoming;
-  return left > 0n ? left : 0n;
-}
-
-export async function dailyHeadroom(sql: Sql, accountId: string, cap: bigint): Promise<bigint> {
-  return sql.begin(async (tx) => {
-    const [[o], [inc]] = await Promise.all([openingQuery(tx, accountId), incomingTodayQuery(tx, accountId)]);
-    return headroomFrom(cap, o!, inc!.total);
-  });
+/** The account's daily headroom right now (null for organizations and businesses, which the cap does not cover). A plain read: money paths read the same numbers under the balances lock. */
+export async function dailyHeadroom(sql: Sql, accountId: string, cap: bigint): Promise<bigint | null> {
+  const [r] = await sql<CapRow[]>`select b.balance, ${sql.unsafe(CAP_COLS)} from balances b join accounts a on a.id = b.account_id where b.account_id = ${accountId}`;
+  return r && capApplies(r) ? capHeadroom(r, cap) : null;
 }
 
 export type MoveInput = { accountId: string; fromWalletId: string; toWalletId: string; amount: bigint; idempotencyKey: string; dailyCap: bigint; deviceId: string | null };
@@ -92,17 +69,17 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
     const txId = ins[0].id;
 
     // One round trip, run in this order: the balances lock, both wallets (by id), then the plain reads taken while the lock is held.
-    const [[bal], ws, [acct], [open], [inc]] = await Promise.all([
-      tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`,
+    const [[bal], ws, [acct]] = await Promise.all([
+      tx<({ credit_limit: bigint; credit_spent: bigint } & CapRow)[]>`
+        select b.balance, b.credit_limit, b.credit_spent, ${tx.unsafe(CAP_COLS)}
+          from balances b join accounts a on a.id = b.account_id where b.account_id = ${i.accountId} for no key update of b`,
       tx<{ id: string; status: string; balance: bigint | null }[]>`select id, status, balance from wallets where id in (${i.fromWalletId}, ${i.toWalletId}) order by id for no key update`,
       tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
-      openingQuery(tx, i.accountId),
-      incomingTodayQuery(tx, i.accountId),
     ]);
     const sw = ws.find((w) => w.id === i.fromWalletId);
     const dw = ws.find((w) => w.id === i.toWalletId);
     if (!bal || !sw || !dw) throw new Error("rows missing");
-    const room = headroomFrom(i.dailyCap, open!, inc!.total);
+    const room = capHeadroom(bal, i.dailyCap);          // one daily rule: cap - ordinary opening - added today - pending loads
 
     let code: string | null = null;
     if (!acct || acct.status !== "active") code = "account_unavailable";
@@ -118,6 +95,8 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
     const amt = i.amount.toString();
     const destEarmarked = dw.balance !== null;
     const writes = [
+      // The move is an addition to the ordinary compartment: today's additions go up (a stale row rolls to today first).
+      tx`update balances set ordinary_opening = ${capToday(bal).opening.toString()}, added_today = ${(capToday(bal).added + i.amount).toString()}, opening_day = greatest(opening_day, ${bal.today}::date) where account_id = ${i.accountId}`,
       tx`update wallets set balance = balance - ${amt} where id = ${i.fromWalletId}`,
       destEarmarked ? tx`update wallets set balance = balance + ${amt} where id = ${i.toWalletId}` : tx`select 1`,
       tx`insert into wallet_allocations (wallet_id, account_id, amount, balance_after, device_id)
@@ -133,6 +112,6 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
       tx<MoveRow[]>`update transactions set status = 'completed', completed_at = now() where id = ${txId} returning ${tx.unsafe(M_COLS)}`,
     ];
     const results = await Promise.all(writes);
-    return { kind: "ok", tx: (results[5] as unknown as MoveRow[])[0]!, replayed: false };
+    return { kind: "ok", tx: (results[results.length - 1] as unknown as MoveRow[])[0]!, replayed: false };
   });
 }
