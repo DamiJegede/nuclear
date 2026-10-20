@@ -523,3 +523,22 @@ button.run-btn:disabled { background: #16a34a; }
 .ready { margin-bottom: 20px; }
 .modal p.done { display: flex; align-items: center; gap: 12px; font-size: 16px; margin: 4px 0 8px; }
 .done-mark { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--good-bg); color: var(--good); font-weight: 700; }
+
+/* API page */
+.key-actions { margin-top: 14px; gap: 10px; }
+.docs h3 { margin: 22px 0 6px; font-size: 15px; }
+.docs h3:first-child { margin-top: 0; }
+.docs p { margin: 6px 0 10px; line-height: 1.6; }
+.docs code { font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.snippet { position: relative; margin: 8px 0 12px; }
+.snippet pre { margin: 0; padding: 14px 16px; padding-right: 74px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.snippet pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.55; white-space: pre; }
+.snippet button { position: absolute; top: 8px; right: 8px; }
+.intro { margin: 0 0 18px; line-height: 1.6; max-width: 70ch; }
+.docs-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
+.docs-col { display: grid; gap: 16px; }
+@media (max-width: 900px) { .docs-grid { grid-template-columns: 1fr; } }
+.docs h2 { text-transform: none; letter-spacing: 0; color: var(--text); font-size: 16px; margin: 0 0 10px; }
+.verb { display: inline-block; margin-right: 8px; padding: 2px 8px; border-radius: 6px; font-size: 12px; letter-spacing: 0.04em; background: var(--good-bg); color: var(--good); }
+.verb.get { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+ul.err-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.5; }

@@ -18,6 +18,8 @@ export const MAX_BATCH_ROWS = 2000;
 export const MAX_CREDIT = 10_000_000n;
 
 export type CreditRow = { employee_id: string; name: string; email: string; amount: bigint };
+/** A credit from the API: name and email are needed only for an employee the organization has not credited or created before. */
+export type CreditInput = { employee_id: string; name?: string; email?: string; amount: bigint };
 
 export type BatchSummary = {
   id: string;
@@ -40,8 +42,9 @@ function newClaimToken(): { token: string; hash: string } {
   return { token, hash: hashToken(token) };
 }
 
-export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKey: string; rows: CreditRow[] }): Promise<BatchOutcome> {
-  const total = i.rows.reduce((s, r) => s + r.amount, 0n);
+export async function runCreditBatch(sql: Sql, input: { orgId: string; idempotencyKey: string; rows: CreditInput[] }): Promise<BatchOutcome> {
+  const total = input.rows.reduce((s, r) => s + r.amount, 0n);
+  let i: { orgId: string; idempotencyKey: string; rows: CreditRow[] } = { ...input, rows: [] };
   return sql.begin(async (tx): Promise<BatchOutcome> => {
     // 1. Lock the organization's balance and wallet (one round trip), then the batch idempotency check.
     const [[bal], [wallet], [org]] = await Promise.all([
@@ -58,9 +61,17 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
       select id, row_count, total, sent, held, created_at from credit_batches
        where org_account_id = ${i.orgId} and idempotency_key = ${i.idempotencyKey}`;
     if (prev) {
-      if (prev.total !== total || prev.row_count !== i.rows.length) return { kind: "error", status: 409, error: "idempotency_mismatch" };
+      if (prev.total !== total || prev.row_count !== input.rows.length) return { kind: "error", status: 409, error: "idempotency_mismatch" };
       return { kind: "ok", batch: prev, notices: [], replayed: true };
     }
+
+    // Names and emails: taken from the request, else from the employee already on file; a new employee needs both.
+    const known = await tx<{ employee_id: string; name: string; email: string }[]>`
+      select employee_id, name, email from employees where org_account_id = ${input.orgId} and employee_id in ${tx(input.rows.map((r) => r.employee_id))}`;
+    const onFile = new Map(known.map((e) => [e.employee_id, e]));
+    const incomplete = input.rows.filter((r) => !(r.name ?? onFile.get(r.employee_id)?.name) || !(r.email ?? onFile.get(r.employee_id)?.email)).map((r) => r.employee_id);
+    if (incomplete.length) throw new BatchRefused("employee_details_required", { employee_ids: incomplete });
+    i = { ...input, rows: input.rows.map((r) => ({ employee_id: r.employee_id, amount: r.amount, name: (r.name ?? onFile.get(r.employee_id)!.name), email: (r.email ?? onFile.get(r.employee_id)!.email) })) };
 
     // 2. The whole batch or nothing: the balance must cover the total.
     if (bal.balance < total) {
@@ -179,6 +190,60 @@ export async function runCreditBatch(sql: Sql, i: { orgId: string; idempotencyKe
   }).catch((err) => {
     if (err instanceof BatchRefused) return { kind: "error", status: 422, error: err.code, extra: err.extra } satisfies BatchOutcome;
     throw err;
+  });
+}
+
+export type EmployeeInput = { employee_id: string; name: string; email: string };
+export type UpsertResult = { employee_id: string; result: "created" | "updated" | "reactivated" };
+
+/** Creates new employees and refreshes the name and email of known ones (employee_id is the immutable key); a removed employee becomes active again. No money moves and nobody is emailed. */
+export async function upsertEmployees(sql: Sql, orgId: string, rows: EmployeeInput[]): Promise<UpsertResult[]> {
+  return sql.begin(async (tx) => {
+    const ids = rows.map((r) => r.employee_id);
+    const before = await tx<{ employee_id: string; status: string }[]>`select employee_id, status from employees where org_account_id = ${orgId} and employee_id in ${tx(ids)} for no key update`;
+    const was = new Map(before.map((e) => [e.employee_id, e.status]));
+    await tx`
+      insert into employees (org_account_id, employee_id, name, email)
+      select ${orgId}, e.employee_id, e.name, e.email
+        from jsonb_to_recordset(${JSON.stringify(rows)}::text::jsonb) as e(employee_id text, name text, email text)
+      on conflict (org_account_id, employee_id) do update set name = excluded.name, email = excluded.email, status = 'active'`;
+    return rows.map((r) => ({ employee_id: r.employee_id, result: !was.has(r.employee_id) ? "created" as const : was.get(r.employee_id) === "removed" ? "reactivated" as const : "updated" as const }));
+  });
+}
+
+export type EmployeeView =
+  | { employee_id: string; found: false }
+  | { employee_id: string; found: true; name: string; email: string; status: "active" | "removed"; claimed: boolean; held: number; created_at: Date; updated_at: Date };
+
+/** Looks employees up by employee_id, in the order asked. Unknown ids come back as found:false. `held` is the credit still waiting to be claimed (the organization's own money); a claimed employee's balance is never shown. */
+export async function getEmployees(sql: Sql, orgId: string, ids: string[]): Promise<EmployeeView[]> {
+  const rows = await sql<{ employee_id: string; name: string; email: string; status: "active" | "removed"; claimed: boolean; balance: bigint; created_at: Date; updated_at: Date }[]>`
+    select employee_id, name, email, status, (employee_account_id is not null) as claimed, balance, created_at, updated_at
+      from employees where org_account_id = ${orgId} and employee_id in ${sql(ids)}`;
+  const by = new Map(rows.map((r) => [r.employee_id, r]));
+  return ids.map((id): EmployeeView => {
+    const r = by.get(id);
+    return r ? { employee_id: id, found: true, name: r.name, email: r.email, status: r.status, claimed: r.claimed, held: Number(r.balance), created_at: r.created_at, updated_at: r.updated_at } : { employee_id: id, found: false };
+  });
+}
+
+export type RemoveOutcome =
+  | { kind: "ok"; results: { employee_id: string; result: "removed" | "already_removed" }[] }
+  | { kind: "error"; status: 404 | 409; error: string; employee_ids: string[] };
+
+/** Removes (hides) employees, all or none. Refused for unknown ids and for anyone with money still held for them (they must claim first). Removing someone twice is fine. */
+export async function removeEmployees(sql: Sql, orgId: string, ids: string[]): Promise<RemoveOutcome> {
+  return sql.begin(async (tx): Promise<RemoveOutcome> => {
+    const rows = await tx<{ id: string; employee_id: string; status: string; balance: bigint }[]>`
+      select id, employee_id, status, balance from employees where org_account_id = ${orgId} and employee_id in ${tx(ids)} for no key update`;
+    const found = new Map(rows.map((r) => [r.employee_id, r]));
+    const unknown = ids.filter((x) => !found.has(x));
+    if (unknown.length) return { kind: "error", status: 404, error: "employee_not_found", employee_ids: unknown };
+    const held = rows.filter((r) => r.status === "active" && r.balance > 0n).map((r) => r.employee_id);
+    if (held.length) return { kind: "error", status: 409, error: "has_held_balance", employee_ids: held };
+    const todo = rows.filter((r) => r.status === "active").map((r) => r.id);
+    if (todo.length) await tx`update employees set status = 'removed', claim_token_hash = null where id in ${tx(todo)}`;
+    return { kind: "ok", results: ids.map((x) => ({ employee_id: x, result: found.get(x)!.status === "removed" ? "already_removed" as const : "removed" as const })) };
   });
 }
 

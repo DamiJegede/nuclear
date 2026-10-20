@@ -18,6 +18,7 @@ import { checkouts, terminalCheckouts } from "./routes/checkouts";
 import { payments, terminalPayments } from "./routes/payments";
 import { refunds, terminalRefunds } from "./routes/refunds";
 import { employeeClaims, org } from "./routes/org";
+import { benefitsApi } from "./routes/benefitsApi";
 import { shop } from "./routes/shop";
 import { staff } from "./routes/staff";
 import { tags } from "./routes/tags";
@@ -58,13 +59,14 @@ v1.use("*", async (c, next) => {
 v1.use("*", withDb);
 // Anything that reads or changes spent_today / sold_today first makes sure the day's reset has happened
 // (the cron usually did it; this is the backstop if a run was missed).
-for (const path of ["/transfers", "/transfers/*", "/payments", "/payments/*", "/terminal/payments", "/terminal/payments/*", "/terminal/products", "/terminal/products/*", "/shop/orders", "/wallets", "/wallets/*", "/business/overview", "/business/products"]) v1.use(path, programDay);
+for (const path of ["/transfers", "/transfers/*", "/payments", "/payments/*", "/terminal/payments", "/terminal/payments/*", "/terminal/products", "/terminal/products/*", "/shop/orders", "/wallets", "/wallets/*", "/business/overview", "/business/products", "/benefits-api/credits"]) v1.use(path, programDay);
 v1.route("/admin", admin);
 v1.route("/auth", auth);
 v1.route("/devices", devices);
 v1.route("/handles", handles);
 v1.route("/photos", photos);
 v1.route("/business", business);
+v1.route("/benefits-api", benefitsApi);
 v1.route("/org", org);
 v1.route("/employee/claims", employeeClaims);
 v1.route("/wallets", wallets);

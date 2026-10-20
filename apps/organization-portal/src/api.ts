@@ -40,6 +40,7 @@ export type Device = { id: string; wallet_id: string | null; platform: string | 
 export type OrgDocument = { id: string; type: string; created_at: string };
 export type OrgProfile = { legal_name: string; display_name: string; tax_id_last4: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
 export type OrgProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
+export type ApiKeyStatus = { hint: string; name: string; created_at: string; last_used_at: string | null };
 export type Overview = {
   balance: number;
   employees: { total: number; claimed: number; unclaimed: number };
@@ -81,6 +82,10 @@ export function createApi(token: string, base: string = API_URL) {
     logout: () => request<null>("POST", "/v1/auth/logout"),
     account: () => request<Account>("GET", "/v1/account"),
     uploadPhoto: (file: Blob) => request<{ photo: string }>("PUT", "/v1/account/photo", file),
+    apiKey: async () => (await request<{ key: ApiKeyStatus | null }>("GET", "/v1/org/api-key")).key,
+    /** Generates a key and kills the old one. The token is in this answer only. */
+    generateApiKey: () => request<{ key: ApiKeyStatus; token: string }>("POST", "/v1/org/api-key"),
+    revokeApiKey: () => request<null>("DELETE", "/v1/org/api-key"),
     profile: async () => (await request<{ profile: OrgProfile | null }>("GET", "/v1/org/profile")).profile,
     saveProfile: async (input: OrgProfileInput) => (await request<{ profile: OrgProfile }>("PUT", "/v1/org/profile", input)).profile,
     documents: async () => (await request<{ documents: OrgDocument[] }>("GET", "/v1/account/documents")).documents,

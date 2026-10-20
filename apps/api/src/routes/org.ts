@@ -6,6 +6,7 @@ import { n } from "../lib/money";
 import { profileBody, profileJson, type ProfileRow } from "./business";
 import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runCreditBatch } from "../lib/org";
 import { sendCreditEmails } from "../lib/orgMail";
+import { keyStatus, revokeKey, rotateKey } from "../lib/orgApiKey";
 import { requireOwner, requireSession } from "../session";
 
 /**
@@ -72,6 +73,23 @@ org.put("/profile", async (c) => {
     returning legal_name, display_name, tax_id, address, city, state, post_code, country, website`;
   await customerLog(c, accountId, null, "org.profile_saved", { fields: Object.keys(d) });
   return c.json({ profile: profileJson(p) });
+});
+
+// ---- The Benefits API key (see routes/benefitsApi.ts): one live key, shown once when generated ----
+org.get("/api-key", async (c) => c.json({ key: await keyStatus(c.get("sql"), c.get("auth").accountId) }));
+
+org.post("/api-key", async (c) => {
+  const { accountId } = c.get("auth");
+  const k = await rotateKey(c.get("sql"), accountId);
+  await customerLog(c, accountId, null, "org.api_key_generated", { hint: k.hint });
+  return c.json({ key: { hint: k.hint, name: "Default", created_at: k.created_at, last_used_at: null }, token: k.key }, 201);
+});
+
+org.delete("/api-key", async (c) => {
+  const { accountId } = c.get("auth");
+  const had = await revokeKey(c.get("sql"), accountId);
+  if (had) await customerLog(c, accountId, null, "org.api_key_revoked", {});
+  return c.body(null, 204);
 });
 
 // ---- Employees ----

@@ -141,6 +141,14 @@ export async function verifyMfaChallenge(secret: string, token: string): Promise
 }
 
 /** Agent wallet API keys: a recognisable prefix (so secret scanners can find a leaked one) plus 256 random bits. */
+/** An organization's Benefits API key: `nk_org_<43 chars>`; only its SHA-256 is stored. */
+export const ORG_KEY_PREFIX = "nk_org_";
+export function newOrgKey(): { key: string; hash: string; hint: string } {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = ORG_KEY_PREFIX + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return { key, hash: hashToken(key), hint: key.slice(-4) };
+}
+
 export const AGENT_KEY_PREFIX = "nk_agent_";
 export function newAgentKey(): { key: string; hash: string; hint: string } {
   const bytes = crypto.getRandomValues(new Uint8Array(32));

@@ -37,6 +37,9 @@ function fakeApi(over: Partial<Api> = {}): Api {
     uploadDocument: vi.fn().mockResolvedValue({}),
     devices: vi.fn().mockResolvedValue([]),
     revokeDevice: vi.fn().mockResolvedValue(null),
+    apiKey: vi.fn().mockResolvedValue(null),
+    generateApiKey: vi.fn().mockResolvedValue({ key: { hint: "9xYz", name: "Default", created_at: "2026-10-20T10:00:00Z", last_used_at: null }, token: "nk_org_TESTTOKEN9xYz" }),
+    revokeApiKey: vi.fn().mockResolvedValue(null),
     removeEmployee: vi.fn().mockResolvedValue(null),
     addFunds: vi.fn().mockResolvedValue({}),
     uploadPhoto: vi.fn(),
@@ -87,7 +90,7 @@ describe("organization portal", () => {
     expect(screen.getByRole("article", { name: "Employees" })).toHaveTextContent("1 claimed • 2 not yet");
     expect(screen.getByRole("article", { name: "Employees" })).toHaveTextContent("$75.00");
     expect(sessionStorage.getItem("nuclear.organization.session")).toBe("tok-1");
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Employees", "Benefits"]);
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Employees", "Benefits", "API"]);
   });
 
   it("sets a long balance in a smaller size so it stays inside its card", async () => {
@@ -296,6 +299,40 @@ describe("organization portal", () => {
   it("opens the Benefits page from the old /credits address", async () => {
     await open(fakeApi(), "/credits");
     expect(await screen.findByRole("heading", { name: "Benefits" })).toBeInTheDocument();
+  });
+
+  it("generates an API key, shows it once (masked, with copy and download), then only its hint", async () => {
+    const api = fakeApi();
+    const user = await open(api, "/api");
+    expect(await screen.findByText("No key yet.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Generate API Key" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Generate API Key" })).getByRole("button", { name: "Generate Key" }));
+    const once = await screen.findByRole("dialog", { name: "Your API Key" });
+    expect(once).toHaveTextContent("only time");
+    expect(once).not.toHaveTextContent("nk_org_TESTTOKEN9xYz");               // masked
+    expect(within(once).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(within(once).getByRole("button", { name: "Download" })).toBeInTheDocument();
+    expect(within(once).getByRole("button", { name: "Done" })).toBeDisabled();
+    await user.click(within(once).getByLabelText("I have saved it"));
+    await user.click(within(once).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("nk_org_••••••••9xYz")).toBeInTheDocument();
+    expect(screen.queryByText(/TESTTOKEN/)).not.toBeInTheDocument();
+  });
+
+  it("rotates and revokes only after a confirmation, and documents the three endpoints", async () => {
+    const api = fakeApi({ apiKey: vi.fn().mockResolvedValue({ hint: "abcd", name: "Default", created_at: "2026-10-19T10:00:00Z", last_used_at: null }) });
+    const user = await open(api, "/api");
+    expect(await screen.findByText("nk_org_••••••••abcd")).toBeInTheDocument();
+    expect(screen.getByText(/Use the Benefits API to grant benefits to your employees directly from/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Basics" })).toBeInTheDocument();
+    for (const card of ["Create or update employees", "Get employees", "Credit benefits", "Remove employees", "Get balance"]) expect(document.querySelector(`[aria-label="${card}"]`)).not.toBeNull();
+    expect(screen.getAllByText(/Idempotency-Key/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Revoke Key" }));
+    expect(api.revokeApiKey).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("dialog", { name: "Revoke API Key" })).getByRole("button", { name: "Confirm Revoke" }));
+    await waitFor(() => expect(api.revokeApiKey).toHaveBeenCalled());
+    expect(await screen.findByText("No key yet.")).toBeInTheDocument();
   });
 
   it("signs out when the session ends", async () => {

@@ -398,6 +398,21 @@ Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an 
 
 There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in credit_batch_rows and the transactions.
 
+## api_keys
+
+Migration 0034, see [ORGANIZATIONS.md](ORGANIZATIONS.md#benefits-api). A generic table of API keys; today only organizations (account type O) use it, for the Benefits API.
+
+| Field | Description |
+| --- | --- |
+| id | UUID primary key. |
+| account_id | The account the key acts as (an organization today). |
+| name | Label, `Default` today (one live key per account). |
+| key_hash | SHA-256 of the key (`nk_org_` plus 43 characters). The key itself is never stored and is shown once, when generated. Unique. |
+| key_hint | The key's last four characters, for display. |
+| created_at | When the key was generated. |
+| last_used_at | Stamped on each request the key makes. |
+| revoked_at | Set when the key is rotated or revoked; NULL while live. A partial unique index allows only one live key per account. |
+
 ## credit_batches and credit_batch_rows
 
 Migration 0030. credit_batches: one row per CSV run (id, org_account_id, idempotency_key unique per organization, row_count, total, sent, held, created_at); the batch is a single database transaction. credit_batch_rows: one row per employee credited (id, batch_id, employee_ref, amount, mode `sent` or `held`, transaction_id unique, created_at).

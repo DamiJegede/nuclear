@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearCache } from "./cache";
 import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
 import { usePageTitle } from "./title";
+import { ApiPage } from "./views/ApiPage";
 import { BatchDetail } from "./views/BatchDetail";
 import { Benefits } from "./views/Benefits";
 import { Employees } from "./views/Employees";
@@ -14,12 +15,13 @@ const KEY = "nuclear.organization.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "employees" | "benefits" | "batch" | "profile";
+export type Page = "overview" | "employees" | "benefits" | "api" | "batch" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
   { page: "employees", label: "Employees", path: "/employees" },
   { page: "benefits", label: "Benefits", path: "/benefits" },
+  { page: "api", label: "API", path: "/api" },
 ];
 const PROFILE_PATH = "/profile";
 const BATCH_PATH = /^\/(?:benefits|credits)\/([0-9a-fA-F-]{36})$/;   // /credits is the old address
@@ -103,6 +105,7 @@ export function App({
         {page === "employees" && <Employees api={api} onError={onError} />}
         {page === "benefits" && <Benefits api={api} onError={onError} openBatch={(id) => setPage("batch", false, id)} />}
         {page === "batch" && batchId && <BatchDetail api={api} id={batchId} onError={onError} back={() => setPage("benefits")} />}
+        {page === "api" && <ApiPage api={api} onError={onError} />}
         {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}
       </main>
     </div>

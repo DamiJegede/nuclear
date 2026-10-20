@@ -75,5 +75,5 @@ export type AdminAuth =
 
 export type AppContext = {
   Bindings: Env;
-  Variables: { auth: SessionAuth; terminal: TerminalAuth; adminAuth: AdminAuth; sql: import("./db").Sql };
+  Variables: { auth: SessionAuth; terminal: TerminalAuth; adminAuth: AdminAuth; orgKey: { accountId: string; keyId: string }; sql: import("./db").Sql };
 };

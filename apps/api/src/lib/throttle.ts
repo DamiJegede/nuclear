@@ -17,6 +17,7 @@ export const RULES = {
   tagClaim: { limit: 20, windowSec: 60 * 60 },
   shopOrder: { limit: 10, windowSec: 60 },
   agentRequests: { limit: 120, windowSec: 60 },         // every request by an agent key
+  orgApi: { limit: 120, windowSec: 60 },                // every request by an organization Benefits API key
   agentMoney: { limit: 30, windowSec: 60 },             // sends and payments by an agent key
 } satisfies Record<string, Rule>;
 
