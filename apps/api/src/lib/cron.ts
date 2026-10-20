@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { easternDate, ensureDay } from "./dailyReset";
 import { sweep } from "./throttle";
 import { remindUnclaimed } from "./orgMail";
+import { runDuePrograms } from "./programs";
 
 /**
  * The daily job. Cloudflare fires it at 04:00 and 05:00 UTC, which brackets midnight in New York in
@@ -21,7 +22,9 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const day = await ensureDay(sql, easternDate(new Date(scheduledTime)));
     // The monthly nudge to employees who have not claimed their employer credit (see lib/orgMail.ts); never blocks the reset.
     const reminders = await remindUnclaimed(env, sql).catch((err) => (console.error("reminders failed", err), null));
-    return { ...day, swept, reminders };
+    // Fixed Benefits programs: credit what is due today (and retry or close what is waiting). Never blocks the reset.
+    const programs = await runDuePrograms(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("programs failed", err), null));
+    return { ...day, swept, reminders, programs };
   } finally {
     await sql.end();
   }

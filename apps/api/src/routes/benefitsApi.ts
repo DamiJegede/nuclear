@@ -3,13 +3,13 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
 import { n } from "../lib/money";
-import { MAX_BATCH_ROWS, MAX_CREDIT, getEmployees, removeEmployees, runCreditBatch, upsertEmployees } from "../lib/org";
+import { MAX_BATCH_ROWS, MAX_CREDIT, getEmployees, removeEmployees, runBenefitRun, upsertEmployees } from "../lib/org";
 import { requireOrgKey } from "../lib/orgApiKey";
 import { sendCreditEmails } from "../lib/orgMail";
 
 /**
  * The Benefits API: an organization's own systems create, remove and credit employees with a bearer key (`nk_org_...`, generated in the
- * organization portal). Every endpoint takes an ARRAY, so one employee or a whole batch is the same call, and each is all-or-nothing.
+ * organization portal). Every endpoint takes an ARRAY, so one employee or a whole run is the same call, and each is all-or-nothing.
  * Amounts are integer cents. The key is the organization (no session, no browser): there is no CORS here.
  */
 export const benefitsApi = new Hono<AppContext>();
@@ -40,7 +40,8 @@ benefitsApi.get("/balance", async (c) => {
 
 // Create employees, or update the name and email of ones that exist. No money moves and nobody is emailed.
 benefitsApi.post("/employees", async (c) => {
-  const b = z.object({ employees: z.array(z.object({ employee_id: employeeId, name, email })).min(1).max(MAX_BATCH_ROWS) }).safeParse(await c.req.json().catch(() => null));
+  const fixed = z.number().int().min(0).max(Number(MAX_CREDIT)).nullable().optional();   // omitted = unchanged; null or 0 clears
+  const b = z.object({ employees: z.array(z.object({ employee_id: employeeId, name, email, fixed_benefit: fixed })).min(1).max(MAX_BATCH_ROWS) }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
   const dup = noDuplicates(b.data.employees);
   if (dup) return c.json({ error: "duplicate_employee_id", employee_id: dup }, 422);
@@ -81,21 +82,21 @@ benefitsApi.post("/credits", async (c) => {
   if (dup) return c.json({ error: "duplicate_employee_id", employee_id: dup }, 422);
   const sql = c.get("sql");
   const { accountId } = c.get("orgKey");
-  const out = await runCreditBatch(sql, { orgId: accountId, idempotencyKey: key, rows: b.data.credits });
+  const out = await runBenefitRun(sql, { orgId: accountId, idempotencyKey: key, source: "api", rows: b.data.credits });
   if (out.kind === "error") return c.json({ error: out.error, ...(out.extra ?? {}) }, out.status);
 
   let emails = { sent: 0, failed: 0, not_configured: 0 };
   if (!out.replayed) {
     const [o] = await sql<{ name: string }[]>`select name from accounts where id = ${accountId}`;
     emails = await sendCreditEmails(c.env, sql, o?.name ?? "Your employer", out.notices);
-    await customerLog(c, accountId, null, "org.credit_batch", { batch_id: out.batch.id, rows: out.batch.row_count, total: Number(out.batch.total), held: Number(out.batch.held), via: "api" });
+    await customerLog(c, accountId, null, "org.benefit_run", { run_id: out.run.id, rows: out.run.row_count, total: Number(out.run.total), held: Number(out.run.held), via: "api" });
   }
   const rows = await sql<{ employee_id: string; amount: bigint; mode: string; transaction_id: string }[]>`
     select e.employee_id, r.amount, r.mode, r.transaction_id
-      from credit_batch_rows r join employees e on e.id = r.employee_ref where r.batch_id = ${out.batch.id} order by e.employee_id`;
-  const bt = out.batch;
+      from benefit_run_rows r join employees e on e.id = r.employee_ref where r.run_id = ${out.run.id} order by e.employee_id`;
+  const bt = out.run;
   return c.json({
-    batch: { id: bt.id, count: bt.row_count, total: n(bt.total), sent: n(bt.sent), held: n(bt.held), created_at: bt.created_at },
+    run: { id: bt.id, count: bt.row_count, total: n(bt.total), sent: n(bt.sent), held: n(bt.held), source: bt.source, status: bt.status, run_date: bt.run_date, created_at: bt.created_at },
     credits: rows.map((r) => ({ employee_id: r.employee_id, amount: n(r.amount), credited_as: r.mode === "sent" ? "benefits_wallet" : "held_until_claimed", transaction_id: r.transaction_id })),
     emails,
   }, out.replayed ? 200 : 201);

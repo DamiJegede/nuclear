@@ -26,7 +26,7 @@ const defaultWallet = async (p: any) => (await wallets(p)).find((w) => w.type ==
 const benefitsWallets = async (p: any) => (await wallets(p)).filter((w) => w.type === "benefits");
 const move = (p: any, from: string, to: string, amount: number, key: string) => call("POST", "/v1/wallets/move", { token: p.session_token, key, body: { from_wallet_id: from, to_wallet_id: to, amount } });
 const pay = (p: any, body: object, key: string) => call("POST", "/v1/payments", { token: p.session_token, key, body });
-const batch = (o: any, rows: any[], key: string) => call("POST", "/v1/org/credit-batches", { token: o.session_token, key, body: { rows } });
+const batch = (o: any, rows: any[], key: string) => call("POST", "/v1/org/benefit-runs", { token: o.session_token, key, body: { rows } });
 const claim = (p: any, token: string) => call("POST", "/v1/employee/claims", { token: p.session_token, body: { token } });
 const tokenOf = (to: string) => decodeURIComponent(mails.filter((m) => m.to === to).at(-1)!.text.match(/claim\?token=([^\s]+)/)![1]);
 const reconciled = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation;

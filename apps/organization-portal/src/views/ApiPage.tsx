@@ -11,7 +11,7 @@ const BASE = `${API_URL.replace(/\/$/, "")}/v1/benefits-api`;
 const SNIP_EMPLOYEES = `curl -X POST ${BASE}/employees \\
   -H "Authorization: Bearer $NUCLEAR_KEY" -H "Content-Type: application/json" \\
   -d '{"employees":[
-        {"employee_id":"E001","name":"Jane Doe","email":"jane@example.com"},
+        {"employee_id":"E001","name":"Jane Doe","email":"jane@example.com","fixed_benefit":5000},
         {"employee_id":"E002","name":"John Smith","email":"john@example.com"}]}'`;
 const SNIP_CREDITS = `curl -X POST ${BASE}/credits \\
   -H "Authorization: Bearer $NUCLEAR_KEY" -H "Content-Type: application/json" \\
@@ -24,7 +24,7 @@ const SNIP_GET = `curl -X POST ${BASE}/employees/get \\
   -d '{"employee_ids":["E001","E404"]}'`;
 const SNIP_GET_RESPONSE = `{ "employees": [
   { "employee_id": "E001", "found": true, "name": "Jane Doe", "email": "jane@example.com",
-    "status": "active", "claimed": true, "held": 0, "created_at": "…", "updated_at": "…" },
+    "status": "active", "claimed": true, "held": 0, "fixed_benefit": 5000, "created_at": "…", "updated_at": "…" },
   { "employee_id": "E404", "found": false }
 ] }`;
 const SNIP_BALANCE = `curl ${BASE}/balance -H "Authorization: Bearer $NUCLEAR_KEY"`;
@@ -47,7 +47,7 @@ const SNIP_REMOVE = `curl -X POST ${BASE}/employees/remove \\
   -H "Authorization: Bearer $NUCLEAR_KEY" -H "Content-Type: application/json" \\
   -d '{"employee_ids":["E002"]}'`;
 const SNIP_CREDITS_RESPONSE = `{
-  "batch": { "id": "…", "count": 2, "total": 7500, "sent": 5000, "held": 2500, "created_at": "…" },
+  "run": { "id": "…", "count": 2, "total": 7500, "sent": 5000, "held": 2500, "source": "api", "status": "credited", "run_date": "…", "created_at": "…" },
   "credits": [
     { "employee_id": "E001", "amount": 5000, "credited_as": "benefits_wallet", "transaction_id": "…" },
     { "employee_id": "E003", "amount": 2500, "credited_as": "held_until_claimed", "transaction_id": "…" }
@@ -138,14 +138,14 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
 
           <div className="card docs" id="doc-create" aria-label="Create or update employees">
             <h2><span className="verb">POST</span> /employees</h2>
-            <p>Creates employees, or updates the name and email of ones that exist (<code>employee_id</code> never changes; letters and numbers only). Nothing is credited and nobody is emailed. A removed employee becomes active again.</p>
+            <p>Creates employees, or updates the name and email of ones that exist (<code>employee_id</code> never changes; letters and numbers only). Nothing is credited and nobody is emailed. A removed employee becomes active again. <code>fixed_benefit</code> (cents, optional) is what each payment date credits that employee under Fixed Benefits: leave it out to keep what is there, send <code>0</code> or <code>null</code> to clear it.</p>
             <Snippet text={SNIP_EMPLOYEES} />
             <Snippet text={SNIP_EMPLOYEES_RESPONSE} />
           </div>
 
           <div className="card docs" id="doc-get" aria-label="Get employees">
             <h2><span className="verb">POST</span> /employees/get</h2>
-            <p>Looks employees up by <code>employee_id</code>: an array in, an array back in the same order. An unknown id comes back as <code>found: false</code>. <code>claimed</code> says whether the person has joined Nuclear; <code>held</code> is the credit (in cents) still waiting for them to claim it.</p>
+            <p>Looks employees up by <code>employee_id</code>: an array in, an array back in the same order. An unknown id comes back as <code>found: false</code>. <code>claimed</code> says whether the person has joined Nuclear; <code>held</code> is the credit (in cents) still waiting for them to claim it, and <code>fixed_benefit</code> is their fixed amount (or null).</p>
             <Snippet text={SNIP_GET} />
             <Snippet text={SNIP_GET_RESPONSE} />
           </div>

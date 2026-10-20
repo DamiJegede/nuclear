@@ -21,7 +21,10 @@ export type CreditRow = { employee_id: string; name: string; email: string; amou
 /** A credit from the API: name and email are needed only for an employee the organization has not credited or created before. */
 export type CreditInput = { employee_id: string; name?: string; email?: string; amount: bigint };
 
-export type BatchSummary = {
+export type RunSummary = {
+  source: string;
+  status: string;
+  run_date: string;
   id: string;
   row_count: number;
   total: bigint;
@@ -30,11 +33,11 @@ export type BatchSummary = {
   created_at: Date;
 };
 
-/** An employee who is owed an email after the batch committed (raw token: shown only here, never stored). */
+/** An employee who is owed an email after the run committed (raw token: shown only here, never stored). */
 export type Notice = { employee_id: string; name: string; email: string; amount: bigint; token: string };
 
-export type BatchOutcome =
-  | { kind: "ok"; batch: BatchSummary; notices: Notice[]; replayed: boolean }
+export type RunOutcome =
+  | { kind: "ok"; run: RunSummary; notices: Notice[]; replayed: boolean }
   | { kind: "error"; status: 404 | 409 | 422; error: string; extra?: Record<string, unknown> };
 
 function newClaimToken(): { token: string; hash: string } {
@@ -42,11 +45,11 @@ function newClaimToken(): { token: string; hash: string } {
   return { token, hash: hashToken(token) };
 }
 
-export async function runCreditBatch(sql: Sql, input: { orgId: string; idempotencyKey: string; rows: CreditInput[] }): Promise<BatchOutcome> {
+export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotencyKey: string; source: "csv" | "api" | "schedule"; /** the program day a scheduled run is for (default today) */ runDate?: string; rows: CreditInput[]; /** "unnotified": only employees never emailed get a claim link; others just get the money held (scheduled runs) */ notify?: "all" | "unnotified" }): Promise<RunOutcome> {
   const total = input.rows.reduce((s, r) => s + r.amount, 0n);
   let i: { orgId: string; idempotencyKey: string; rows: CreditRow[] } = { ...input, rows: [] };
-  return sql.begin(async (tx): Promise<BatchOutcome> => {
-    // 1. Lock the organization's balance and wallet (one round trip), then the batch idempotency check.
+  return sql.begin(async (tx): Promise<RunOutcome> => {
+    // 1. Lock the organization's balance and wallet (one round trip), then the run's idempotency check.
     const [[bal], [wallet], [org]] = await Promise.all([
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${i.orgId} for no key update`,
       tx<{ id: string; status: string; allow_send: boolean }[]>`
@@ -57,12 +60,14 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
     if (org.type !== "O") return { kind: "error", status: 404, error: "organization_required" };
     if (org.status !== "active" || wallet.status !== "active" || !wallet.allow_send) return { kind: "error", status: 422, error: "organization_unavailable" };
 
-    const [prev] = await tx<(BatchSummary & { total: bigint })[]>`
-      select id, row_count, total, sent, held, created_at from credit_batches
+    const [prev] = await tx<(RunSummary & { total: bigint })[]>`
+      select id, row_count, total, sent, held, source, status, run_date::text as run_date, created_at from benefit_runs
        where org_account_id = ${i.orgId} and idempotency_key = ${i.idempotencyKey}`;
-    if (prev) {
+    // A scheduled run that was waiting for funds is credited under its same record; any other existing run is a replay.
+    const waiting = prev && prev.status === "waiting_for_funds" ? prev : null;
+    if (prev && !waiting) {
       if (prev.total !== total || prev.row_count !== input.rows.length) return { kind: "error", status: 409, error: "idempotency_mismatch" };
-      return { kind: "ok", batch: prev, notices: [], replayed: true };
+      return { kind: "ok", run: prev, notices: [], replayed: true };
     }
 
     // Names and emails: taken from the request, else from the employee already on file; a new employee needs both.
@@ -70,22 +75,22 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
       select employee_id, name, email from employees where org_account_id = ${input.orgId} and employee_id in ${tx(input.rows.map((r) => r.employee_id))}`;
     const onFile = new Map(known.map((e) => [e.employee_id, e]));
     const incomplete = input.rows.filter((r) => !(r.name ?? onFile.get(r.employee_id)?.name) || !(r.email ?? onFile.get(r.employee_id)?.email)).map((r) => r.employee_id);
-    if (incomplete.length) throw new BatchRefused("employee_details_required", { employee_ids: incomplete });
+    if (incomplete.length) throw new RunRefused("employee_details_required", { employee_ids: incomplete });
     i = { ...input, rows: input.rows.map((r) => ({ employee_id: r.employee_id, amount: r.amount, name: (r.name ?? onFile.get(r.employee_id)!.name), email: (r.email ?? onFile.get(r.employee_id)!.email) })) };
 
-    // 2. The whole batch or nothing: the balance must cover the total.
+    // 2. The whole run or nothing: the balance must cover the total.
     if (bal.balance < total) {
       return { kind: "error", status: 422, error: "insufficient_balance", extra: { required: Number(total), available: Number(bal.balance < 0n ? 0n : bal.balance) } };
     }
 
     // 3. Employees: create new ones, refresh name and email of known ones (employee_id is immutable and is the key).
-    const emps = await tx<{ id: string; employee_id: string; employee_account_id: string | null }[]>`
+    const emps = await tx<{ id: string; employee_id: string; employee_account_id: string | null; reminded_at: Date | null }[]>`
       insert into employees (org_account_id, employee_id, name, email)
       select ${i.orgId}, e.employee_id, e.name, e.email
         from jsonb_to_recordset(${JSON.stringify(i.rows.map((r) => ({ employee_id: r.employee_id, name: r.name, email: r.email })))}::text::jsonb)
              as e(employee_id text, name text, email text)
       on conflict (org_account_id, employee_id) do update set name = excluded.name, email = excluded.email, status = 'active'
-      returning id, employee_id, employee_account_id`;
+      returning id, employee_id, employee_account_id, reminded_at`;
     const byKey = new Map(emps.map((e) => [e.employee_id, e]));
 
     // 4. Recipients that have claimed (have an account): their account status, their balance rows locked in a stable order, then the
@@ -98,7 +103,7 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
     const badAccounts = targets.filter((t) => t.a_status !== "active" || t.a_type !== "C").map((t) => t.account_id);
     const missing = accountIds.filter((a) => !targets.some((t) => t.account_id === a));
     const unavailable = (ids: Set<string>) => emps.filter((e) => e.employee_account_id && ids.has(e.employee_account_id)).map((e) => e.employee_id);
-    if (badAccounts.length || missing.length) throw new BatchRefused("recipient_unavailable", { employee_ids: unavailable(new Set([...badAccounts, ...missing])) });
+    if (badAccounts.length || missing.length) throw new RunRefused("recipient_unavailable", { employee_ids: unavailable(new Set([...badAccounts, ...missing])) });
     const walletOf = new Map<string, string>();
     if (accountIds.length) {
       await tx`select account_id from balances where account_id in ${tx(accountIds)} order by account_id for no key update`;
@@ -112,11 +117,11 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
          where org_account_id = ${i.orgId} and type = 'benefits' and status <> 'closed' and account_id in ${tx(accountIds)}
          order by id for no key update`;
       const frozen = bw.filter((w) => w.status !== "active").map((w) => w.account_id);
-      if (frozen.length) throw new BatchRefused("recipient_unavailable", { employee_ids: unavailable(new Set(frozen)) });
+      if (frozen.length) throw new RunRefused("recipient_unavailable", { employee_ids: unavailable(new Set(frozen)) });
       for (const w of bw) walletOf.set(w.account_id, w.id);
     }
 
-    // 5. The batch row, then one transaction per CSV row (one bulk insert).
+    // 5. The run row, then one transaction per CSV row (one bulk insert).
     const lines = i.rows.map((r, idx) => {
       const e = byKey.get(r.employee_id)!;
       const held = e.employee_account_id === null;
@@ -124,16 +129,22 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
     });
     const held = lines.filter((l) => l.held).reduce((s, l) => s + l.amount, 0n);
     const sent = total - held;
-    const [batch] = await tx<BatchSummary[]>`
-      insert into credit_batches (org_account_id, idempotency_key, row_count, total, sent, held)
-      values (${i.orgId}, ${i.idempotencyKey}, ${i.rows.length}, ${total.toString()}, ${sent.toString()}, ${held.toString()})
-      returning id, row_count, total, sent, held, created_at`;
-    const batchId = batch!.id;
+    const [run] = waiting
+      ? await tx<RunSummary[]>`
+          update benefit_runs set status = 'credited', failure_code = null, attempts = attempts + 1, row_count = ${i.rows.length},
+                                  total = ${total.toString()}, sent = ${sent.toString()}, held = ${held.toString()}
+           where id = ${waiting.id}
+          returning id, row_count, total, sent, held, source, status, run_date::text as run_date, created_at`
+      : await tx<RunSummary[]>`
+          insert into benefit_runs (org_account_id, source, run_date, idempotency_key, row_count, total, sent, held)
+          values (${i.orgId}, ${input.source}, coalesce(${input.runDate ?? null}::date, (now() at time zone 'America/New_York')::date), ${i.idempotencyKey}, ${i.rows.length}, ${total.toString()}, ${sent.toString()}, ${held.toString()})
+          returning id, row_count, total, sent, held, source, status, run_date::text as run_date, created_at`;
+    const runId = run!.id;
 
     const payload = JSON.stringify(lines.map((l) => ({ n: l.n, type: l.held ? "allocate" : "send", to_account: l.to_account, to_wallet: l.to_wallet, amount: l.amount.toString() })));
     const txs = await tx<{ id: string; idempotency_key: string; type: string; amount: bigint }[]>`
       insert into transactions (type, from_account_id, from_wallet_id, to_account_id, to_wallet_id, amount, status, idempotency_key, completed_at)
-      select r.type, ${i.orgId}, ${wallet.id}, r.to_account, r.to_wallet, r.amount, 'completed', ${`batch:${batchId}:`} || r.n::text, now()
+      select r.type, ${i.orgId}, ${wallet.id}, r.to_account, r.to_wallet, r.amount, 'completed', ${`run:${runId}:`} || r.n::text, now()
         from jsonb_to_recordset(${payload}::text::jsonb) as r(n int, type text, to_account uuid, to_wallet uuid, amount bigint)
       returning id, idempotency_key, type, amount`;
     const txByN = new Map(txs.map((t) => [Number(t.idempotency_key.split(":")[2]), t]));
@@ -141,8 +152,11 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
     // 6. Tokens for the employees who must be told (one fresh token each; an employee in the CSV is unique).
     const notices: Notice[] = [];
     const tokenRows: { id: string; hash: string; amount: string }[] = [];
+    const quietRows: { id: string; amount: string }[] = [];      // held for someone already told: the money is held, their link is left alone
+    const reminded = new Map(emps.map((e) => [e.id, e.reminded_at]));
     for (const [idx, l] of lines.entries()) {
       if (!l.held) continue;
+      if (input.notify === "unnotified" && reminded.get(l.ref)) { quietRows.push({ id: l.ref, amount: l.amount.toString() }); continue; }
       const t = newClaimToken();
       const r = i.rows[idx]!;
       notices.push({ employee_id: r.employee_id, name: r.name, email: r.email, amount: r.amount, token: t.token });
@@ -171,8 +185,8 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
            from (select wallet, sum(amount) as amount
                    from jsonb_to_recordset(${JSON.stringify(lines.filter((l) => !l.held).map((l) => ({ wallet: l.to_wallet, amount: l.amount.toString() })))}::text::jsonb) as x(wallet uuid, amount bigint) group by wallet) s
           where w.id = s.wallet`,
-      tx`insert into credit_batch_rows (batch_id, employee_ref, amount, mode, transaction_id)
-         select ${batchId}, r.ref, r.amount, r.mode, r.tx
+      tx`insert into benefit_run_rows (run_id, employee_ref, amount, mode, transaction_id)
+         select ${runId}, r.ref, r.amount, r.mode, r.tx
            from jsonb_to_recordset(${rowsJson}::text::jsonb) as r(ref uuid, amount bigint, mode text, tx uuid)`,
       tx`update balances set balance = balance - ${total.toString()} where account_id = ${i.orgId}`,
       tx`update wallets set spent_today = spent_today + ${total.toString()} where id = ${wallet.id}`,
@@ -185,15 +199,21 @@ export async function runCreditBatch(sql: Sql, input: { orgId: string; idempoten
                from jsonb_to_recordset(${JSON.stringify(tokenRows)}::text::jsonb) as t(id uuid, hash text, amount bigint)
               where e.id = t.id`
         : tx`select 1`,
+      quietRows.length
+        ? tx`update employees e set balance = e.balance + t.amount
+               from jsonb_to_recordset(${JSON.stringify(quietRows)}::text::jsonb) as t(id uuid, amount bigint)
+              where e.id = t.id`
+        : tx`select 1`,
     ]);
-    return { kind: "ok", batch: batch!, notices, replayed: false };
+    return { kind: "ok", run: run!, notices, replayed: false };
   }).catch((err) => {
-    if (err instanceof BatchRefused) return { kind: "error", status: 422, error: err.code, extra: err.extra } satisfies BatchOutcome;
+    if (err instanceof RunRefused) return { kind: "error", status: 422, error: err.code, extra: err.extra } satisfies RunOutcome;
     throw err;
   });
 }
 
-export type EmployeeInput = { employee_id: string; name: string; email: string };
+/** `fixed_benefit` (cents): omitted leaves it alone, null or 0 clears it, a positive amount sets what the schedule credits that employee. */
+export type EmployeeInput = { employee_id: string; name: string; email: string; fixed_benefit?: number | null };
 export type UpsertResult = { employee_id: string; result: "created" | "updated" | "reactivated" };
 
 /** Creates new employees and refreshes the name and email of known ones (employee_id is the immutable key); a removed employee becomes active again. No money moves and nobody is emailed. */
@@ -205,25 +225,32 @@ export async function upsertEmployees(sql: Sql, orgId: string, rows: EmployeeInp
     await tx`
       insert into employees (org_account_id, employee_id, name, email)
       select ${orgId}, e.employee_id, e.name, e.email
-        from jsonb_to_recordset(${JSON.stringify(rows)}::text::jsonb) as e(employee_id text, name text, email text)
+        from jsonb_to_recordset(${JSON.stringify(rows.map((r) => ({ employee_id: r.employee_id, name: r.name, email: r.email })))}::text::jsonb) as e(employee_id text, name text, email text)
       on conflict (org_account_id, employee_id) do update set name = excluded.name, email = excluded.email, status = 'active'`;
+    const withFixed = rows.filter((r) => r.fixed_benefit !== undefined).map((r) => ({ employee_id: r.employee_id, fixed: r.fixed_benefit && r.fixed_benefit > 0 ? r.fixed_benefit : null }));
+    if (withFixed.length) {
+      await tx`
+        update employees e set fixed_benefit = x.fixed
+          from jsonb_to_recordset(${JSON.stringify(withFixed)}::text::jsonb) as x(employee_id text, fixed bigint)
+         where e.org_account_id = ${orgId} and e.employee_id = x.employee_id`;
+    }
     return rows.map((r) => ({ employee_id: r.employee_id, result: !was.has(r.employee_id) ? "created" as const : was.get(r.employee_id) === "removed" ? "reactivated" as const : "updated" as const }));
   });
 }
 
 export type EmployeeView =
   | { employee_id: string; found: false }
-  | { employee_id: string; found: true; name: string; email: string; status: "active" | "removed"; claimed: boolean; held: number; created_at: Date; updated_at: Date };
+  | { employee_id: string; found: true; name: string; email: string; status: "active" | "removed"; claimed: boolean; held: number; fixed_benefit: number | null; created_at: Date; updated_at: Date };
 
 /** Looks employees up by employee_id, in the order asked. Unknown ids come back as found:false. `held` is the credit still waiting to be claimed (the organization's own money); a claimed employee's balance is never shown. */
 export async function getEmployees(sql: Sql, orgId: string, ids: string[]): Promise<EmployeeView[]> {
-  const rows = await sql<{ employee_id: string; name: string; email: string; status: "active" | "removed"; claimed: boolean; balance: bigint; created_at: Date; updated_at: Date }[]>`
-    select employee_id, name, email, status, (employee_account_id is not null) as claimed, balance, created_at, updated_at
+  const rows = await sql<{ employee_id: string; name: string; email: string; status: "active" | "removed"; claimed: boolean; balance: bigint; fixed_benefit: bigint | null; created_at: Date; updated_at: Date }[]>`
+    select employee_id, name, email, status, (employee_account_id is not null) as claimed, balance, fixed_benefit, created_at, updated_at
       from employees where org_account_id = ${orgId} and employee_id in ${sql(ids)}`;
   const by = new Map(rows.map((r) => [r.employee_id, r]));
   return ids.map((id): EmployeeView => {
     const r = by.get(id);
-    return r ? { employee_id: id, found: true, name: r.name, email: r.email, status: r.status, claimed: r.claimed, held: Number(r.balance), created_at: r.created_at, updated_at: r.updated_at } : { employee_id: id, found: false };
+    return r ? { employee_id: id, found: true, name: r.name, email: r.email, status: r.status, claimed: r.claimed, held: Number(r.balance), fixed_benefit: r.fixed_benefit === null ? null : Number(r.fixed_benefit), created_at: r.created_at, updated_at: r.updated_at } : { employee_id: id, found: false };
   });
 }
 
@@ -247,7 +274,7 @@ export async function removeEmployees(sql: Sql, orgId: string, ids: string[]): P
   });
 }
 
-class BatchRefused extends Error {
+class RunRefused extends Error {
   constructor(public code: string, public extra: Record<string, unknown>) {
     super(code);
   }

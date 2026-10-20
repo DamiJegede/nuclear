@@ -7,7 +7,7 @@ import { useList } from "../useList";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 
-/** The organization at a glance: wallet, employees, money held for people who have not claimed yet, and the last batch. */
+/** The organization at a glance: wallet, employees, money held for people who have not claimed yet, and the last run. */
 export function Overview({ api, account, onError, go }: { api: Api; account: Account; onError: (e: unknown) => void; go: (page: string) => void }) {
   usePageTitle("Overview");
   const { data, failed, retry } = useList<OverviewData>(useCallback(() => api.overview(), [api]), onError, "overview");
@@ -15,7 +15,7 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
   const nav = (page: string) => (e: React.MouseEvent) => { e.preventDefault(); go(page); };
 
   if (!data) return <section><h1>Overview</h1>{failed ? <p className="error" role="alert">Couldn't load the numbers. <button className="link" onClick={retry}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
-  const last = data.last_batch;
+  const last = data.last_run;
 
   return (
     <section>
@@ -48,14 +48,14 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
       </div>
 
       <div className="grid">
-        <article className="card linkcard" aria-label="Last batch">
-          <h2><a href="/benefits" className="stretched" onClick={nav("benefits")}>Last Benefit Batch</a></h2>
+        <article className="card linkcard" aria-label="Last run">
+          <h2><a href="/benefits" className="stretched" onClick={nav("benefits")}>Last Benefit Run</a></h2>
           {last ? (
             <>
               <p className="big">{money(last.total)}</p>
               <p className="sub">{int(last.rows)} employee{last.rows === 1 ? "" : "s"} • {new Date(last.created_at).toLocaleDateString()}</p>
             </>
-          ) : <p className="sub">No batches yet. Upload a CSV to credit your employees.</p>}
+          ) : <p className="sub">No runs yet. Upload a CSV to credit your employees.</p>}
         </article>
       </div>
       {adding && <AddFunds api={api} onClose={() => setAdding(false)} onDone={() => { setAdding(false); retry(); }} onError={onError} />}

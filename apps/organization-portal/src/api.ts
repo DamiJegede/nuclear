@@ -35,7 +35,8 @@ async function send<T>(base: string, token: string | null, method: string, path:
 export type Session = { account_id: string; device_id: string; session_token: string; session_expires_at: string };
 export type Account = { account_id: string; type: "C" | "B" | "O"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; status: string };
 export type Balance = { balance: number; balance_pending: number };
-export type Batch = { id: string; rows: number; total: number; sent: number; held: number; created_at: string };
+/** One benefits run: every credit run is the same record, whether it came from this portal's CSV, the API or (later) the scheduler. */
+export type Run = { id: string; rows: number; total: number; sent: number; held: number; source: "csv" | "api" | "schedule"; status: "credited" | "waiting_for_funds" | "missed"; run_date: string; created_at: string };
 export type Device = { id: string; wallet_id: string | null; platform: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; redeemed: boolean };
 export type OrgDocument = { id: string; type: string; created_at: string };
 export type OrgProfile = { legal_name: string; display_name: string; tax_id_last4: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
@@ -45,17 +46,24 @@ export type Overview = {
   balance: number;
   employees: { total: number; claimed: number; unclaimed: number };
   held: number;
-  last_batch: Batch | null;
+  last_run: Run | null;
 };
-export type Employee = { id: string; employee_id: string; name: string; email: string; balance: number; claimed: boolean; reminded_at: string | null; created_at: string };
-export type BatchRowResult = {
+export type Employee = { id: string; employee_id: string; name: string; email: string; balance: number; claimed: boolean; reminded_at: string | null; created_at: string; fixed_benefit: number | null };
+export type Cadence = "monthly" | "weekly" | "biweekly";
+export type Program = {
+  mode: "fixed" | "flexible"; chosen: boolean; cadence: Cadence | null; day_of_month: number | null; weekday: number | null; start_date: string | null; next_run_date: string | null;
+  fixed: { employees: number; total: number }; balance: number; funded: boolean;
+};
+export type ProgramInput = { mode: "flexible" } | { mode: "fixed"; cadence: "monthly"; day_of_month: number } | { mode: "fixed"; cadence: "weekly" | "biweekly"; weekday: number };
+export type FixedRow = { employee_id: string; name: string; email: string; fixed_benefit: number };
+export type RunRowResult = {
   employee_id: string; name: string; email: string; amount: number; mode: "sent" | "held"; transaction_id: string;
-  /** The employee's state now, not when the batch ran. */
+  /** The employee's state now, not when the run happened. */
   claimed: boolean; balance: number; reminded_at: string | null; removed: boolean;
 };
-export type BatchDetailData = { batch: Batch; summary: { claimed: number; unclaimed: number; still_held: number }; rows: BatchRowResult[] };
+export type RunDetailData = { run: Run; summary: { claimed: number; unclaimed: number; still_held: number }; rows: RunRowResult[] };
 export type CreditRow = { employee_id: string; name: string; email: string; amount: number };
-export type BatchResult = { batch: Batch; emails: { sent: number; failed: number; not_configured: number } };
+export type RunResult = { run: Run; emails: { sent: number; failed: number; not_configured: number } };
 
 // ---- Public calls (no session) ----------------------------------------------------------------------
 export const signIn = (email: string, password: string, base: string = API_URL) =>
@@ -95,10 +103,14 @@ export function createApi(token: string, base: string = API_URL) {
     overview: () => request<Overview>("GET", "/v1/org/overview"),
     employees: async (q = "", status: "" | "claimed" | "unclaimed" = "") => (await request<{ employees: Employee[] }>("GET", `/v1/org/employees${qs({ q, status })}`)).employees,
     removeEmployee: (eid: string) => request<null>("DELETE", `/v1/org/employees/${id(eid)}`),
-    batches: async () => (await request<{ batches: Batch[] }>("GET", "/v1/org/credit-batches")).batches,
-    batch: (bid: string) => request<BatchDetailData>("GET", `/v1/org/credit-batches/${id(bid)}`),
-    /** Runs a CSV batch. The same idempotency key is safe to retry: the batch is applied once. */
-    runBatch: (rows: CreditRow[], idempotencyKey: string) => request<BatchResult>("POST", "/v1/org/credit-batches", { rows }, { "idempotency-key": idempotencyKey }),
+    program: async () => (await request<{ program: Program }>("GET", "/v1/org/program")).program,
+    setProgram: async (input: ProgramInput) => (await request<{ program: Program }>("PUT", "/v1/org/program", input)).program,
+    uploadFixedBenefits: (rows: FixedRow[]) => request<{ employees: unknown[]; fixed: { employees: number; total: number } }>("POST", "/v1/org/fixed-benefits", { rows }),
+    setFixedBenefit: (eid: string, amountCents: number | null) => request<{ fixed_benefit: number | null }>("PATCH", `/v1/org/employees/${id(eid)}`, { fixed_benefit: amountCents }),
+    runs: async () => (await request<{ runs: Run[] }>("GET", "/v1/org/benefit-runs")).runs,
+    run: (rid: string) => request<RunDetailData>("GET", `/v1/org/benefit-runs/${id(rid)}`),
+    /** Runs the benefits from a CSV. The same idempotency key is safe to retry: the run is applied once. */
+    runBenefits: (rows: CreditRow[], idempotencyKey: string) => request<RunResult>("POST", "/v1/org/benefit-runs", { rows }, { "idempotency-key": idempotencyKey }),
     /** Adds funds to the organization's wallet. */
     addFunds: (amountCents: number, idempotencyKey: string) => request<unknown>("POST", "/v1/sandbox/fundings", { amount: amountCents }, { "idempotency-key": idempotencyKey }),
   };

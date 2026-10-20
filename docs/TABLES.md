@@ -392,11 +392,12 @@ Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an 
 | balance | Bigint cents held in escrow while the person has no account; 0 once claimed. Reconciled against the employee_escrow ledger bucket. |
 | claim_token_hash | SHA-256 of the emailed claim token (the token is never stored); NULL once claimed. Replaced by each reminder. |
 | reminded_at | When the person was last emailed about held money. |
+| fixed_benefit | Migration 0036, nullable bigint cents (1 to 10,000,000). The amount the Fixed Benefits schedule credits this employee on each payment date; NULL = none. Set by the portal's fixed-benefits file, the per-employee edit and the Benefits API (0 or null clears). Logically before created_at (physically last today). |
 | status | active or removed (migration 0031). A removed employee is hidden everywhere and gets no reminders; removal is refused while money is held (CHECK: removed means balance 0 and no token); a later CSV that mentions the employee_id makes them active again. |
 | created_at | Row creation time. |
 | updated_at | Last change. |
 
-There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in credit_batch_rows and the transactions.
+There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in benefit_run_rows and the transactions.
 
 ## api_keys
 
@@ -413,9 +414,45 @@ Migration 0034, see [ORGANIZATIONS.md](ORGANIZATIONS.md#benefits-api). A generic
 | last_used_at | Stamped on each request the key makes. |
 | revoked_at | Set when the key is rotated or revoked; NULL while live. A partial unique index allows only one live key per account. |
 
-## credit_batches and credit_batch_rows
+## benefit_programs
 
-Migration 0030. credit_batches: one row per CSV run (id, org_account_id, idempotency_key unique per organization, row_count, total, sent, held, created_at); the batch is a single database transaction. credit_batch_rows: one row per employee credited (id, batch_id, employee_ref, amount, mode `sent` or `held`, transaction_id unique, created_at).
+Migration 0036, see [ORGANIZATIONS.md](ORGANIZATIONS.md#benefit-programs-fixed-and-flexible-benefits). One row per organization, created at sign-up (and backfilled for existing organizations).
+
+| Field | Description |
+| --- | --- |
+| org_account_id | Primary key: the organization (account type O). |
+| mode | fixed or flexible (default flexible). Fixed runs a schedule; Flexible schedules nothing. |
+| cadence | monthly, weekly or biweekly; NULL when flexible. |
+| day_of_month | 1 to 28 for monthly (so every month has it). |
+| weekday | 0 (Sunday) to 6 for weekly and biweekly. |
+| start_date | Biweekly only: the first payment date; every payment is that plus 14 days times k. |
+| next_run_date | The next payment date (America/New_York); NULL when flexible. |
+| warned_for | The payment date a low-funds warning was already sent for. |
+| last_attempt_at | The scheduler claims a program for half an hour so two cron runs cannot both pay it. |
+| chosen_at | NULL until the organization has picked a mode (the portal asks on the first sign-in). |
+| created_at, updated_at | Timestamps. |
+
+## benefit_runs and benefit_run_rows
+
+Migration 0035 (they replace `credit_batches` and `credit_batch_rows` of migration 0030; rows were copied with their ids and the old tables dropped). One record for every benefits run, whoever starts it: the portal's CSV, the Benefits API or, later, the scheduler. See [ORGANIZATIONS.md](ORGANIZATIONS.md).
+
+| Field | Description |
+| --- | --- |
+| id | UUID primary key. |
+| org_account_id | The organization that ran it. |
+| source | csv, api or schedule. |
+| run_date | The program day (America/New_York) the run is for. |
+| status | credited, waiting_for_funds or missed. Runs started by a caller are credited or not recorded at all (the caller sees the error); only scheduled runs record waiting_for_funds and missed. |
+| idempotency_key | Unique per organization; makes a retry replay the first result. Scheduled runs will use `program:<date>`. |
+| row_count | Employees in the run. |
+| total | Bigint cents the run credits (or would credit, while waiting or missed). |
+| sent | Credited straight into employees' Benefits wallets. |
+| held | Held in escrow for employees who have not claimed. CHECK: when credited, sent + held = total. |
+| failure_code | Why a scheduled run is waiting or missed; NULL otherwise. |
+| attempts | Tries so far (1 for runs started by a caller). |
+| created_at, updated_at | Timestamps. |
+
+benefit_run_rows: one row per employee credited (id, run_id, employee_ref, amount, mode `sent` or `held`, transaction_id unique, created_at).
 
 ## Merchant refunds, settlement and historical integrity
 
@@ -582,6 +619,7 @@ The dev database (nuclear-dev) will be rebuilt from scratch into a new database 
 | orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
 | shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |
 | employees | status | before created_at (end of the table today) | 0031 |
+| employees | fixed_benefit | before created_at, after status (end of the table today) | 0036 |
 | wallets | org_account_id | after account_id (end of the table today) | 0033 |
 | ledger_entries | wallet_id | after account_id (end of the table today) | 0033 |
 

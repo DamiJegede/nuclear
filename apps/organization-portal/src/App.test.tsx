@@ -2,16 +2,18 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { App } from "./App";
-import { ApiError, type Account, type Api, type Session } from "./api";
-import { parseCsv, readCreditCsv } from "./csv";
+import { ApiError, type Account, type Api, type Program, type Session } from "./api";
+import { parseCsv, readCreditCsv, readFixedCsv } from "./csv";
 import { fit } from "./format";
 import { reportCsv } from "./report";
 import * as token from "./token";
 
 const SESSION: Session = { account_id: "o1", device_id: "d1", session_token: "tok-1", session_expires_at: "2027-01-01T00:00:00Z" };
 const ACCOUNT: Account = { account_id: "o1", type: "O", handle: null, name: "Acme Corp", email: "hr@acme.test", phone: null, photo: null, status: "active" };
-const OVERVIEW = { balance: 100000, employees: { total: 3, claimed: 1, unclaimed: 2 }, held: 7500, last_batch: { id: "b1", rows: 3, total: 10000, sent: 2500, held: 7500, created_at: "2026-10-18T10:00:00Z" } };
-const BATCH = { id: "0198b2b2-0000-7000-8000-000000000002", rows: 2, total: 7500, sent: 0, held: 7500, created_at: "2026-10-19T10:00:00Z" };
+const OVERVIEW = { balance: 100000, employees: { total: 3, claimed: 1, unclaimed: 2 }, held: 7500, last_run: { id: "b1", rows: 3, total: 10000, sent: 2500, held: 7500, created_at: "2026-10-18T10:00:00Z" } };
+const PROGRAM_FLEX: Program = { mode: "flexible", chosen: true, cadence: null, day_of_month: null, weekday: null, start_date: null, next_run_date: null, fixed: { employees: 0, total: 0 }, balance: 100000, funded: true };
+const PROGRAM_FIXED: Program = { ...PROGRAM_FLEX, mode: "fixed", cadence: "monthly", day_of_month: 15, next_run_date: "2026-11-15", fixed: { employees: 3, total: 16000 } };
+const RUN = { id: "0198b2b2-0000-7000-8000-000000000002", rows: 2, total: 7500, sent: 0, held: 7500, source: "csv" as const, status: "credited" as const, run_date: "2026-10-19", created_at: "2026-10-19T10:00:00Z" };
 
 function fakeApi(over: Partial<Api> = {}): Api {
   return {
@@ -22,15 +24,15 @@ function fakeApi(over: Partial<Api> = {}): Api {
       { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", balance: 0, claimed: true, reminded_at: null, created_at: "2026-10-18T10:00:00Z" },
       { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z" },
     ]),
-    batches: vi.fn().mockResolvedValue([BATCH]),
-    batch: vi.fn().mockResolvedValue({
-      batch: BATCH, summary: { claimed: 1, unclaimed: 1, still_held: 5000 },
+    runs: vi.fn().mockResolvedValue([RUN]),
+    run: vi.fn().mockResolvedValue({
+      run: RUN, summary: { claimed: 1, unclaimed: 1, still_held: 5000 },
       rows: [
         { employee_id: "E001", name: "Eve One", email: "eve@example.com", amount: 2500, mode: "held", transaction_id: "t0", claimed: true, balance: 0, reminded_at: null, removed: false },
         { employee_id: "E002", name: "=Sam Two", email: "sam@example.com", amount: 5000, mode: "held", transaction_id: "t1", claimed: false, balance: 5000, reminded_at: "2026-10-19T10:00:00Z", removed: false },
       ],
     }),
-    runBatch: vi.fn().mockResolvedValue({ batch: BATCH, emails: { sent: 2, failed: 0, not_configured: 0 } }),
+    runBenefits: vi.fn().mockResolvedValue({ run: RUN, emails: { sent: 2, failed: 0, not_configured: 0 } }),
     profile: vi.fn().mockResolvedValue({ legal_name: "Acme Corporation Inc", display_name: "Acme Corp", tax_id_last4: "6789", address: "1 Main St", city: "Brooklyn", state: "NY", post_code: "11201", country: "US", website: "https://acme.test" }),
     saveProfile: vi.fn().mockResolvedValue({}),
     documents: vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-19T10:00:00Z" }]),
@@ -40,6 +42,10 @@ function fakeApi(over: Partial<Api> = {}): Api {
     apiKey: vi.fn().mockResolvedValue(null),
     generateApiKey: vi.fn().mockResolvedValue({ key: { hint: "9xYz", name: "Default", created_at: "2026-10-20T10:00:00Z", last_used_at: null }, token: "nk_org_TESTTOKEN9xYz" }),
     revokeApiKey: vi.fn().mockResolvedValue(null),
+    program: vi.fn().mockResolvedValue(PROGRAM_FLEX),
+    setProgram: vi.fn().mockImplementation(async (input: any) => ({ ...PROGRAM_FLEX, ...input, chosen: true })),
+    uploadFixedBenefits: vi.fn().mockResolvedValue({ employees: [], fixed: { employees: 2, total: 7500 } }),
+    setFixedBenefit: vi.fn().mockResolvedValue({ fixed_benefit: null }),
     removeEmployee: vi.fn().mockResolvedValue(null),
     addFunds: vi.fn().mockResolvedValue({}),
     uploadPhoto: vi.fn(),
@@ -59,6 +65,19 @@ async function open(api: Api, path = "/") {
 const csvFile = (text: string) => new File([text], "credits.csv", { type: "text/csv" });
 
 describe("csv", () => {
+  it("reads the fixed-benefits file: dollars to cents, 0 or empty clears, every problem listed", () => {
+    const ok = readFixedCsv("fixed_benefit,email,name,employee_id\n\"$1,250.50\",a@x.co,Ann,E1\n,b@x.co,Bo,E2\n0,c@x.co,Cy,E3\n");
+    expect(ok.errors).toEqual([]);
+    expect(ok.rows.map((r) => [r.employee_id, r.fixed_benefit])).toEqual([["E1", 125050], ["E2", 0], ["E3", 0]]);
+    expect([ok.total, ok.clears]).toEqual([125050, 2]);
+    const bad = readFixedCsv("employee_id,name,email,fixed_benefit\nE 1,A,a@x.co,5\nE2,,b@x.co,5\nE3,C,nope,5\nE4,D,d@x.co,abc\nE4,D,d@x.co,5\nE5,E,e@x.co,200000\n");
+    expect(bad.rows).toEqual([]);
+    expect(bad.errors.join("\n")).toMatch(/Line 2.*employee_id/);
+    expect(bad.errors.join("\n")).toMatch(/Line 6.*more than once/);
+    expect(bad.errors.join("\n")).toMatch(/Line 7.*\$100,000/);
+    expect(readFixedCsv("employee_id,name,email\nE1,A,a@x.co\n").errors[0]).toMatch(/Missing: fixed_benefit/);
+  });
+
   it("reads quoted cells, CRLF, a BOM and dollar signs", () => {
     expect(parseCsv('﻿a,b\r\n"x, y","say ""hi"""\r\n')).toEqual([["a", "b"], ["x, y", 'say "hi"']]);
     const r = readCreditCsv("Email,amount,NAME,employee_id\nj@x.co,\"$1,250.50\",Jane,E1\n");
@@ -145,36 +164,36 @@ describe("organization portal", () => {
     expect(await screen.findByText(/need to claim it before they can be removed/)).toBeInTheDocument();
   });
 
-  it("previews a CSV, asks for confirmation, and runs it as one batch", async () => {
+  it("previews a CSV, asks for confirmation, and runs it as one benefits run", async () => {
     const api = fakeApi();
     const user = await open(api, "/benefits");
     await user.upload(await screen.findByLabelText("CSV file"), csvFile("employee_id,name,email,amount\nE001,Eve One,eve@example.com,25.00\nE002,Sam Two,sam@example.com,50.00\n"));
-    expect(await screen.findByRole("button", { name: "Run Batch" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Benefits" })).toBeEnabled();
     expect(screen.getAllByText("$75.00").length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Run Batch" }));
-    expect(api.runBatch).not.toHaveBeenCalled();
-    await user.click(within(screen.getByRole("dialog", { name: "Run Batch" })).getByRole("button", { name: "Confirm Run" }));
+    await user.click(screen.getByRole("button", { name: "Run Benefits" }));
+    expect(api.runBenefits).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("dialog", { name: "Run Benefits" })).getByRole("button", { name: "Confirm Run" }));
     expect(await screen.findByText(/Crediting 2 employees/)).toBeInTheDocument();
-    const running = screen.getByRole("dialog", { name: "Running Batch" });
+    const running = screen.getByRole("dialog", { name: "Running Benefits" });
     expect(within(running).queryAllByRole("button")).toEqual([]);
-    await waitFor(() => expect(api.runBatch).toHaveBeenCalledWith(
+    await waitFor(() => expect(api.runBenefits).toHaveBeenCalledWith(
       [{ employee_id: "E001", name: "Eve One", email: "eve@example.com", amount: 2500 }, { employee_id: "E002", name: "Sam Two", email: "sam@example.com", amount: 5000 }],
       expect.any(String)));
-    const report = await screen.findByRole("dialog", { name: "Batch Complete" }, { timeout: 5000 });
+    const report = await screen.findByRole("dialog", { name: "Run Complete" }, { timeout: 5000 });
     expect(report).toHaveTextContent("$75.00 was credited to 2 employees");
     expect(report).not.toHaveTextContent(/email/i);
     expect(report).not.toHaveTextContent(/held/i);
-    await user.click(within(report).getByRole("button", { name: "View Batch" }));
-    expect(await screen.findByRole("heading", { name: "Batch" })).toBeInTheDocument();
+    await user.click(within(report).getByRole("button", { name: "View Run" }));
+    expect(await screen.findByRole("heading", { name: "Run" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/benefits/0198b2b2-0000-7000-8000-000000000002");
   });
 
-  it("blocks a batch the wallet cannot cover", async () => {
+  it("blocks a run the wallet cannot cover", async () => {
     const api = fakeApi({ overview: vi.fn().mockResolvedValue({ ...OVERVIEW, balance: 1000 }) });
     const user = await open(api, "/benefits");
     await user.upload(await screen.findByLabelText("CSV file"), csvFile("employee_id,name,email,amount\nE001,Eve One,eve@example.com,25.00\n"));
     expect(await screen.findByText(/short for this file/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run Batch" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Benefits" })).toBeDisabled();
   });
 
   it("shows each problem in a bad file and offers no run button", async () => {
@@ -182,7 +201,7 @@ describe("organization portal", () => {
     const user = await open(api, "/benefits");
     await user.upload(await screen.findByLabelText("CSV file"), csvFile("employee_id,name,email,amount\nE1,A,nope,5\n"));
     expect(await screen.findByText(/Line 2.*valid email/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run Batch" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Benefits" })).toBeDisabled();
     expect(screen.getByRole("heading", { name: "Not Ready" })).toBeInTheDocument();
   });
 
@@ -194,7 +213,7 @@ describe("organization portal", () => {
     expect(screen.queryByRole("heading", { name: "Upload a CSV" })).not.toBeInTheDocument();
     const checks = within(screen.getByRole("list", { name: "Checks" })).getAllByRole("listitem");
     expect(checks.map((c) => c.textContent)).toEqual(["✓Formatting OK", "✓Sufficient Balance", "✓No Duplicate Employees"]);
-    expect(screen.getByRole("button", { name: "Run Batch" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run Benefits" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByRole("heading", { name: "Upload a CSV" })).toBeInTheDocument();
   });
@@ -204,27 +223,27 @@ describe("organization portal", () => {
     await user.upload(await screen.findByLabelText("CSV file"), csvFile("employee_id,name,email,amount\nE1,A,a@x.co,5\nE2,B,a@x.co,5\n"));
     expect(await screen.findByText(/a@x\.co appears more than once/)).toBeInTheDocument();
     expect(screen.getByText("No Duplicate Employees").closest("li")).toHaveClass("fail");
-    expect(screen.getByRole("button", { name: "Run Batch" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Benefits" })).toBeDisabled();
   });
 
   it("explains when the server refuses because the balance changed", async () => {
-    const api = fakeApi({ runBatch: vi.fn().mockRejectedValue(new ApiError(422, "insufficient_balance", { required: 7500, available: 2000 })) });
+    const api = fakeApi({ runBenefits: vi.fn().mockRejectedValue(new ApiError(422, "insufficient_balance", { required: 7500, available: 2000 })) });
     const user = await open(api, "/benefits");
     await user.upload(await screen.findByLabelText("CSV file"), csvFile("employee_id,name,email,amount\nE001,Eve One,eve@example.com,25.00\n"));
-    await user.click(await screen.findByRole("button", { name: "Run Batch" }));
-    await user.click(within(screen.getByRole("dialog", { name: "Run Batch" })).getByRole("button", { name: "Confirm Run" }));
-    const report = await screen.findByRole("dialog", { name: "Batch Not Run" });
+    await user.click(await screen.findByRole("button", { name: "Run Benefits" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Run Benefits" })).getByRole("button", { name: "Confirm Run" }));
+    const report = await screen.findByRole("dialog", { name: "Benefits Not Run" });
     expect(report).toHaveTextContent("Your wallet has $20.00, and this file needs $75.00");
     expect(report).toHaveTextContent("Nothing was sent and nothing was charged.");
   });
 
-  it("opens a batch on its own page and filters by claim status", async () => {
+  it("opens a run on its own page and filters by claim status", async () => {
     const api = fakeApi();
     const user = await open(api, "/benefits");
     await user.click(await screen.findByRole("button", { name: "Details" }));
-    expect(await screen.findByRole("heading", { name: "Batch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Run" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/benefits/0198b2b2-0000-7000-8000-000000000002");
-    expect(api.batch).toHaveBeenCalledWith("0198b2b2-0000-7000-8000-000000000002");
+    expect(api.run).toHaveBeenCalledWith("0198b2b2-0000-7000-8000-000000000002");
     expect(await screen.findByText("Eve One")).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Not claimed" })).toHaveTextContent("$50.00 still held");
     await user.click(screen.getByRole("tab", { name: "Not Claimed (1)" }));
@@ -242,7 +261,7 @@ describe("organization portal", () => {
     await user.click(screen.getByRole("button", { name: "Download Not Claimed Report" }));
     expect(dl).toHaveBeenCalledTimes(1);
     const [name, text] = dl.mock.calls[0]!;
-    expect(name).toBe("benefit-batch-2026-10-19-not-claimed.csv");
+    expect(name).toBe("benefit-run-2026-10-19-not-claimed.csv");
     expect(text).toBe("employee_id,name,email,amount,credited_as,status,still_held,last_reminded\nE002,'=Sam Two,sam@example.com,50.00,held,not claimed,50.00,2026-10-19\n");
     dl.mockRestore();
   });
@@ -342,6 +361,121 @@ describe("organization portal", () => {
     await user.click(within(screen.getByRole("dialog", { name: "Revoke API Key" })).getByRole("button", { name: "Confirm Revoke" }));
     await waitFor(() => expect(api.revokeApiKey).toHaveBeenCalled());
     expect(await screen.findByText("No key yet.")).toBeInTheDocument();
+  });
+
+  it("asks a new organization to choose Fixed or Flexible Benefits, and cannot be dismissed until it does", async () => {
+    const api = fakeApi({ program: vi.fn().mockResolvedValue({ ...PROGRAM_FLEX, chosen: false }) });
+    const user = await open(api);
+    const modal = await screen.findByRole("dialog", { name: "How do you want to give benefits?" });
+    expect(within(modal).getByText("Fixed Benefits")).toBeInTheDocument();
+    expect(within(modal).getByText(/Give each employee a set amount on a regular schedule/)).toBeInTheDocument();
+    expect(within(modal).getByText("Flexible Benefits")).toBeInTheDocument();
+    expect(within(modal).getByText(/Decide when and how much/)).toBeInTheDocument();
+    expect(within(modal).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "How do you want to give benefits?" })).toBeInTheDocument();
+    await user.click(within(modal).getByRole("button", { name: /Flexible Benefits/ }));
+    await waitFor(() => expect(api.setProgram).toHaveBeenCalledWith({ mode: "flexible" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("choosing Fixed opens the schedule window: monthly day 1-28, weekly and biweekly weekdays", async () => {
+    const api = fakeApi({ program: vi.fn().mockResolvedValue({ ...PROGRAM_FLEX, chosen: false }) });
+    const user = await open(api);
+    await user.click(await screen.findByRole("button", { name: /Fixed Benefits/ }));
+    const sched = await screen.findByRole("dialog", { name: "Payment Schedule" });
+    const day = within(sched).getByLabelText("Day of the month") as HTMLSelectElement;
+    expect([...day.options].map((o) => o.textContent)).toEqual(Array.from({ length: 28 }, (_, i) => `${i + 1}${[11, 12, 13].includes(i + 1) ? "th" : ["th", "st", "nd", "rd"][(i + 1) % 10] ?? "th"}`));
+    await user.selectOptions(day, "15");
+    await user.click(within(sched).getByRole("button", { name: "Save Schedule" }));
+    await waitFor(() => expect(api.setProgram).toHaveBeenCalledWith({ mode: "fixed", cadence: "monthly", day_of_month: 15 }));
+  });
+
+  it("weekly and biweekly ask for a weekday", async () => {
+    const api = fakeApi({ program: vi.fn().mockResolvedValue({ ...PROGRAM_FLEX, chosen: false }) });
+    const user = await open(api);
+    await user.click(await screen.findByRole("button", { name: /Fixed Benefits/ }));
+    const sched = await screen.findByRole("dialog", { name: "Payment Schedule" });
+    await user.selectOptions(within(sched).getByLabelText("How often"), "biweekly");
+    expect((within(sched).getByLabelText("Weekday") as HTMLSelectElement).options.length).toBe(7);
+    await user.selectOptions(within(sched).getByLabelText("Weekday"), "3");
+    expect(within(sched).queryByLabelText("Day of the month")).not.toBeInTheDocument();
+    await user.click(within(sched).getByRole("button", { name: "Save Schedule" }));
+    await waitFor(() => expect(api.setProgram).toHaveBeenCalledWith({ mode: "fixed", cadence: "biweekly", weekday: 3 }));
+  });
+
+  it("shows the program on the Benefits page: schedule, next payment, who is covered, and funding", async () => {
+    const api = fakeApi({ program: vi.fn().mockResolvedValue(PROGRAM_FIXED) });
+    const user = await open(api, "/benefits");
+    const card = await screen.findByLabelText("Benefits program");
+    expect(card).toHaveTextContent("Every month on the 15th");
+    expect(card).toHaveTextContent("Sunday, November 15");
+    expect(card).toHaveTextContent("3 employees • $160.00 each payment");
+    expect(card).toHaveTextContent("Your wallet covers the next payment.");
+    await user.click(within(card).getByRole("button", { name: "Edit Schedule" }));
+    expect(await screen.findByRole("dialog", { name: "Payment Schedule" })).toBeInTheDocument();     // opens on its own
+    expect((screen.getByLabelText("Day of the month") as HTMLSelectElement).value).toBe("15");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(within(card).getByRole("button", { name: "Change Mode" }));
+    const modal = await screen.findByRole("dialog", { name: "How do you want to give benefits?" });
+    expect(within(modal).getAllByText("current")).toHaveLength(1);
+    await user.click(within(modal).getByRole("button", { name: "Cancel" }));
+  });
+
+  it("warns when the wallet will not cover the next payment, and when nobody has a fixed benefit yet", async () => {
+    await open(fakeApi({ program: vi.fn().mockResolvedValue({ ...PROGRAM_FIXED, balance: 5000, funded: false }) }), "/benefits");
+    expect(await screen.findByText(/Your wallet is \$110\.00 short for the next payment/)).toBeInTheDocument();
+  });
+
+  it("a flexible organization sees a flexible program and no fixed-benefit tools", async () => {
+    const user = await open(fakeApi(), "/employees");
+    await screen.findByText("Sam Two");
+    expect(screen.queryByRole("button", { name: "Upload Fixed Benefits" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Fixed Benefit")).not.toBeInTheDocument();
+    await user.click(within(screen.getByRole("navigation", { name: "Sections" })).getByRole("link", { name: "Benefits" }));
+    expect(await screen.findByLabelText("Benefits program")).toHaveTextContent("flexible");
+  });
+
+  it("Fixed mode adds a Fixed Benefit column, an upload and a per-employee edit", async () => {
+    const api = fakeApi({
+      program: vi.fn().mockResolvedValue(PROGRAM_FIXED),
+      employees: vi.fn().mockResolvedValue([
+        { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", balance: 0, claimed: true, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: 5000 },
+        { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
+      ]),
+    });
+    const user = await open(api, "/employees");
+    expect(await screen.findByText("Fixed Benefit")).toBeInTheDocument();
+    expect(screen.getAllByText("$50.00").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Edit fixed benefit for Sam Two" }));
+    await user.type(within(screen.getByRole("dialog", { name: "Fixed Benefit" })).getByLabelText("Amount (USD)"), "25.5");
+    await user.click(within(screen.getByRole("dialog", { name: "Fixed Benefit" })).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.setFixedBenefit).toHaveBeenCalledWith("e2", 2550));
+    await user.click(screen.getByRole("button", { name: "Edit fixed benefit for Eve One" }));
+    await user.clear(within(screen.getByRole("dialog", { name: "Fixed Benefit" })).getByLabelText("Amount (USD)"));
+    await user.click(within(screen.getByRole("dialog", { name: "Fixed Benefit" })).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.setFixedBenefit).toHaveBeenCalledWith("e1", null));
+    await user.click(screen.getByRole("button", { name: "Upload Fixed Benefits" }));
+    const up = screen.getByRole("dialog", { name: "Upload Fixed Benefits" });
+    expect(within(up).getByRole("button", { name: "Save Fixed Benefits" })).toBeDisabled();
+    await user.upload(within(up).getByLabelText("Fixed benefits file"), csvFile("employee_id,name,email,fixed_benefit\nE001,Eve One,eve@example.com,50\nE002,Sam Two,sam@example.com,25.50\nE003,Zed,zed@example.com,0\n"));
+    expect(await within(up).findByText(/3 employees, \$75\.50 per payment, 1 cleared/)).toBeInTheDocument();
+    await user.click(within(up).getByRole("button", { name: "Save Fixed Benefits" }));
+    await waitFor(() => expect(api.uploadFixedBenefits).toHaveBeenCalledWith([
+      { employee_id: "E001", name: "Eve One", email: "eve@example.com", fixed_benefit: 5000 },
+      { employee_id: "E002", name: "Sam Two", email: "sam@example.com", fixed_benefit: 2550 },
+      { employee_id: "E003", name: "Zed", email: "zed@example.com", fixed_benefit: 0 }]));
+  });
+
+  it("the run history says where each run came from and whether it was paid", async () => {
+    const api = fakeApi({ runs: vi.fn().mockResolvedValue([
+      { ...RUN, id: "r1", source: "schedule", status: "credited" }, { ...RUN, id: "r2", source: "schedule", status: "waiting_for_funds" },
+      { ...RUN, id: "r3", source: "api", status: "credited" }, { ...RUN, id: "r4", source: "schedule", status: "missed" }]) });
+    await open(api, "/benefits");
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByText("Schedule")).toHaveLength(3);
+    expect(within(table).getByText("API")).toBeInTheDocument();
+    for (const t of ["credited", "waiting for funds", "missed"]) expect(within(table).getAllByText(t).length).toBeGreaterThan(0);
   });
 
   it("has no refresh button on any page", async () => {

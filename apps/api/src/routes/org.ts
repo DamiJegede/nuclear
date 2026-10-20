@@ -4,9 +4,12 @@ import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
 import { n } from "../lib/money";
 import { profileBody, profileJson, type ProfileRow } from "./business";
-import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runCreditBatch } from "../lib/org";
+import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runBenefitRun } from "../lib/org";
 import { sendCreditEmails } from "../lib/orgMail";
 import { keyStatus, revokeKey, rotateKey } from "../lib/orgApiKey";
+import { fixedTotals, getProgram, setProgram, type ProgramInput } from "../lib/programs";
+import { easternDate } from "../lib/dailyReset";
+import { upsertEmployees } from "../lib/org";
 import { requireOwner, requireSession } from "../session";
 
 /**
@@ -27,10 +30,11 @@ const creditRow = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   amount: z.union([z.number().int(), z.string().regex(/^\d{1,12}$/)]).transform((v) => BigInt(v)).refine((v) => v > 0n && v <= MAX_CREDIT, { message: "amount_out_of_range" }),
 });
-const batchBody = z.object({ rows: z.array(creditRow).min(1).max(MAX_BATCH_ROWS) });
+const runBody = z.object({ rows: z.array(creditRow).min(1).max(MAX_BATCH_ROWS) });
 
-type BatchRow = { id: string; row_count: number; total: bigint; sent: bigint; held: bigint; created_at: Date };
-const batchJson = (b: BatchRow) => ({ id: b.id, rows: b.row_count, total: n(b.total), sent: n(b.sent), held: n(b.held), created_at: b.created_at });
+type RunRow = { id: string; row_count: number; total: bigint; sent: bigint; held: bigint; source: string; status: string; run_date: string; created_at: Date };
+const RUN_COLS = "id, row_count, total, sent, held, source, status, run_date::text as run_date, created_at";
+const runJson = (b: RunRow) => ({ id: b.id, rows: b.row_count, total: n(b.total), sent: n(b.sent), held: n(b.held), source: b.source, status: b.status, run_date: b.run_date, created_at: b.created_at });
 
 // ---- Overview ----
 org.get("/overview", async (c) => {
@@ -42,14 +46,14 @@ org.get("/overview", async (c) => {
       select count(*)::int as total, (count(*) filter (where employee_account_id is not null))::int as claimed,
              (count(*) filter (where employee_account_id is null))::int as unclaimed, coalesce(sum(balance), 0) as held
         from employees where org_account_id = ${id} and status = 'active'`,
-    sql<BatchRow[]>`select id, row_count, total, sent, held, created_at from credit_batches where org_account_id = ${id} order by created_at desc, id desc limit 1`,
+    sql<RunRow[]>`select ${sql.unsafe(RUN_COLS)} from benefit_runs where org_account_id = ${id} order by created_at desc, id desc limit 1`,
   ]);
   const e = emp[0]!;
   return c.json({
     balance: n(bal[0]?.balance ?? 0n),
     employees: { total: e.total, claimed: e.claimed, unclaimed: e.unclaimed },
     held: n(e.held),
-    last_batch: last[0] ? batchJson(last[0]) : null,
+    last_run: last[0] ? runJson(last[0]) : null,
   });
 });
 
@@ -100,15 +104,76 @@ org.get("/employees", async (c) => {
   const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
   const status = c.req.query("status");
   if (status && !["claimed", "unclaimed"].includes(status)) return c.json({ error: "invalid_request" }, 400);
-  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date; benefits_wallet_id: string | null }[]>`
+  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date; benefits_wallet_id: string | null; fixed_benefit: bigint | null }[]>`
     select e.id, e.employee_id, e.name, e.email, e.balance, (e.employee_account_id is not null) as claimed, e.reminded_at, e.created_at,
-           (select w.id from wallets w where w.account_id = e.employee_account_id and w.org_account_id = e.org_account_id and w.type = 'benefits' and w.status <> 'closed') as benefits_wallet_id
+           e.fixed_benefit, (select w.id from wallets w where w.account_id = e.employee_account_id and w.org_account_id = e.org_account_id and w.type = 'benefits' and w.status <> 'closed') as benefits_wallet_id
       from employees e
      where e.org_account_id = ${id} and e.status = 'active'
        ${q ? sql`and (e.name ilike ${like} or e.email ilike ${like} or e.employee_id ilike ${like})` : sql``}
        ${status === "claimed" ? sql`and e.employee_account_id is not null` : status === "unclaimed" ? sql`and e.employee_account_id is null` : sql``}
      order by e.created_at desc, e.id desc limit 500`;
-  return c.json({ employees: rows.map((r) => ({ ...r, balance: n(r.balance) })) });
+  return c.json({ employees: rows.map((r) => ({ ...r, balance: n(r.balance), fixed_benefit: n(r.fixed_benefit) })) });
+});
+
+// ---- The benefit program: Fixed Benefits (a schedule) or Flexible Benefits (credit when you choose) ----
+const programBody = z.union([
+  z.object({ mode: z.literal("flexible") }),
+  z.object({ mode: z.literal("fixed"), cadence: z.literal("monthly"), day_of_month: z.number().int().min(1).max(28) }),
+  z.object({ mode: z.literal("fixed"), cadence: z.enum(["weekly", "biweekly"]), weekday: z.number().int().min(0).max(6) }),
+]);
+
+async function programAnswer(c: { get: (k: "sql") => import("../db").Sql }, orgId: string) {
+  const sql = c.get("sql");
+  const [p, f, [b]] = await Promise.all([getProgram(sql, orgId), fixedTotals(sql, orgId), sql<{ balance: bigint }[]>`select balance from balances where account_id = ${orgId}`]);
+  const bal = b && b.balance > 0n ? b.balance : 0n;
+  return {
+    program: {
+      mode: p.mode, chosen: p.chosen_at !== null, cadence: p.cadence, day_of_month: p.day_of_month, weekday: p.weekday, start_date: p.start_date, next_run_date: p.next_run_date,
+      fixed: { employees: f.employees, total: n(f.total) }, balance: n(bal), funded: f.total <= bal,
+    },
+  };
+}
+
+org.get("/program", async (c) => c.json(await programAnswer(c, c.get("auth").accountId)));
+
+org.put("/program", async (c) => {
+  const b = programBody.safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const { accountId } = c.get("auth");
+  await setProgram(c.get("sql"), accountId, b.data as ProgramInput, easternDate(new Date()));
+  await customerLog(c, accountId, null, "org.program_set", b.data as Record<string, unknown>);
+  return c.json(await programAnswer(c, accountId));
+});
+
+// Set (or clear) fixed benefits for employees from a file: creates new employees, updates names and emails, sets fixed_benefit (0 or null clears). All or nothing.
+const fixedRow = z.object({
+  employee_id: z.string().trim().regex(/^[A-Za-z0-9]{1,64}$/),
+  name: z.string().trim().min(1).max(120),
+  email: z.string().trim().toLowerCase().email().max(254),
+  fixed_benefit: z.union([z.number().int(), z.string().regex(/^\d{1,12}$/)]).transform((v) => Number(v)).refine((v) => v >= 0 && v <= Number(MAX_CREDIT), { message: "amount_out_of_range" }),
+});
+org.post("/fixed-benefits", async (c) => {
+  const b = z.object({ rows: z.array(fixedRow).min(1).max(MAX_BATCH_ROWS) }).safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const seen = new Set<string>();
+  for (const r of b.data.rows) { if (seen.has(r.employee_id)) return c.json({ error: "duplicate_employee_id", employee_id: r.employee_id }, 422); seen.add(r.employee_id); }
+  const { accountId } = c.get("auth");
+  const results = await upsertEmployees(c.get("sql"), accountId, b.data.rows);
+  await customerLog(c, accountId, null, "org.fixed_benefits_set", { count: results.length, via: "portal" });
+  return c.json({ employees: results, fixed: await fixedTotals(c.get("sql"), accountId).then((f) => ({ employees: f.employees, total: n(f.total) })) });
+});
+
+// One employee's fixed benefit (null or 0 clears it).
+org.patch("/employees/:id", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  const b = z.object({ fixed_benefit: z.number().int().min(0).max(Number(MAX_CREDIT)).nullable() }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success || !b.success) return c.json({ error: id.success ? "invalid_request" : "not_found" }, id.success ? 400 : 404);
+  const { accountId } = c.get("auth");
+  const v = b.data.fixed_benefit && b.data.fixed_benefit > 0 ? b.data.fixed_benefit : null;
+  const rows = await c.get("sql")`update employees set fixed_benefit = ${v} where id = ${id.data} and org_account_id = ${accountId} and status = 'active' returning id, fixed_benefit`;
+  if (!rows[0]) return c.json({ error: "not_found" }, 404);
+  await customerLog(c, accountId, null, "org.fixed_benefit_set", { employee: id.data, amount: v });
+  return c.json({ id: id.data, fixed_benefit: n(rows[0].fixed_benefit) });
 });
 
 // Removing an employee hides them. Refused while money is held for them (they must claim it first), so nothing is ever stranded.
@@ -131,11 +196,11 @@ org.delete("/employees/:id", async (c) => {
   return c.body(null, 204);
 });
 
-// ---- Credit batches ----
-org.post("/credit-batches", async (c) => {
+// ---- Benefit runs: every credit run, whoever started it (this portal's CSV, the Benefits API, later the scheduler) ----
+org.post("/benefit-runs", async (c) => {
   const key = c.req.header("idempotency-key")?.trim();
   if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
-  const parsed = batchBody.safeParse(await c.req.json().catch(() => null));
+  const parsed = runBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.flatten() }, 400);
   const seen = new Set<string>();
   for (const r of parsed.data.rows) {
@@ -144,40 +209,41 @@ org.post("/credit-batches", async (c) => {
   }
   const sql = c.get("sql");
   const orgId = c.get("auth").accountId;
-  const out = await runCreditBatch(sql, { orgId, idempotencyKey: key, rows: parsed.data.rows });
+  const out = await runBenefitRun(sql, { orgId, idempotencyKey: key, source: "csv", rows: parsed.data.rows });
   if (out.kind === "error") return c.json({ error: out.error, ...(out.extra ?? {}) }, out.status);
 
   let emails = { sent: 0, failed: 0, not_configured: 0 };
   if (!out.replayed) {
     const [o] = await sql<{ name: string }[]>`select name from accounts where id = ${orgId}`;
     emails = await sendCreditEmails(c.env, sql, o?.name ?? "Your employer", out.notices);
-    await customerLog(c, orgId, null, "org.credit_batch", { batch_id: out.batch.id, rows: out.batch.row_count, total: Number(out.batch.total), held: Number(out.batch.held) });
+    await customerLog(c, orgId, null, "org.benefit_run", { run_id: out.run.id, rows: out.run.row_count, total: Number(out.run.total), held: Number(out.run.held), via: "csv" });
   }
-  return c.json({ batch: batchJson(out.batch), emails }, out.replayed ? 200 : 201);
+  return c.json({ run: runJson(out.run as RunRow), emails }, out.replayed ? 200 : 201);
 });
 
-org.get("/credit-batches", async (c) => {
-  const rows = await c.get("sql")<BatchRow[]>`
-    select id, row_count, total, sent, held, created_at from credit_batches
+org.get("/benefit-runs", async (c) => {
+  const sql = c.get("sql");
+  const rows = await sql<RunRow[]>`
+    select ${sql.unsafe(RUN_COLS)} from benefit_runs
      where org_account_id = ${c.get("auth").accountId} order by created_at desc, id desc limit 100`;
-  return c.json({ batches: rows.map(batchJson) });
+  return c.json({ runs: rows.map(runJson) });
 });
 
-org.get("/credit-batches/:id", async (c) => {
+org.get("/benefit-runs/:id", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
   const sql = c.get("sql");
-  const [b] = await sql<BatchRow[]>`
-    select id, row_count, total, sent, held, created_at from credit_batches where id = ${id.data} and org_account_id = ${c.get("auth").accountId}`;
+  const [b] = await sql<RunRow[]>`
+    select ${sql.unsafe(RUN_COLS)} from benefit_runs where id = ${id.data} and org_account_id = ${c.get("auth").accountId}`;
   if (!b) return c.json({ error: "not_found" }, 404);
-  // Each row carries the employee's CURRENT claim state (not their state when the batch ran), so the organization can follow up.
+  // Each row carries the employee's CURRENT claim state (not their state when the run happened), so the organization can follow up.
   const rows = await sql<{ employee_id: string; name: string; email: string; amount: bigint; mode: string; transaction_id: string; claimed: boolean; balance: bigint; reminded_at: Date | null; removed: boolean }[]>`
     select e.employee_id, e.name, e.email, r.amount, r.mode, r.transaction_id,
            (e.employee_account_id is not null) as claimed, e.balance, e.reminded_at, (e.status = 'removed') as removed
-      from credit_batch_rows r join employees e on e.id = r.employee_ref
-     where r.batch_id = ${b.id} order by e.employee_id`;
+      from benefit_run_rows r join employees e on e.id = r.employee_ref
+     where r.run_id = ${b.id} order by e.employee_id`;
   return c.json({
-    batch: batchJson(b),
+    run: runJson(b),
     summary: { claimed: rows.filter((r) => r.claimed).length, unclaimed: rows.filter((r) => !r.claimed).length, still_held: n(rows.reduce((t, r) => t + r.balance, 0n)) },
     rows: rows.map((r) => ({ ...r, amount: n(r.amount), balance: n(r.balance) })),
   });

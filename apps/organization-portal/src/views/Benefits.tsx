@@ -1,23 +1,29 @@
 import { useCallback, useRef, useState } from "react";
-import { ApiError, type Api, type Batch, type BatchResult, type CreditRow, type Overview } from "../api";
+import { ApiError, type Api, type Program, type Run, type RunResult, type CreditRow, type Overview } from "../api";
 import { CSV_TEMPLATE, readCreditCsv } from "../csv";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { downloadText } from "../token";
 import { useList } from "../useList";
 import { Modal } from "./Modal";
+import { ModePicker, ProgramCard, SchedulePicker } from "./Program";
 
-/** The running animation shows for at least this long, so a fast batch doesn't flash by. */
+/** The running animation shows for at least this long, so a fast run doesn't flash by. */
 const MIN_RUNNING_MS = 1200;
+
+const SOURCE = { csv: "CSV", api: "API", schedule: "Schedule" } as const;
+const STATUS = { credited: "credited", waiting_for_funds: "waiting for funds", missed: "missed" } as const;
 
 type Loaded = { name: string; rows: CreditRow[]; total: number; errors: string[]; duplicates: string[]; key: string };
 
-/** Credit employees from a CSV: read it here, check it, see the total against the wallet, then run it as one batch. */
-type Report = { kind: "success"; result: BatchResult } | { kind: "failure"; message: string };
+/** Credit employees from a CSV: read it here, check it, see the total against the wallet, then run it as one benefits run. */
+type Report = { kind: "success"; result: RunResult } | { kind: "failure"; message: string };
 
-export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: unknown) => void; openBatch: (id: string) => void }) {
+export function Benefits({ api, onError, openRun }: { api: Api; onError: (e: unknown) => void; openRun: (id: string) => void }) {
   usePageTitle("Benefits");
-  const batches = useList<Batch[]>(useCallback(() => api.batches(), [api]), onError, "batches");
+  const runs = useList<Run[]>(useCallback(() => api.runs(), [api]), onError, "runs");
+  const program = useList<{ p: Program }>(useCallback(async () => ({ p: await api.program() }), [api]), onError, "program");
+  const [pick_, setPickMode] = useState<"mode" | "schedule" | null>(null);
   const overview = useList<Overview>(useCallback(() => api.overview(), [api]), onError, "overview");
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<Loaded | null>(null);
@@ -39,16 +45,16 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
     setBusy(true); setError(null);
     const started = Date.now();
     try {
-      const r = await api.runBatch(file.rows, file.key);
+      const r = await api.runBenefits(file.rows, file.key);
       // Let the animation play for a moment even when the API is quick.
       const left = MIN_RUNNING_MS - (Date.now() - started);
       if (left > 0) await new Promise((done) => setTimeout(done, left));
       setReport({ kind: "success", result: r }); setFile(null); setConfirm(false);
-      batches.retry(); overview.retry();
+      runs.retry(); overview.retry();
     } catch (e) {
       onError(e);
       setConfirm(false);
-      let message = "Couldn't run the batch. Try again.";
+      let message = "Couldn't run the benefits. Try again.";
       if (e instanceof ApiError && e.code === "insufficient_balance") message = `Your wallet has ${money(Number(e.extra?.available ?? 0))}, and this file needs ${money(Number(e.extra?.required ?? 0))}. Add funds, then run it again.`;
       else if (e instanceof ApiError && e.code === "recipient_unavailable") message = "One or more employees' accounts can't receive money right now.";
       else if (e instanceof ApiError && e.code === "idempotency_mismatch") message = "This file was already used with different contents. Choose the file again.";
@@ -65,6 +71,7 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
   return (
     <section>
       <div className="head"><h1>Benefits</h1></div>
+      {program.data && <ProgramCard program={program.data.p} onChangeMode={() => setPickMode("mode")} onEditSchedule={() => setPickMode("schedule")} />}
 
       <input ref={input} type="file" accept=".csv,text/csv" className="sr-only" aria-label="CSV file" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
       {error && !file && <p className="error" role="alert">{error}</p>}
@@ -98,7 +105,7 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
             <div className="ready-run">
               <button type="button" className="run-btn" disabled={!allOk} onClick={() => setConfirm(true)}>
                 <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                Run Batch
+                Run Benefits
               </button>
             </div>
           </div>
@@ -118,18 +125,19 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
 
       <h2 className="section">History</h2>
       <div className="card flush">
-        {batches.failed && !batches.data ? <p className="error pad" role="alert">Couldn't load batches. <button className="link" onClick={batches.retry}>Try Again</button></p>
-          : !batches.data ? <p className="muted pad" role="status">Loading…</p>
-          : batches.data.length === 0 ? <p className="muted pad">No batches yet.</p>
+        {runs.failed && !runs.data ? <p className="error pad" role="alert">Couldn't load the run history. <button className="link" onClick={runs.retry}>Try Again</button></p>
+          : !runs.data ? <p className="muted pad" role="status">Loading…</p>
+          : runs.data.length === 0 ? <p className="muted pad">No runs yet.</p>
           : (
             <table>
-              <thead><tr><th scope="col">Date</th><th scope="col" className="num">Employees</th><th scope="col" className="num">Total</th><th scope="col" className="num">Held</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">Date</th><th scope="col">Source</th><th scope="col">Status</th><th scope="col" className="num">Employees</th><th scope="col" className="num">Total</th><th scope="col" className="num">Held</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
-                {batches.data.map((b) => (
+                {runs.data.map((b) => (
                   <tr key={b.id}>
                     <th scope="row">{new Date(b.created_at).toLocaleString()}</th>
+                    <td>{SOURCE[b.source]}</td><td><span className={`pill ${b.status === "credited" ? "available" : b.status === "missed" ? "closed" : "pending"}`}>{STATUS[b.status]}</span></td>
                     <td className="num">{int(b.rows)}</td><td className="num">{money(b.total)}</td><td className="num">{money(b.held)}</td>
-                    <td className="actions"><button type="button" className="ghost" onClick={() => openBatch(b.id)}>Details</button></td>
+                    <td className="actions"><button type="button" className="ghost" onClick={() => openRun(b.id)}>Details</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -138,7 +146,7 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
       </div>
 
       {confirm && file && (
-        <Modal title={busy ? "Running Batch" : "Run Batch"} onClose={() => setConfirm(false)} locked={busy}>
+        <Modal title={busy ? "Running Benefits" : "Run Benefits"} onClose={() => setConfirm(false)} locked={busy}>
           {busy ? (
             <div className="running" role="status" aria-live="polite">
               <span className="spinner" aria-hidden />
@@ -156,13 +164,15 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
           )}
         </Modal>
       )}
+      {pick_ === "mode" && <ModePicker api={api} current={program.data?.p ?? null} onClose={() => setPickMode(null)} onSaved={() => { setPickMode(null); program.retry(); }} onError={onError} />}
+      {pick_ === "schedule" && <SchedulePicker api={api} current={program.data?.p ?? null} onClose={() => setPickMode(null)} onSaved={() => { setPickMode(null); program.retry(); }} onError={onError} />}
       {report && (
-        <Modal title={report.kind === "success" ? "Batch Complete" : "Batch Not Run"} onClose={() => setReport(null)}>
+        <Modal title={report.kind === "success" ? "Run Complete" : "Benefits Not Run"} onClose={() => setReport(null)}>
           {report.kind === "success" ? (
             <>
-              <p className="done"><span className="done-mark" aria-hidden>✓</span>{money(report.result.batch.total)} was credited to {int(report.result.batch.rows)} employee{report.result.batch.rows === 1 ? "" : "s"}.</p>
+              <p className="done"><span className="done-mark" aria-hidden>✓</span>{money(report.result.run.total)} was credited to {int(report.result.run.rows)} employee{report.result.run.rows === 1 ? "" : "s"}.</p>
               <div className="modal-actions">
-                <button type="button" onClick={() => { const id = report.result.batch.id; setReport(null); openBatch(id); }}>View Batch</button>
+                <button type="button" onClick={() => { const id = report.result.run.id; setReport(null); openRun(id); }}>View Run</button>
                 <button type="button" className="ghost" onClick={() => setReport(null)}>Close</button>
               </div>
             </>

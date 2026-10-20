@@ -23,7 +23,7 @@ const call = async (m: string, p: string, o: { body?: unknown; token?: string; k
 const sign = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { type, name, email, password: "correct horse battery" } })).json;
 const bal = async (id: string) => Number((await q("select balance from balances where account_id=$1", [id]))[0].balance);
 const fund = (p: any, amount: number, key: string) => call("POST", "/v1/sandbox/fundings", { token: p.session_token, key, body: { amount } });
-const batch = (p: any, rows: any[], key: string) => call("POST", "/v1/org/credit-batches", { token: p.session_token, key, body: { rows } });
+const batch = (p: any, rows: any[], key: string) => call("POST", "/v1/org/benefit-runs", { token: p.session_token, key, body: { rows } });
 const reconciled = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation;
 const tokenFrom = (m: { text: string }) => decodeURIComponent(m.text.match(/claim\?token=([^\s]+)/)![1]);
 const escrowNet = async () => Number((await q("select coalesce(sum(case direction when 'credit' then amount else -amount end),0)::bigint n from ledger_entries where bucket='employee_escrow'"))[0].n);
@@ -48,7 +48,7 @@ const rows = (extra: any[] = []) => [
 
 // ---- validation and refusals
 eq("batch: needs an idempotency key and valid rows", [
-  (await call("POST", "/v1/org/credit-batches", { token: acme.session_token, body: { rows: rows() } })).status,
+  (await call("POST", "/v1/org/benefit-runs", { token: acme.session_token, body: { rows: rows() } })).status,
   (await batch(acme, [], "v1")).status,
   (await batch(acme, [{ employee_id: "bad id!", name: "X", email: "x@example.com", amount: 100 }], "v2")).status,
   (await batch(acme, [{ employee_id: "E9", name: "X", email: "nope", amount: 100 }], "v3")).status,
@@ -56,26 +56,27 @@ eq("batch: needs an idempotency key and valid rows", [
   (await batch(acme, [{ employee_id: "E9", name: "X", email: "x@example.com", amount: 10_000_001 }], "v5")).status], [400, 400, 400, 400, 400, 400]);
 eq("batch: the same employee_id twice in one file is refused", (await batch(acme, [...rows(), { employee_id: "E001", name: "Dup", email: "d@example.com", amount: 1 }], "dup")).json.error, "duplicate_employee_id");
 const big = await batch(acme, [{ employee_id: "B1", name: "Big", email: "big@example.com", amount: 6_000_000 }, { employee_id: "B2", name: "Big", email: "big2@example.com", amount: 6_000_000 }], "big");
-eq("batch: a batch the wallet cannot cover is refused whole, nothing is written", [big.status, big.json.error, big.json.required, big.json.available, await bal(acme.account_id), (await q("select (select count(*) from employees)::int e, (select count(*) from credit_batches)::int b, (select count(*) from transactions where type='allocate')::int t"))[0], mails.length], [422, "insufficient_balance", 12000000, 100000, 100000, { e: 0, b: 0, t: 0 }, 0]);
+eq("batch: a batch the wallet cannot cover is refused whole, nothing is written", [big.status, big.json.error, big.json.required, big.json.available, await bal(acme.account_id), (await q("select (select count(*) from employees)::int e, (select count(*) from benefit_runs)::int b, (select count(*) from transactions where type='allocate')::int t"))[0], mails.length], [422, "insufficient_balance", 12000000, 100000, 100000, { e: 0, b: 0, t: 0 }, 0]);
 
 // ---- a first batch: two people with no account
 const b1 = await batch(acme, rows(), "b-1");
-eq("batch: new employees are credited into escrow, the wallet is debited", [b1.status, b1.json.batch.total, b1.json.batch.held, b1.json.batch.sent, await bal(acme.account_id), await held(), await escrowNet()], [201, 7500, 7500, 0, 92500, 7500, 7500]);
+eq("batch: new employees are credited into escrow, the wallet is debited", [b1.status, b1.json.run.total, b1.json.run.held, b1.json.run.sent, await bal(acme.account_id), await held(), await escrowNet()], [201, 7500, 7500, 0, 92500, 7500, 7500]);
 eq("batch: the ledger balances and reconciliation holds", [(await reconciled()).ledger_balanced, (await reconciled()).balances_match_ledger, (await reconciled()).escrow_matches_employees], [true, true, true]);
 eq("batch: each held credit is an allocate transaction with no destination", (await q("select type, to_account_id, amount::int a from transactions where type='allocate' order by amount"))
   .map((r) => [r.type, r.to_account_id, r.a]), [["allocate", null, 2500], ["allocate", null, 5000]]);
 eq("batch: both people are emailed a claim link with the amount", [mails.length, mails.map((m) => m.to).sort(), mails[0].text.includes("Acme Corp"), /claim\?token=/.test(mails[0].text)], [2, ["eve@example.com", "sam@example.com"], true, true]);
 eq("batch: tokens are stored only as hashes", (await q("select count(*)::int n from employees where claim_token_hash = $1", [tokenFrom(mails[0])]))[0].n, 0);
 const replay = await batch(acme, rows(), "b-1");
-eq("batch: a retry with the same key replays (200), debits and emails nothing more", [replay.status, replay.json.batch.id === b1.json.batch.id, await bal(acme.account_id), mails.length], [200, true, 92500, 2]);
+eq("batch: a retry with the same key replays (200), debits and emails nothing more", [replay.status, replay.json.run.id === b1.json.run.id, await bal(acme.account_id), mails.length], [200, true, 92500, 2]);
+eq("runs: a portal CSV is a benefit run with source csv, credited, and the history lists it", [(await q("select source, status from benefit_runs where idempotency_key = 'b-1'"))[0], (await call("GET", "/v1/org/benefit-runs", { token: acme.session_token })).json.runs[0].source], [{ source: "csv", status: "credited" }, "csv"]);
 eq("batch: the same key with different rows is a 409", (await batch(acme, [rows()[0]], "b-1")).json.error, "idempotency_mismatch");
 
 // ---- overview and lists
 const ov = (await call("GET", "/v1/org/overview", { token: acme.session_token })).json;
-eq("overview: balance, employee counts, held total and the last batch", [ov.balance, ov.employees, ov.held, ov.last_batch.total], [92500, { total: 2, claimed: 0, unclaimed: 2 }, 7500, 7500]);
+eq("overview: balance, employee counts, held total and the last batch", [ov.balance, ov.employees, ov.held, ov.last_run.total], [92500, { total: 2, claimed: 0, unclaimed: 2 }, 7500, 7500]);
 const list = (await call("GET", "/v1/org/employees?status=unclaimed&q=sam", { token: acme.session_token })).json.employees;
 eq("employees: list with filters shows the held balance", list.map((e: any) => [e.employee_id, e.balance, e.claimed]), [["E002", 5000, false]]);
-const det = (await call("GET", `/v1/org/credit-batches/${b1.json.batch.id}`, { token: acme.session_token })).json;
+const det = (await call("GET", `/v1/org/benefit-runs/${b1.json.run.id}`, { token: acme.session_token })).json;
 eq("batch detail: one row per employee with its mode and claim state, summarised", [det.rows.map((r: any) => [r.employee_id, r.amount, r.mode, r.claimed, r.balance]), det.summary], [[["E001", 2500, "held", false, 2500], ["E002", 5000, "held", false, 5000]], { claimed: 0, unclaimed: 2, still_held: 7500 }]);
 
 // ---- claiming
@@ -88,12 +89,12 @@ eq("claim: the employee is linked, the token is used up, the claim is a transact
 eq("claim: the token cannot be used twice", (await call("POST", "/v1/employee/claims", { token: cus.session_token, body: { token: eveToken } })).status, 404);
 eq("claim: the ledger still balances and escrow matches", [(await reconciled()).ledger_balanced, (await reconciled()).balances_match_ledger, (await reconciled()).escrow_matches_employees], [true, true, true]);
 
-const det2 = (await call("GET", `/v1/org/credit-batches/${b1.json.batch.id}`, { token: acme.session_token })).json;
+const det2 = (await call("GET", `/v1/org/benefit-runs/${b1.json.run.id}`, { token: acme.session_token })).json;
 eq("batch detail: reflects who has claimed since", [det2.rows.map((r: any) => [r.employee_id, r.claimed, r.balance]), det2.summary], [[["E001", true, 0], ["E002", false, 5000]], { claimed: 1, unclaimed: 1, still_held: 5000 }]);
 
 // ---- the next batch pays a claimed employee directly
 const b2 = await batch(acme, [{ employee_id: "E001", name: "Eve Renamed", email: "eve2@example.com", amount: 1000 }, { employee_id: "E003", name: "New Three", email: "new3@example.com", amount: 700 }], "b-2");
-eq("batch 2: a claimed employee gets a normal send, a new one is held", [b2.status, b2.json.batch.sent, b2.json.batch.held, await bal(cus.account_id), await bal(acme.account_id), await held()], [201, 1000, 700, 3500, 90800, 5700]);
+eq("batch 2: a claimed employee gets a normal send, a new one is held", [b2.status, b2.json.run.sent, b2.json.run.held, await bal(cus.account_id), await bal(acme.account_id), await held()], [201, 1000, 700, 3500, 90800, 5700]);
 eq("batch 2: name and email follow the CSV, employee_id stays", (await q("select name, email from employees where employee_id='E001'"))[0], { name: "Eve Renamed", email: "eve2@example.com" });
 eq("batch 2: a send transaction links the two wallets; only the new person is emailed", [(await q("select count(*)::int n from transactions where type='send' and to_account_id=$1", [cus.account_id]))[0].n, mails.length, mails[2].to], [1, 3, "new3@example.com"]);
 eq("batch 2: totals reconcile (escrow equals what employees hold)", [await escrowNet(), await held(), (await reconciled()).balances_match_ledger], [5700, 5700, true]);

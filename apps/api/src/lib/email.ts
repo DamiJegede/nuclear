@@ -40,3 +40,17 @@ export const creditReminderEmail = (name: string, org: string, amountCents: bigi
   subject: `Your ${usd(amountCents)} from ${org} is waiting on Nuclear`,
   text: `Hello ${name},\n\nYou still have ${usd(amountCents)} from ${org} waiting for you on Nuclear. It never expires, and you can spend it at every participating Nuclear merchant.\n\nClaim it by signing in or signing up with this link:\n${link}\n\nThe Nuclear team`,
 });
+
+const dateLabel = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+
+/** To the organization, a few days before a scheduled payment its wallet cannot cover. */
+export const lowFundsEmail = (org: string, date: string, total: bigint, balance: bigint) => ({
+  subject: `Add funds before ${dateLabel(date)}: your scheduled benefits need ${usd(total)}`,
+  text: `Hello ${org},\n\nYour Fixed Benefits payment is scheduled for ${dateLabel(date)} and needs ${usd(total)}. Your Nuclear wallet holds ${usd(balance)}.\n\nAdd funds before then so every employee is paid on time. If the wallet is still short on the day, we try again each day for three days and then mark the payment missed.\n\nThe Nuclear team`,
+});
+
+/** To the organization, when a scheduled payment could not be made and the retries are over. */
+export const runMissedEmail = (org: string, date: string, total: bigint, reason: string) => ({
+  subject: `Your ${dateLabel(date)} benefits payment was missed`,
+  text: `Hello ${org},\n\nWe could not make your scheduled Fixed Benefits payment of ${usd(total)} for ${dateLabel(date)} (${reason}). Nobody was charged and no employee was credited.\n\nThe next scheduled payment is unchanged. If you still want to pay these benefits now, you can credit them from the Benefits page or the Benefits API.\n\nThe Nuclear team`,
+});

@@ -553,3 +553,18 @@ ul.err-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; line
 .creds .done-btn { margin-top: 4px; }
 html { scroll-behavior: smooth; }
 .intro + .intro { margin-top: -6px; }
+
+/* Benefit programs */
+.modal.wide { width: min(780px, 100%); }
+.mode-lead { margin: -4px 0 16px; }
+.mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 720px) { .mode-cards { grid-template-columns: 1fr; } }
+button.mode-card { display: grid; gap: 10px; align-content: start; text-align: left; padding: 22px; min-height: 190px; background: var(--bg); color: var(--text); border: 2px solid var(--line); border-radius: var(--radius); font-weight: 400; }
+button.mode-card:hover:not(:disabled) { border-color: var(--accent); }
+button.mode-card.on { border-color: var(--accent); }
+.mode-title { font-size: 19px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.mode-text { font-size: 14.5px; line-height: 1.6; color: var(--muted); }
+.program { margin-bottom: 20px; }
+.program .card-head h2 { display: flex; align-items: center; gap: 10px; }
+.program-line { margin: 8px 0 4px; font-size: 16px; }
+.program-ok { color: var(--good); margin: 6px 0 0; }

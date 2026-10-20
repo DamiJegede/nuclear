@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearCache } from "./cache";
-import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
+import { ApiError, createApi, type Program, signIn as realSignIn, signUp as realSignUp, type Account, type Api, type Session } from "./api";
 import { usePageTitle } from "./title";
 import { ApiPage } from "./views/ApiPage";
-import { BatchDetail } from "./views/BatchDetail";
+import { ModePicker } from "./views/Program";
+import { RunDetail } from "./views/RunDetail";
 import { Benefits } from "./views/Benefits";
 import { Employees } from "./views/Employees";
 import { Login } from "./views/Login";
@@ -15,7 +16,7 @@ const KEY = "nuclear.organization.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "employees" | "benefits" | "api" | "batch" | "profile";
+export type Page = "overview" | "employees" | "benefits" | "api" | "run" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
@@ -24,16 +25,16 @@ export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "api", label: "API", path: "/api" },
 ];
 const PROFILE_PATH = "/profile";
-const BATCH_PATH = /^\/(?:benefits|credits)\/([0-9a-fA-F-]{36})$/;   // /credits is the old address
+const RUN_PATH = /^\/(?:benefits|credits)\/([0-9a-fA-F-]{36})$/;   // /credits is the old address
 const pageFromPath = (path: string): Page => {
   const clean = path.replace(/\/+$/, "") || "/";
   if (clean === PROFILE_PATH) return "profile";
-  if (BATCH_PATH.test(clean)) return "batch";
+  if (RUN_PATH.test(clean)) return "run";
   if (clean === "/credits") return "benefits";
   return NAV.find((n) => n.path === clean)?.page ?? "overview";
 };
-const batchIdFromPath = (path: string): string | null => BATCH_PATH.exec(path.replace(/\/+$/, ""))?.[1] ?? null;
-const pathOf = (p: Page, batchId?: string) => (p === "profile" ? PROFILE_PATH : p === "batch" ? `/benefits/${batchId}` : NAV.find((n) => n.page === p)!.path);
+const runIdFromPath = (path: string): string | null => RUN_PATH.exec(path.replace(/\/+$/, ""))?.[1] ?? null;
+const pathOf = (p: Page, runId?: string) => (p === "profile" ? PROFILE_PATH : p === "run" ? `/benefits/${runId}` : NAV.find((n) => n.page === p)!.path);
 
 export function App({
   makeApi = createApi,
@@ -50,27 +51,30 @@ export function App({
   const [notice, setNotice] = useState<string | null>(null);
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
 
-  const [batchId, setBatchId] = useState<string | null>(() => batchIdFromPath(window.location.pathname));
+  const [runId, setRunId] = useState<string | null>(() => runIdFromPath(window.location.pathname));
   const setPage = useCallback((p: Page, replace = false, id?: string) => {
     const url = pathOf(p, id);
     if (window.location.pathname !== url) window.history[replace ? "replaceState" : "pushState"](null, "", url);
-    setBatchId(p === "batch" ? id ?? null : null);
+    setRunId(p === "run" ? id ?? null : null);
     setPageState(p);
   }, []);
   useEffect(() => {
-    const onPop = () => { setPageState(pageFromPath(window.location.pathname)); setBatchId(batchIdFromPath(window.location.pathname)); };
+    const onPop = () => { setPageState(pageFromPath(window.location.pathname)); setRunId(runIdFromPath(window.location.pathname)); };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const clear = useCallback((why?: string) => { clearCache(); writeToken(null); setToken(null); setAccount(null); setPage("overview", true); setNotice(why ?? null); }, [setPage]);
+  const clear = useCallback((why?: string) => { setMode(undefined); clearCache(); writeToken(null); setToken(null); setAccount(null); setPage("overview", true); setNotice(why ?? null); }, [setPage]);
   const onError = useCallback((e: unknown) => { if (e instanceof ApiError && e.status === 401) clear("Your session ended. Sign in again."); }, [clear]);
 
+  const [mode, setMode] = useState<Program | null | undefined>(undefined);       // undefined = not loaded yet
   const loadAccount = useCallback(async () => {
     if (!api) return;
     try { setAccount(await api.account()); } catch (e) { onError(e); }
   }, [api, onError]);
   useEffect(() => { if (api && !account) void loadAccount(); }, [api, account, loadAccount]);
+  // The first thing a new organization does: choose Fixed or Flexible Benefits. Asked until it has chosen.
+  useEffect(() => { if (api && account?.type === "O" && account.status === "active" && mode === undefined) api.program().then(setMode, (e) => onError(e)); }, [api, account, mode, onError]);
 
   const signOut = useCallback(async () => { try { await api?.logout(); } catch { /* the token is dropped locally either way */ } clear(); }, [api, clear]);
   usePageTitle(undefined);
@@ -92,7 +96,7 @@ export function App({
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Organization</span></div>
         <nav aria-label="Sections">
           {NAV.map((n) => (
-            <a key={n.page} href={n.path} className={page === n.page || (n.page === "benefits" && page === "batch") ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}>{n.label}</a>
+            <a key={n.page} href={n.path} className={page === n.page || (n.page === "benefits" && page === "run") ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}>{n.label}</a>
           ))}
         </nav>
         <div className="who">
@@ -100,11 +104,12 @@ export function App({
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
       </header>
+      {mode && !mode.chosen && <ModePicker api={api} current={mode} required onClose={() => undefined} onSaved={(p) => { clearCache(); setMode(p); }} onError={onError} />}
       <main>
         {page === "overview" && <Overview api={api} account={account} onError={onError} go={(p) => setPage(p as Page)} />}
         {page === "employees" && <Employees api={api} onError={onError} />}
-        {page === "benefits" && <Benefits api={api} onError={onError} openBatch={(id) => setPage("batch", false, id)} />}
-        {page === "batch" && batchId && <BatchDetail api={api} id={batchId} onError={onError} back={() => setPage("benefits")} />}
+        {page === "benefits" && <Benefits api={api} onError={onError} openRun={(id) => setPage("run", false, id)} />}
+        {page === "run" && runId && <RunDetail api={api} id={runId} onError={onError} back={() => setPage("benefits")} />}
         {page === "api" && <ApiPage api={api} onError={onError} />}
         {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}
       </main>

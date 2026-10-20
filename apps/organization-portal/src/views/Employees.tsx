@@ -3,6 +3,7 @@ import { ApiError, type Api, type Employee } from "../api";
 import { money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
+import { EditFixedBenefit, UploadFixedBenefits } from "./FixedBenefits";
 import { Modal } from "./Modal";
 
 type Filter = "" | "claimed" | "unclaimed";
@@ -13,6 +14,10 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Filter>("");
   const { data, failed, retry } = useList<Employee[]>(useCallback(() => api.employees(q.trim(), status), [api, q, status]), onError, `employees:${status}:${q.trim()}`);
+  const program = useList(useCallback(async () => ({ p: await api.program() }), [api]), onError, "program");
+  const fixedMode = program.data?.p.mode === "fixed";
+  const [uploading, setUploading] = useState(false);
+  const [editing, setEditing] = useState<Employee | null>(null);
   const [remove, setRemove] = useState<Employee | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +34,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
 
   return (
     <section>
-      <div className="head"><h1>Employees</h1></div>
+      <div className="head"><h1>Employees</h1>{fixedMode && <div className="head-actions"><button type="button" onClick={() => setUploading(true)}>Upload Fixed Benefits</button></div>}</div>
       <div className="filters">
         <input type="search" aria-label="Search employees" placeholder="Search name, email or ID" value={q} maxLength={80} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as Filter)}>
@@ -42,7 +47,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
           : data.length === 0 ? <p className="muted pad">{q || status ? "No employees match." : "No employees yet. Upload a benefits CSV to add them."}</p>
           : (
             <table>
-              <thead><tr><th scope="col">Name</th><th scope="col">Employee ID</th><th scope="col">Email</th><th scope="col">Status</th><th scope="col" className="num">Held</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">Name</th><th scope="col">Employee ID</th><th scope="col">Email</th><th scope="col">Status</th>{fixedMode && <th scope="col" className="num">Fixed Benefit</th>}<th scope="col" className="num">Held</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {data.map((e) => (
                   <tr key={e.id}>
@@ -50,6 +55,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
                     <td>{e.employee_id}</td>
                     <td>{e.email}</td>
                     <td>{e.claimed ? "Claimed" : "Not claimed"}</td>
+                    {fixedMode && <td className="num">{e.fixed_benefit ? money(e.fixed_benefit) : <span className="dim">—</span>} <button type="button" className="link" aria-label={`Edit fixed benefit for ${e.name}`} onClick={() => setEditing(e)}>Edit</button></td>}
                     <td className="num">{e.claimed ? "—" : money(e.balance)}</td>
                     <td className="actions"><button type="button" className="ghost" onClick={() => { setError(null); setRemove(e); }}>Remove</button></td>
                   </tr>
@@ -58,6 +64,8 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
             </table>
           )}
       </div>
+      {uploading && <UploadFixedBenefits api={api} onClose={() => setUploading(false)} onDone={() => { setUploading(false); retry(); program.retry(); }} onError={onError} />}
+      {editing && <EditFixedBenefit api={api} employee={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); retry(); program.retry(); }} onError={onError} />}
       {remove && (
         <Modal title="Remove Employee" onClose={() => setRemove(null)} locked={busy}>
           <p>Remove <strong>{remove.name}</strong>? They disappear from this list and stop getting reminders. Adding their employee ID to a later CSV brings them back.</p>
