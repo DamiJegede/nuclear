@@ -1,12 +1,10 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { ApiError, type Account, type Api, type Device, type OrgDocument, type OrgProfile } from "../api";
-import { drop } from "../cache";
 import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 import { PhotoCrop } from "./PhotoCrop";
-import { RefreshButton } from "./RefreshButton";
 
 /** A card whose fields are plain text until "Edit" (top right) is pressed; then it shows input borders and its Save button. */
 function EditCard({ title, editing, onToggle, children }: { title: string; editing: boolean; onToggle: () => void; children: ReactNode }) {
@@ -27,17 +25,15 @@ const Fact = ({ label, children }: { label: string; children: ReactNode }) => (
 /** The organization's own profile and security: picture, legal details and address, documents, and the sessions signed in to this account. */
 export function Profile({ api, account, onChanged, onError }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void }) {
   usePageTitle("Profile");
-  const [n, setN] = useState(0);                       // Refresh rebuilds the cards so each asks the API again
-  const refresh = () => { drop("documents", "profile", "devices"); onChanged(); setN((v) => v + 1); };
   return (
     <section>
-      <div className="head"><h1>Profile</h1><div className="head-actions"><RefreshButton onClick={refresh} /></div></div>
-      <div className="stack" key={n}>
+      <div className="head"><h1>Profile</h1></div>
+      <div className="stack">
         <Identity api={api} account={account} onChanged={onChanged} onError={onError} />
         <OrganizationDetails api={api} onError={onError} />
         <Documents api={api} onError={onError} />
       </div>
-      <Sessions key={n} api={api} onError={onError} />
+      <Sessions api={api} onError={onError} />
     </section>
   );
 }

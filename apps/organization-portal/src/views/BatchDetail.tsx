@@ -5,7 +5,6 @@ import { filterRows, reportCsv, type ReportFilter } from "../report";
 import { usePageTitle } from "../title";
 import { downloadText } from "../token";
 import { useList } from "../useList";
-import { RefreshButton } from "./RefreshButton";
 
 const LABEL: Record<ReportFilter, string> = { all: "All", claimed: "Claimed", unclaimed: "Not Claimed" };
 
@@ -18,7 +17,7 @@ export function BatchDetail({ api, id, onError, back }: { api: Api; id: string; 
   const header = (
     <>
       <p className="crumb"><a href="/benefits" onClick={(e) => { e.preventDefault(); back(); }}>← Benefits</a></p>
-      <div className="head"><h1>Batch</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
+      <div className="head"><h1>Batch</h1></div>
     </>
   );
   if (!data) return <section>{header}{failed ? <p className="error" role="alert">Couldn't load this batch. <button className="link" onClick={retry}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;

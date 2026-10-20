@@ -4,7 +4,6 @@ import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
 import { CopyButton } from "./CopyButton";
 import { Modal } from "./Modal";
-import { RefreshButton } from "./RefreshButton";
 import { SecretPanel } from "./Secret";
 
 const BASE = `${API_URL.replace(/\/$/, "")}/v1/benefits-api`;
@@ -30,6 +29,20 @@ const SNIP_GET_RESPONSE = `{ "employees": [
 ] }`;
 const SNIP_BALANCE = `curl ${BASE}/balance -H "Authorization: Bearer $NUCLEAR_KEY"`;
 const SNIP_BALANCE_RESPONSE = `{ "currency": "USD", "balance": 991500, "held_for_unclaimed": 6000, "employees": 3 }`;
+const SNIP_EMPLOYEES_RESPONSE = `{ "employees": [
+  { "employee_id": "E001", "result": "created" },
+  { "employee_id": "E002", "result": "updated" }   // or "reactivated"
+] }`;
+const SNIP_REMOVE_RESPONSE = `{ "employees": [ { "employee_id": "E002", "result": "removed" } ] }   // or "already_removed"`;
+const DOC_LINKS = [
+  { id: "doc-basics", label: "Basics" },
+  { id: "doc-create", label: "POST /employees" },
+  { id: "doc-get", label: "POST /employees/get" },
+  { id: "doc-credits", label: "POST /credits" },
+  { id: "doc-remove", label: "POST /employees/remove" },
+  { id: "doc-balance", label: "GET /balance" },
+  { id: "doc-errors", label: "Errors" },
+];
 const SNIP_REMOVE = `curl -X POST ${BASE}/employees/remove \\
   -H "Authorization: Bearer $NUCLEAR_KEY" -H "Content-Type: application/json" \\
   -d '{"employee_ids":["E002"]}'`;
@@ -80,7 +93,7 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
 
   return (
     <section>
-      <div className="head"><h1>API</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
+      <div className="head"><h1>API</h1></div>
 
       <div className="card">
         <h2>API Key</h2>
@@ -105,20 +118,59 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
               <div className="row key-actions"><button type="button" onClick={() => { setError(null); setConfirm("generate"); }}>Generate API Key</button></div>
             </>
           )}
-        <p className="hint">The key lets your systems create, remove and credit employees. It is shown once, when you generate it; keep it secret and never put it in a browser or an app.</p>
+        <p className="hint key-note">The key lets your systems create, remove and credit employees.<br />Keep it secret and NEVER put it in a browser or an app.</p>
       </div>
 
       <h2 className="section">Documentation</h2>
       <div className="docs-grid">
+        <nav className="docs-nav" aria-label="Documentation">
+          {DOC_LINKS.map((l) => <a key={l.id} href={`#${l.id}`}>{l.label}</a>)}
+        </nav>
+
         <div className="docs-col">
-          <div className="card docs">
+          <div className="card docs" id="doc-basics" aria-label="Basics">
             <h2>Basics</h2>
             <p>Base URL <code>{BASE}</code></p>
             <p>Send your key as <code>Authorization: Bearer nk_org_…</code>. Bodies are JSON. Amounts are whole <strong>cents</strong> (<code>5000</code> is $50.00).</p>
-            <p>Every call that changes or reads employees takes an <strong>array</strong>, so one employee or a whole batch is the same call (up to 2,000). Calls that change things are <strong>all or nothing</strong>: if one entry is wrong, nothing happens.</p>
-            <p>Up to 120 requests a minute per key.</p>
+            <p>Calls that change or read employees take an <strong>array</strong>, so one employee or a whole batch is the same call (up to 2,000). Calls that change things are <strong>all or nothing</strong>: if one entry is wrong, nothing happens. Up to 120 requests a minute per key.</p>
           </div>
-          <div className="card docs">
+
+          <div className="card docs" id="doc-create" aria-label="Create or update employees">
+            <h2><span className="verb">POST</span> /employees</h2>
+            <p>Creates employees, or updates the name and email of ones that exist (<code>employee_id</code> never changes; letters and numbers only). Nothing is credited and nobody is emailed. A removed employee becomes active again.</p>
+            <Snippet text={SNIP_EMPLOYEES} />
+            <Snippet text={SNIP_EMPLOYEES_RESPONSE} />
+          </div>
+
+          <div className="card docs" id="doc-get" aria-label="Get employees">
+            <h2><span className="verb">POST</span> /employees/get</h2>
+            <p>Looks employees up by <code>employee_id</code>: an array in, an array back in the same order. An unknown id comes back as <code>found: false</code>. <code>claimed</code> says whether the person has joined Nuclear; <code>held</code> is the credit (in cents) still waiting for them to claim it.</p>
+            <Snippet text={SNIP_GET} />
+            <Snippet text={SNIP_GET_RESPONSE} />
+          </div>
+
+          <div className="card docs" id="doc-credits" aria-label="Credit benefits">
+            <h2><span className="verb">POST</span> /credits</h2>
+            <p>Credits each employee. <code>name</code> and <code>email</code> are only needed for someone you haven't created or credited before. Send an <code>Idempotency-Key</code> header: repeating the same call with the same key returns the first result and credits nothing twice. Your balance must cover the whole call. Employees who have joined Nuclear get the money in their Benefits wallet; everyone else is emailed a link to claim it, and it is held for them until they do (it never expires).</p>
+            <Snippet text={SNIP_CREDITS} />
+            <Snippet text={SNIP_CREDITS_RESPONSE} />
+          </div>
+
+          <div className="card docs" id="doc-remove" aria-label="Remove employees">
+            <h2><span className="verb">POST</span> /employees/remove</h2>
+            <p>Hides employees. Refused for an unknown <code>employee_id</code> (404) and for anyone who still has a credit held waiting to be claimed (409, they must claim first). Removing someone twice is fine.</p>
+            <Snippet text={SNIP_REMOVE} />
+            <Snippet text={SNIP_REMOVE_RESPONSE} />
+          </div>
+
+          <div className="card docs" id="doc-balance" aria-label="Get balance">
+            <h2><span className="verb get">GET</span> /balance</h2>
+            <p>Your wallet: <code>balance</code> is what is available to credit (cents), <code>held_for_unclaimed</code> is money already set aside for employees who haven't claimed yet, and <code>employees</code> counts your active employees.</p>
+            <Snippet text={SNIP_BALANCE} />
+            <Snippet text={SNIP_BALANCE_RESPONSE} />
+          </div>
+
+          <div className="card docs" id="doc-errors" aria-label="Errors">
             <h2>Errors</h2>
             <p>Errors are JSON like <code>{"{ \"error\": \"insufficient_balance\", \"required\": 7500, \"available\": 2000 }"}</code>.</p>
             <ul className="err-list">
@@ -134,43 +186,6 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
               <li><code>404 employee_not_found</code></li>
               <li><code>429 rate_limited</code> try again after <code>retry_after</code> seconds</li>
             </ul>
-          </div>
-        </div>
-
-        <div className="docs-col">
-          <div className="card docs" aria-label="Create or update employees">
-            <h2><span className="verb">POST</span> /employees</h2>
-            <p>Creates employees, or updates the name and email of ones that exist (<code>employee_id</code> never changes; letters and numbers only). Nothing is credited and nobody is emailed. A removed employee becomes active again.</p>
-            <Snippet text={SNIP_EMPLOYEES} />
-            <p>Answer: <code>{"{ \"employees\": [ { \"employee_id\": \"E001\", \"result\": \"created\" | \"updated\" | \"reactivated\" } ] }"}</code></p>
-          </div>
-
-          <div className="card docs" aria-label="Get employees">
-            <h2><span className="verb">POST</span> /employees/get</h2>
-            <p>Looks employees up by <code>employee_id</code>: an array in, an array back in the same order. An unknown id comes back as <code>found: false</code>. <code>claimed</code> says whether the person has joined Nuclear; <code>held</code> is the credit (in cents) still waiting for them to claim it.</p>
-            <Snippet text={SNIP_GET} />
-            <Snippet text={SNIP_GET_RESPONSE} />
-          </div>
-
-          <div className="card docs" aria-label="Credit benefits">
-            <h2><span className="verb">POST</span> /credits</h2>
-            <p>Credits each employee. <code>name</code> and <code>email</code> are only needed for someone you haven't created or credited before. Send an <code>Idempotency-Key</code> header: repeating the same call with the same key returns the first result and credits nothing twice. Your balance must cover the whole call. Employees who have joined Nuclear get the money in their Benefits wallet; everyone else is emailed a link to claim it, and it is held for them until they do (it never expires).</p>
-            <Snippet text={SNIP_CREDITS} />
-            <Snippet text={SNIP_CREDITS_RESPONSE} />
-          </div>
-
-          <div className="card docs" aria-label="Remove employees">
-            <h2><span className="verb">POST</span> /employees/remove</h2>
-            <p>Hides employees. Refused for an unknown <code>employee_id</code> (404) and for anyone who still has a credit held waiting to be claimed (409, they must claim first). Removing someone twice is fine.</p>
-            <Snippet text={SNIP_REMOVE} />
-            <p>Answer: <code>{"{ \"employees\": [ { \"employee_id\": \"E002\", \"result\": \"removed\" | \"already_removed\" } ] }"}</code></p>
-          </div>
-
-          <div className="card docs" aria-label="Get balance">
-            <h2><span className="verb get">GET</span> /balance</h2>
-            <p>Your wallet: <code>balance</code> is what is available to credit (cents), <code>held_for_unclaimed</code> is money already set aside for employees who haven't claimed yet, and <code>employees</code> counts your active employees.</p>
-            <Snippet text={SNIP_BALANCE} />
-            <Snippet text={SNIP_BALANCE_RESPONSE} />
           </div>
         </div>
       </div>

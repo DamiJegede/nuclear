@@ -531,14 +531,24 @@ button.run-btn:disabled { background: #16a34a; }
 .docs p { margin: 6px 0 10px; line-height: 1.6; }
 .docs code { font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
 .snippet { position: relative; margin: 8px 0 12px; }
-.snippet pre { margin: 0; padding: 14px 16px; padding-right: 74px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.snippet pre { margin: 0; padding: 52px 16px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
 .snippet pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.55; white-space: pre; }
 .snippet button { position: absolute; top: 8px; right: 8px; }
-.intro { margin: 0 0 18px; line-height: 1.6; max-width: 70ch; }
-.docs-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
-.docs-col { display: grid; gap: 16px; }
-@media (max-width: 900px) { .docs-grid { grid-template-columns: 1fr; } }
+.intro { margin: 0 0 18px; line-height: 1.6; }
+.key-note { line-height: 1.7; }
+.docs-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 28px; align-items: start; }
+.docs-nav { position: sticky; top: 84px; display: grid; gap: 2px; }
+.docs-nav a { padding: 6px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.docs-nav a:hover { color: var(--text); background: var(--surface); }
+.docs-col { display: grid; gap: 16px; min-width: 0; }
+.docs { min-width: 0; scroll-margin-top: 84px; }
+@media (max-width: 900px) { .docs-grid { grid-template-columns: 1fr; } .docs-nav { position: static; grid-auto-flow: column; overflow-x: auto; } }
 .docs h2 { text-transform: none; letter-spacing: 0; color: var(--text); font-size: 16px; margin: 0 0 10px; }
+.docs p { overflow-wrap: anywhere; }
+.docs code { overflow-wrap: anywhere; }
 .verb { display: inline-block; margin-right: 8px; padding: 2px 8px; border-radius: 6px; font-size: 12px; letter-spacing: 0.04em; background: var(--good-bg); color: var(--good); }
 .verb.get { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
 ul.err-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.5; }
+.creds .saved-check { margin: 18px 0 14px; }
+.creds .done-btn { margin-top: 4px; }
+html { scroll-behavior: smooth; }

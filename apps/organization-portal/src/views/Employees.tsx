@@ -4,7 +4,6 @@ import { money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
 import { Modal } from "./Modal";
-import { RefreshButton } from "./RefreshButton";
 
 type Filter = "" | "claimed" | "unclaimed";
 
@@ -30,7 +29,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
 
   return (
     <section>
-      <div className="head"><h1>Employees</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
+      <div className="head"><h1>Employees</h1></div>
       <div className="filters">
         <input type="search" aria-label="Search employees" placeholder="Search name, email or ID" value={q} maxLength={80} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as Filter)}>

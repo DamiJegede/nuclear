@@ -311,6 +311,10 @@ describe("organization portal", () => {
     expect(once).toHaveTextContent("only time");
     expect(once).not.toHaveTextContent("nk_org_TESTTOKEN9xYz");               // masked
     expect(within(once).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    await user.click(within(once).getByRole("button", { name: "Reveal" }));      // the person can reveal it while it is on screen
+    expect(once).toHaveTextContent("nk_org_TESTTOKEN9xYz");
+    await user.click(within(once).getByRole("button", { name: "Hide" }));
+    expect(once).not.toHaveTextContent("nk_org_TESTTOKEN9xYz");
     expect(within(once).getByRole("button", { name: "Download" })).toBeInTheDocument();
     expect(within(once).getByRole("button", { name: "Done" })).toBeDisabled();
     await user.click(within(once).getByLabelText("I have saved it"));
@@ -326,6 +330,10 @@ describe("organization portal", () => {
     expect(await screen.findByText("nk_org_••••••••abcd")).toBeInTheDocument();
     expect(screen.getByText(/Use the Benefits API to grant benefits to your employees directly from/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Basics" })).toBeInTheDocument();
+    const links = within(screen.getByRole("navigation", { name: "Documentation" })).getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual(["Basics", "POST /employees", "POST /employees/get", "POST /credits", "POST /employees/remove", "GET /balance", "Errors"]);
+    for (const l of links) expect(document.querySelector(l.getAttribute("href")!)).not.toBeNull();    // each link jumps to a card
+    expect(screen.getByText(/Keep it secret and NEVER put it in a browser or an app/)).toBeInTheDocument();
     for (const card of ["Create or update employees", "Get employees", "Credit benefits", "Remove employees", "Get balance"]) expect(document.querySelector(`[aria-label="${card}"]`)).not.toBeNull();
     expect(screen.getAllByText(/Idempotency-Key/).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Revoke Key" }));
@@ -333,6 +341,12 @@ describe("organization portal", () => {
     await user.click(within(screen.getByRole("dialog", { name: "Revoke API Key" })).getByRole("button", { name: "Confirm Revoke" }));
     await waitFor(() => expect(api.revokeApiKey).toHaveBeenCalled());
     expect(await screen.findByText("No key yet.")).toBeInTheDocument();
+  });
+
+  it("has no refresh button on any page", async () => {
+    await open(fakeApi(), "/employees");
+    await screen.findByText("Sam Two");
+    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
   });
 
   it("signs out when the session ends", async () => {

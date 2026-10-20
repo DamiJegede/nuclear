@@ -6,7 +6,6 @@ import { usePageTitle } from "../title";
 import { useList } from "../useList";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
-import { RefreshButton } from "./RefreshButton";
 
 /** The organization at a glance: wallet, employees, money held for people who have not claimed yet, and the last batch. */
 export function Overview({ api, account, onError, go }: { api: Api; account: Account; onError: (e: unknown) => void; go: (page: string) => void }) {
@@ -20,7 +19,7 @@ export function Overview({ api, account, onError, go }: { api: Api; account: Acc
 
   return (
     <section>
-      <div className="head"><h1>Overview</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
+      <div className="head"><h1>Overview</h1></div>
       <div className="grid three">
         <article className="card linkcard profile-tile" aria-label="Organization">
           <Avatar name={account.name} photo={account.photo} />

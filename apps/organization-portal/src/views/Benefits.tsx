@@ -6,7 +6,6 @@ import { usePageTitle } from "../title";
 import { downloadText } from "../token";
 import { useList } from "../useList";
 import { Modal } from "./Modal";
-import { RefreshButton } from "./RefreshButton";
 
 /** The running animation shows for at least this long, so a fast batch doesn't flash by. */
 const MIN_RUNNING_MS = 1200;
@@ -65,7 +64,7 @@ export function Benefits({ api, onError, openBatch }: { api: Api; onError: (e: u
 
   return (
     <section>
-      <div className="head"><h1>Benefits</h1><div className="head-actions"><RefreshButton onClick={() => { batches.retry(); overview.retry(); }} /></div></div>
+      <div className="head"><h1>Benefits</h1></div>
 
       <input ref={input} type="file" accept=".csv,text/csv" className="sr-only" aria-label="CSV file" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
       {error && !file && <p className="error" role="alert">{error}</p>}
