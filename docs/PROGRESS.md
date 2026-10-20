@@ -16,7 +16,7 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 | API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `5c6feb1c` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5b578bbc` |
-| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5bc07385` |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5910bc50` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
 | Database | PlanetScale `nuclear/nuclear-dev` main, 32 tables, 36 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
@@ -80,7 +80,7 @@ Quality: 30 API test suites (about 1,370 checks, run on a throwaway local Postgr
 - Migration 0029 (`employee_escrow` ledger bucket) and 0030 (account type `O`, `allocate`/`claim` transactions, `employees`, `credit_batches`, `credit_batch_rows`), applied to nuclear-dev.
 - API: `/v1/org/*` and `POST /v1/employee/claims`; CSV batches run as one bulk transaction; escrow for unclaimed employees, claim by emailed one-time token, monthly reminder in the daily cron. Test suite `org` (31 checks); all 26 API suites pass.
 - `apps/organization-portal`: sign-in/sign-up, Overview (wallet, Add Funds, employees, held), Employees, Credits (CSV preview, confirm, run, history), Profile; 13 tests.
-- Deployed: https://nuclear-organization.a-space.workers.dev (`5bc07385`). Open: an admin view of organizations, a public claim page, scheduled distributions. See docs/ORGANIZATIONS.md.
+- Deployed: https://nuclear-organization.a-space.workers.dev (`5910bc50`). Open: an admin view of organizations, a public claim page, scheduled distributions. See docs/ORGANIZATIONS.md.
 
 - 2026-10-20: **Benefits wallets** (migration 0033): employer-bound wallet type, claims and credits land there, same-account moves with daily headroom, refunds never capped or counted, `benefits_match_ledger` reconciliation; 44-check `benefits` suite, all 27 API suites pass. A Benefits wallet is unrestricted except that it cannot send to another account's wallet (it pays any merchant, by choice or by its tag, and buys from the store). API only (no consumer app yet).
 - 2026-10-20: **Fixed Benefits** built (migration 0036): `benefit_programs` row created at sign-up, Fixed/Flexible choice (two-card window) and Payment Schedule window in the portal, `employees.fixed_benefit` (file, edit, API), the daily scheduler with warn-ahead, 3-day retry and missed handling; plus an end-to-end organization journey test (`orgjourney`, 24 checks) and `programs` (35 checks).
