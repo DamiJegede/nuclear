@@ -97,7 +97,8 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
 
       <div className="card">
         <h2>API Key</h2>
-        <p className="intro">Use the Benefits API to grant benefits to your employees directly from your payroll, HR or rewards systems. Create and remove employees, credit a whole batch in one call, look people up by employee ID and check your wallet balance, all with one key.</p>
+        <p className="intro">Use the Benefits API to grant benefits to your employees directly from your payroll, HR or rewards systems.</p>
+        <p className="intro">Create and remove employees, credit a whole batch in one call, look people up by employee ID and check your wallet balance.</p>
         {failed && !data ? <p className="error" role="alert">Couldn't load your key. <button className="link" onClick={retry}>Try Again</button></p>
           : !data ? <p className="muted" role="status">Loading…</p>
           : key ? (

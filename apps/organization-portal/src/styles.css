@@ -552,3 +552,4 @@ ul.err-list { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; line
 .creds .saved-check { margin: 18px 0 14px; }
 .creds .done-btn { margin-top: 4px; }
 html { scroll-behavior: smooth; }
+.intro + .intro { margin-top: -6px; }

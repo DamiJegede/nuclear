@@ -328,7 +328,8 @@ describe("organization portal", () => {
     const api = fakeApi({ apiKey: vi.fn().mockResolvedValue({ hint: "abcd", name: "Default", created_at: "2026-10-19T10:00:00Z", last_used_at: null }) });
     const user = await open(api, "/api");
     expect(await screen.findByText("nk_org_••••••••abcd")).toBeInTheDocument();
-    expect(screen.getByText(/Use the Benefits API to grant benefits to your employees directly from/)).toBeInTheDocument();
+    expect(screen.getByText("Use the Benefits API to grant benefits to your employees directly from your payroll, HR or rewards systems.")).toBeInTheDocument();
+    expect(screen.getByText("Create and remove employees, credit a whole batch in one call, look people up by employee ID and check your wallet balance.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Basics" })).toBeInTheDocument();
     const links = within(screen.getByRole("navigation", { name: "Documentation" })).getAllByRole("link");
     expect(links.map((l) => l.textContent)).toEqual(["Basics", "POST /employees", "POST /employees/get", "POST /credits", "POST /employees/remove", "GET /balance", "Errors"]);
