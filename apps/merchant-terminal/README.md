@@ -14,6 +14,7 @@ A Swift package, `NuclearTerminalKit`, with everything that is not UI, so it bui
 | `Models.swift` | `Codable` shapes for the terminal API: terminal, products, checkouts, payments, refunds, tap lookup |
 | `APIClient.swift` | The terminal's bearer-token client: every `/v1/terminal/*` call the POS needs, idempotency keys, typed errors |
 | `OrbMessages.swift` | Orb protocol v1 (`OrbV1`): messages, attempt ids, fragmentation and reassembly; same wire bytes as `../orb-firmware/src/message.rs` and `fragment.rs` (golden vectors in `docs/orb-protocol-vectors.md`) |
+| `OrbReliability.swift` | `EventReceiver` (acknowledges Orb events, delivers each once) and `RetransmitQueue` (resends commands until acknowledged); mirrors `../orb-firmware/src/outbox.rs` |
 | `OrbProtocol.swift` | The Bluetooth frame format shared with the Orb firmware (`../orb-firmware/src/protocol.rs` is the other half) |
 | `Tests/` | Request building, error decoding, money, and frame round-trip tests |
 

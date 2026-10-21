@@ -6,7 +6,7 @@
 //! * Values marked PROPOSED come from ORB.md's proposals; values marked UNCALIBRATED need measurement on the assembled Orb and tablets.
 
 // ---- Hardware (ESP32-C3-MINI-1-N4X, PN7161, WS2812B) ---------------------------------------------------------------------------------
-pub const LED_COUNT: usize = 20;
+pub const LED_COUNT: usize = 28;
 /// There is no physical button on the Orb, so there is no button pin.
 pub const LED_DATA_PIN: Option<u8> = None;
 pub const NFC_SPI_SCK_PIN: Option<u8> = None;
@@ -69,8 +69,39 @@ pub const MAX_RETRIES: u8 = 3;
 /// How long a result (green or red) is shown before the Orb returns to idle.
 pub const RESULT_DISPLAY_MS: u32 = 3_000;
 
+// ---- Audio scheduling (placeholder clips until recordings exist) ---------------------------------------------------------------------
+/// At most this many clips wait behind the one playing; a clip already playing or queued is not queued twice.
+pub const AUDIO_QUEUE_MAX: usize = 4;
+/// A queued clip that has waited this long is dropped, so nothing plays long after the moment it described.
+pub const AUDIO_QUEUED_MAX_AGE_MS: u32 = 4_000;
+/// PLACEHOLDER clip lengths used until real recordings report their own end (ms). UNMEASURED.
+pub const PLACEHOLDER_CLIP_MS: u32 = 1_200;
+pub const PLACEHOLDER_VOICE_CLIP_MS: u32 = 2_000;
+
+// ---- Light animations (names and shapes are final, colors and timings are for tuning) --------------------------------------------------
+/// Suggested render rate for the LED driver.
+pub const ANIMATION_FRAME_MS: u32 = 33;
+pub const STARTUP_SWEEP_MS: u32 = 1_200;
+pub const BREATHING_PERIOD_MS: u32 = 3_000;
+pub const BLUE_PULSE_MS: u32 = 1_500;
+pub const ARC_PERIOD_MS: u32 = 1_600;
+pub const ORANGE_PULSE_PERIOD_MS: u32 = 1_000;
+pub const GREEN_SWEEP_MS: u32 = 600;
+pub const RED_DOUBLE_PULSE_MS: u32 = 900;
+pub const FADE_OUT_MS: u32 = 800;
+pub const EMERGENCY_FLASH_PERIOD_MS: u32 = 500;
+pub const IDENTIFY_BLINK_PERIOD_MS: u32 = 500;
+/// How many LEDs the orange waiting arc covers.
+pub const ARC_LEDS: usize = 9;
+
+// ---- Reliable events and storage ------------------------------------------------------------------------------------------------------
+/// Events waiting for a terminal acknowledgement (docs/ORB.md section 7).
+pub const OUTBOX_CAPACITY: usize = 4;
+
 // ---- Presentation and power ---------------------------------------------------------------------------------------------------------
-pub const NORMAL_LED_BRIGHTNESS_CAP_PERCENT: u8 = 50;
+/// Latest operating model (docs/ORB.md 2026-10-21): full-brightness animations; the earlier 50% cap is superseded. Validate the exact LED
+/// revision, peak current and animation coverage on hardware before release.
+pub const NORMAL_LED_BRIGHTNESS_CAP_PERCENT: u8 = 100;
 /// Emergency and identify light are bounded. PROPOSED.
 pub const EMERGENCY_LIGHT_MAX_MS: u32 = 600_000;
 pub const IDENTIFY_LIGHT_MAX_MS: u32 = 10_000;

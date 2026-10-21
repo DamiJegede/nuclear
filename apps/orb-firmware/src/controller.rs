@@ -76,6 +76,14 @@ pub enum Outgoing {
     Error { reason: Reason, attempt: AttemptId },
 }
 
+impl Outgoing {
+    /// Events the terminal must acknowledge (the Orb resends them with the same id until it does). Handshake results, command acknowledgements
+    /// and periodic battery reports are not resent: the terminal retries those itself or the next report replaces them.
+    pub fn reliable(&self) -> bool {
+        matches!(self, Outgoing::StateChanged(_) | Outgoing::TapCaptured { .. } | Outgoing::Error { .. })
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TxPower {
     Pairing,
@@ -112,6 +120,8 @@ pub enum Action {
     /// Drop the connected peer (it failed the handshake or ran out of time).
     DisconnectPeer,
     SetVolume { volume: u8, muted: bool },
+    /// Stop this clip if it is playing and drop it if it is queued (a reminder that no longer applies).
+    StopAudio(AudioClip),
     Reboot,
 }
 
@@ -174,6 +184,9 @@ pub enum Input<'a> {
     UpdateFinished,
     /// A controlled shutdown. `power_ok` is false when there is no energy left to play the shutdown sound.
     ShutdownRequested { power_ok: bool },
+    /// The NFC reader is actually listening for the operation the controller started (the board answers [`Action::NfcStart`] with this).
+    /// The payment reminder's five seconds start here, not when the command was accepted.
+    ReaderReady,
     /// Time passed. Call at least every 100 ms.
     Tick,
 }
@@ -192,12 +205,21 @@ pub enum Phase {
     ShuttingDown,
 }
 
+/// The payment reminder: waits for the reader to be ready, then for five seconds, then plays once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reminder {
+    None,
+    WaitingForReader,
+    At(u32),
+    Done,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Operation {
     purpose: Purpose,
     attempt: AttemptId,
     deadline_ms: u32,
-    reminder_at_ms: Option<u32>,
+    reminder: Reminder,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -388,9 +410,18 @@ impl Controller {
             Input::ShutdownRequested { power_ok } => {
                 self.phase = Phase::ShuttingDown;
                 a.push(Action::NfcStop);
+                a.push(Action::StopAudio(AudioClip::PaymentReminder));
                 a.push(Action::Light(LightPattern::Fade));
                 if power_ok {
                     a.push(Action::Audio(AudioClip::Shutdown));
+                }
+            }
+            Input::ReaderReady => {
+                // The reader is really listening now: start the reminder's five seconds (once per waiting attempt).
+                if let (Phase::AwaitingTap, Some(op)) = (self.phase, self.op) {
+                    if op.reminder == Reminder::WaitingForReader {
+                        self.op = Some(Operation { reminder: Reminder::At(now_ms.wrapping_add(PAYMENT_REMINDER_DELAY_MS)), ..op });
+                    }
                 }
             }
             Input::Tick => {}
@@ -446,6 +477,7 @@ impl Controller {
         if let (Phase::AwaitingTap, Some(_)) = (self.phase, self.op) {
             self.op = None;
             a.push(Action::NfcStop);
+            a.push(Action::StopAudio(AudioClip::PaymentReminder));
         }
         // After a capture the outcome is unknown: the attempt stays unresolved and the terminal reconciles through the API.
         if self.phase == Phase::Processing {
@@ -508,6 +540,8 @@ impl Controller {
                 }
             }
             Message::SetLightMode { mode, duration_s } => self.set_light(header.msg_id, mode, duration_s, a),
+            // An acknowledgement of an Orb event belongs to the link layer's outbox; it is not a command and is never itself acknowledged.
+            Message::EventAck { .. } => {}
             // Orb-to-terminal messages are never valid coming the other way.
             _ => self.ack(header.msg_id, false, Reason::Unsupported, a),
         }
@@ -597,7 +631,7 @@ impl Controller {
             purpose,
             attempt,
             deadline_ms: self.now_ms.wrapping_add(limit),
-            reminder_at_ms: if purpose == Purpose::Payment { Some(self.now_ms.wrapping_add(PAYMENT_REMINDER_DELAY_MS)) } else { None },
+            reminder: if purpose == Purpose::Payment { Reminder::WaitingForReader } else { Reminder::None },
         });
         self.phase = Phase::AwaitingTap;
         self.ack(id, true, Reason::Ok, a);
@@ -613,6 +647,7 @@ impl Controller {
                 self.phase = Phase::ConnectedIdle;
                 self.ack(id, true, Reason::Ok, a);
                 a.push(Action::NfcStop);
+                a.push(Action::StopAudio(AudioClip::PaymentReminder));
                 a.push(Action::Light(LightPattern::Off));
                 self.announce_state(a);
             }
@@ -654,6 +689,7 @@ impl Controller {
             }
         };
         a.push(Action::NfcStop);
+        a.push(Action::StopAudio(AudioClip::PaymentReminder));       // a waiting or playing reminder never outlives the tap
         a.push(Action::Audio(AudioClip::ScanNotification));
         a.push(Action::Send(Outgoing::TapCaptured { purpose: op.purpose, attempt: op.attempt, url }));
         match op.purpose {
@@ -667,7 +703,7 @@ impl Controller {
                 let u = Unresolved { attempt: op.attempt, purpose: op.purpose };
                 self.unresolved = Some(u);
                 a.push(Action::PersistUnresolved(Some(u)));
-                self.op = Some(Operation { reminder_at_ms: None, ..op });
+                self.op = Some(Operation { reminder: Reminder::Done, ..op });
                 self.phase = Phase::Processing;
                 a.push(Action::Light(LightPattern::OrangePulse));
             }
@@ -771,12 +807,13 @@ impl Controller {
                 self.op = None;
                 self.phase = Phase::ConnectedIdle;
                 a.push(Action::NfcStop);
+                a.push(Action::StopAudio(AudioClip::PaymentReminder));
                 a.push(Action::Light(LightPattern::Off));
                 a.push(Action::Send(Outgoing::Error { reason: Reason::Timeout, attempt: op.attempt }));
                 self.announce_state(a);
-            } else if let Some(r) = op.reminder_at_ms {
+            } else if let Reminder::At(r) = op.reminder {
                 if due(now, r) {
-                    self.op = Some(Operation { reminder_at_ms: None, ..op });   // once per waiting attempt
+                    self.op = Some(Operation { reminder: Reminder::Done, ..op });   // once per waiting attempt
                     a.push(Action::Audio(AudioClip::PaymentReminder));
                 }
             }
@@ -1304,5 +1341,120 @@ mod tests {
         c.handle(Input::BleConnected, 0);
         let a = c.handle(Input::Message { header: hdr(1, 0), message: Message::Handshake { kind: HandshakeKind::Resume, protocol: PROTOCOL_VERSION + 1, nonce: [0; 16], proof: [0; 32] } }, 5);
         assert!(a.contains(|x| *x == Action::DisconnectPeer));
+    }
+
+    // ---- payment reminder (docs/ORB.md section 7: start the timer when the reader is actually ready) ----
+
+    fn reminder_played(a: &Actions) -> bool {
+        a.contains(|x| *x == Action::Audio(AudioClip::PaymentReminder))
+    }
+    fn awaiting(t: u32) -> (Controller, u16, u32) {
+        let (mut c, _) = boot(true, false);
+        let g = connect(&mut c, HandshakeKind::Resume, t);
+        c.handle(Input::Message { header: hdr(10, g), message: Message::Heartbeat { counter: 1 } }, t + 1);
+        begin(&mut c, g, 11, A1, t + 2);
+        (c, g, t + 2)
+    }
+    /// Ticks (with heartbeats so the session stays alive) until `until`, returning true if the reminder played.
+    fn run_until(c: &mut Controller, g: u16, from: u32, until: u32) -> bool {
+        let mut played = false;
+        let mut t = from;
+        let mut id = 1000u16;
+        while t < until {
+            t += 500;
+            id = id.wrapping_add(1);
+            played |= reminder_played(&c.handle(Input::Message { header: hdr(id, g), message: Message::Heartbeat { counter: 1 } }, t));
+            played |= reminder_played(&c.handle(Input::Tick, t));
+        }
+        played
+    }
+
+    #[test]
+    fn reminder_does_not_start_until_the_reader_is_ready() {
+        let (mut c, g, t) = awaiting(0);
+        assert!(!run_until(&mut c, g, t, t + 12_000));              // accepted but the reader never became ready: no reminder
+    }
+
+    #[test]
+    fn reminder_plays_once_five_seconds_after_the_reader_is_ready() {
+        let (mut c, g, t) = awaiting(0);
+        c.handle(Input::ReaderReady, t + 800);
+        assert!(!run_until(&mut c, g, t + 800, t + 800 + PAYMENT_REMINDER_DELAY_MS - 600));   // not yet
+        let a = c.handle(Input::Tick, t + 800 + PAYMENT_REMINDER_DELAY_MS);
+        assert!(reminder_played(&a));
+        assert!(!run_until(&mut c, g, t + 800 + PAYMENT_REMINDER_DELAY_MS, t + 25_000));      // once per waiting attempt
+    }
+
+    #[test]
+    fn a_second_reader_ready_does_not_restart_the_reminder() {
+        let (mut c, g, t) = awaiting(0);
+        c.handle(Input::ReaderReady, t);
+        c.handle(Input::ReaderReady, t + 3_000);                    // a repeated readiness signal changes nothing
+        assert!(reminder_played(&c.handle(Input::Tick, t + PAYMENT_REMINDER_DELAY_MS)));
+        let _ = g;
+    }
+
+    #[test]
+    fn a_tap_stops_the_reminder_before_it_plays_and_while_it_is_queued() {
+        let (mut c, g, t) = awaiting(0);
+        c.handle(Input::ReaderReady, t);
+        let mut buf = [0u8; 128];
+        let n = url_ndef(&mut buf);
+        let a = c.handle(Input::TagRead(&buf[..n]), t + 4_000);
+        assert!(a.contains(|x| *x == Action::StopAudio(AudioClip::PaymentReminder)));
+        assert!(!run_until(&mut c, g, t + 4_000, t + 20_000));
+    }
+
+    #[test]
+    fn cancel_timeout_and_disconnect_stop_the_reminder_too() {
+        let (mut c, g, t) = awaiting(0);
+        c.handle(Input::ReaderReady, t);
+        let a = c.handle(Input::Message { header: hdr(40, g), message: Message::Cancel { attempt: A1 } }, t + 1_000);
+        assert!(a.contains(|x| *x == Action::StopAudio(AudioClip::PaymentReminder)));
+        assert!(!run_until(&mut c, g, t + 1_000, t + 12_000));
+
+        let (mut c2, g2, t2) = awaiting(0);
+        c2.handle(Input::ReaderReady, t2);
+        let mut timed_out = Actions::new();
+        let mut tt = t2;
+        let mut id = 2000u16;
+        while tt < t2 + SCAN_TIMEOUT_MS + 2_000 {
+            tt += 500;
+            id = id.wrapping_add(1);
+            let a = c2.handle(Input::Message { header: hdr(id, g2), message: Message::Heartbeat { counter: 1 } }, tt);
+            if a.contains(|x| matches!(x, Action::Send(Outgoing::Error { reason: Reason::Timeout, .. }))) { timed_out = a; break; }
+        }
+        assert!(timed_out.contains(|x| *x == Action::StopAudio(AudioClip::PaymentReminder)));
+
+        let (mut c3, _g3, t3) = awaiting(0);
+        c3.handle(Input::ReaderReady, t3);
+        let a = c3.handle(Input::BleDisconnected, t3 + 2_000);
+        assert!(a.contains(|x| *x == Action::StopAudio(AudioClip::PaymentReminder)));
+    }
+
+    #[test]
+    fn lookups_have_no_reminder_and_stray_reader_ready_is_ignored() {
+        let (mut c, _) = boot(true, false);
+        let g = connect(&mut c, HandshakeKind::Resume, 0);
+        c.handle(Input::ReaderReady, 5);                            // nothing is waiting: ignored
+        c.handle(Input::Message { header: hdr(10, g), message: Message::BeginRead { purpose: Purpose::Lookup, attempt: A1, timeout_s: 0 } }, 10);
+        c.handle(Input::ReaderReady, 20);
+        assert!(!run_until(&mut c, g, 20, 12_000));
+    }
+
+    #[test]
+    fn an_event_ack_is_accepted_silently() {
+        let (mut c, _) = boot(true, false);
+        let g = connect(&mut c, HandshakeKind::Resume, 0);
+        let a = c.handle(Input::Message { header: hdr(60, g), message: Message::EventAck { of: 5 } }, 10);
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn only_events_the_terminal_must_confirm_are_reliable() {
+        assert!(Outgoing::StateChanged(OrbState::Completed).reliable());
+        assert!(Outgoing::Error { reason: Reason::Timeout, attempt: A1 }.reliable());
+        assert!(!Outgoing::CommandAck { of: 1, accepted: true, reason: Reason::Ok }.reliable());
+        assert!(!Outgoing::HandshakeResult { accepted: true, reason: Reason::Ok }.reliable());
     }
 }

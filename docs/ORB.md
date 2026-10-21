@@ -1,32 +1,35 @@
 # Orb firmware and terminal integration plan
 
-Updated: 2026-10-19. This is the planning reference for Orb behavior, BLE, recovery, NFC, lights, sound and power. It is not a claim that these features are implemented. Confirmed decisions below supersede earlier button-based pairing and signed reset-card proposals. Proposed defaults require implementation and hardware validation.
+Updated: 2026-10-21. This is the planning reference for Orb behavior, BLE, recovery, NFC, lights, sound and power. It is not a claim that these features are implemented. Confirmed decisions below supersede earlier button-based pairing and signed reset-card proposals. Proposed defaults require implementation and hardware validation.
 
 ## 1. Confirmed product and hardware decisions
 
 - Orb has no physical button.
-- ESP32-C3-MINI-1-N4X; PN7161 NFC controller; 20 addressable WS2812B LEDs (supersedes earlier 25/28 counts).
-- Main PCB: 65 mm diameter. Separate 40 mm FPC NFC antenna, 65 mm tail, approximately 12 mm below the tap surface. Antenna turns and matching remain engineering work.
-- Battery: Grepow GRP7550040 selected; final pack, protection location, charger, fuel gauge and temperature sensing remain to confirm. USB-C provides external power; data/recovery capability remains a hardware decision.
+- ESP32-C3-MINI-1-N4X; PN7161 NFC controller; 28 addressable WS2812B LEDs (supersedes earlier 20/25 counts); exact LED revision remains to confirm.
+- Main PCB: 69 mm diameter, rigid FR-4 with double-sided assembly. Separate 40 mm FPC NFC antenna, 40 mm tail, approximately 12 mm below the tap surface. Antenna connector: 4-position SMT FPC connector and matching tail, using two positions for RF and leaving two unconnected. Antenna turns and matching remain engineering work.
+- Battery: custom Grepow pack based on GRP7550040, same approximately 50 x 40.5 mm footprint, increased to 12 mm finished-pack thickness. Original 7.3 mm is also finished-pack thickness per owner clarification. Estimated capacity 2,400–2,500 mAh (approximately 9.1 Wh) is proportional, not supplier-confirmed. Built-in PCM; two-wire connection, no external battery NTC. Pack thermal protection must be confirmed by supplier rather than inferred from PCM.
+- Battery termination: JST PHR-2; PCB header: JST S2B-PH-SM4-TB. Pin 1 = positive/red, pin 2 = negative/black, using JST numbered drawings. MAX17048 is the proposed I2C fuel gauge; charger selection remains open. USB-C external power and native USB programming/recovery with boot/reset test pads are specified in the engineer brief.
 - Orb communicates with the terminal over BLE. The terminal communicates with the API. Orb has no internet requirement and holds no payment-tag decryption keys.
 - NFC is activated for a requested operation; idle battery operation does not continuously scan.
 - First run automatically enters pairing mode. Setup uses reduced BLE transmit power and sustained signal strength to encourage close proximity; normal service power/range returns after pairing.
 - **Terminal connected means the bound terminal has completed the application handshake and its authenticated heartbeat is current. A BLE connection alone is not a terminal connection.**
 - Reset uses a deliberately copyable NFC card containing the exact string `SAY_GOODBYE`. No signed, device-specific or one-time reset-card credential is required.
 - Local reset is permitted only with external USB power, no authenticated terminal session, and no unresolved payment/approval operation. It clears local pairing, not backend ownership.
-- Normal payment lighting uses a 50% maximum output setting. Emergency lighting is a separate mode.
+- Latest operating/power model uses full-brightness animations. Earlier 50% cap is superseded; exact animation coverage and output must be measured. Emergency lighting is a separate mode.
 - `pairing_prompt` is required. `payment_reminder` includes voice after five seconds waiting for payment; this extends the earlier chimes-only audio requirement.
 - GPIO assignments are NOT locked. Declare pins and board-dependent settings as top-level constants in one board configuration module so they can change without editing drivers. Do not invent GPIO numbers from this plan.
 
 ## 2. Existing implementation and gaps
 
-`apps/orb-firmware` contains a hardware-independent `no_std` Rust library: protocol encoding, NDEF URI extraction and a one-tap reader state machine. `apps/merchant-terminal` contains the Swift `NuclearTerminalKit` package, including API calls and a matching BLE protocol. Inspect their current tests and build status before implementation; README test-status statements may age.
+`apps/orb-firmware` now contains the hardware-independent `no_std` Rust core for protocol v1 (`message`, `fragment`), controller, battery reporting/warnings, RSSI gate, NDEF URI/Text parsing, named feedback actions, and (added 2026-10-21) the audio scheduler (`audio`), the nonblocking LED renderer (`animation`), reliable event delivery (`outbox`, with the `EventAck` message) and the persistent-state interface (`storage`). The older `protocol`/`session` modules are v0 compatibility code. The matching Swift v1 messages are in `apps/merchant-terminal/Sources/NuclearTerminalKit/OrbMessages.swift`, with shared vectors in `docs/orb-protocol-vectors.md`.
 
-Current frames are `Hello`, `ReadRequest`, `Cancel`, `TapRead`, `Failure`, `Ping`, `Pong`. The existing state machine returns to reader idle after capture; the full application must still retain the unresolved payment context while NFC is off.
+Verified 2026-10-21: all 127 Rust unit tests and 18 Swift tests pass. This validates the pure logic, not running hardware. Implemented decisions include first-run pairing, proximity gating, handshake/heartbeat state, USB/reset-card eligibility, one-tap operation, unresolved-attempt blocking, correlated outcomes, named sounds/lights, battery hysteresis and message fragmentation.
 
-The current 62-byte payload format has no fragmentation, correlation IDs, application authorization, battery or payment-result frames. Extend the Rust and Swift formats together under an explicit protocol version; this document does not allocate final wire opcodes or GATT UUIDs. ATT MTU includes overhead: never assume a 64-byte MTU permits a 64-byte characteristic value. Derive fragment size from the negotiated characteristic payload capacity and support smaller MTUs.
+Not yet built: ESP32-C3 runtime/HAL and board entry point; real BLE GATT/encryption/bonding integration; handshake proof verification/provisioning; PN7161 driver; the LED and audio *drivers* (the renderer and scheduler exist and are tested, nothing pushes their output to hardware); actual MAX17048/charger sensing; the flash implementation of `SlotStore` (the record format, two-slot alternation and torn-write tests exist against an in-memory store); the glue that feeds `outbox`/`audio`/`animation`/`storage` from the controller's actions; signed update pipeline. GPIO values are still unset.
 
-Earlier discussion suggested ESP-IDF/NimBLE. The repo now has a Rust foundation; hardware runtime, BLE stack and HAL selection remain to finalize for ESP32-C3. Preserve the shared Rust core rather than silently replacing it with C/C++.
+Voice/sound trigger identifiers already exist for all requested events, including pairing_prompt and payment_reminder. Recorded audio files are explicitly deferred until later; their absence is not a blocker for the current logic work. Built 2026-10-21: `audio.rs` plays one clip at a time (startup then the pairing prompt in order), result clips (success, failure, scan) interrupt advisories (reminder, battery low), a clip already playing or queued is not repeated, a queued clip older than `AUDIO_QUEUED_MAX_AGE_MS` is dropped, `Action::StopAudio` removes a playing or queued reminder, volume and mute apply (mute empties the queue; lights are unaffected). Placeholder durations stand in until real clips report their own end (`AudioScheduler::finished`). The five-second reminder now starts on a new `Input::ReaderReady` (the driver reports the PN7161 actually polling), plays once, and is stopped by capture, cancel, timeout and disconnect; tests cover each.
+
+ATT MTU includes overhead; derive fragment size from negotiated characteristic payload capacity. Rust/Swift v1 encoding exists, but final GATT UUIDs, authorization and compatibility behavior still need hardware integration. Reliable events (`StateChanged`, `TapCaptured`, `Error`) are kept in `outbox.rs` and resent unchanged, with the same message id, every `ACK_TIMEOUT_MS` up to `MAX_RETRIES` times until the terminal sends `EventAck` (opcode 0x0A, provisional); a newer state replaces an unconfirmed older one, taps and errors are never replaced, and a give-up is reported once. The Swift `OrbV1.EventReceiver` acknowledges every reliable event (also a duplicate) and delivers each once; `OrbV1.RetransmitQueue` resends terminal commands until the Orb's `CommandAck`. Preserve the existing Rust foundation; runtime, BLE stack and HAL selection remain to finalize.
 
 ## 3. Responsibilities
 
@@ -119,7 +122,7 @@ Separate operation purposes for payment, account lookup and staff authorization/
 
 Retransmit unacknowledged events with the same IDs during a live session; terminal deduplicates and retries the API with the same key. Buffer raw credentials only in volatile bounded memory, do not log them, and do not start a new debit just because an acknowledgement was lost. Recovery across reboot uses API result lookup rather than resubmitting missing credentials.
 
-## 8. Protocol contract to implement
+## 8. Protocol contract and remaining integration
 
 Logical services: device information, battery, authenticated control and events; firmware update transport when designed.
 
@@ -148,17 +151,17 @@ Every operational command/event needs a message ID; financial operations also ne
 
 ## 9. Battery and power
 
-Proposed telemetry: percentage (with validity/unknown indication), millivolts, charging, external_power_present, low, critical, and temperature only when supported by hardware. A PCM is protection, not a fuel gauge. Recommend a gauge for useful percentage reporting; voltage-only estimates need calibration and fluctuate with load. External-power presence must be detectable even when the battery is fully charged.
+Telemetry: percentage (with validity/unknown indication), millivolts, charging, external_power_present, low and critical. No battery NTC is planned; the existing optional temperature field should remain unknown unless an actual sensor is supplied. A PCM is protection, not a fuel gauge. Recommend a gauge for useful percentage reporting; voltage-only estimates need calibration and fluctuate with load. External-power presence must be detectable even when the battery is fully charged.
 
 Report on connection, on charging/external-power changes, on >=1 percentage-point change, on warning transitions and at least every 60 s while connected. Proposed warnings: 20% once, 10% once, with hysteresis; critical refusal/shutdown uses validated hardware thresholds. Do not restart or drop a payment solely because a percentage warning crossed.
 
-Idle: NFC standby, LEDs off, amplifier shutdown, BLE connected with validated low-power scheduling. Measure real power/black-pixel draw before declaring LED power gating mandatory. Model NFC on actual active duration: historical 5 s/min and LED 10 s/min were workload assumptions, not runtime quotas. Reset polling, voice and the new 20-LED count require updated measurements; earlier runtime estimates are not guarantees.
+Idle: NFC standby, LEDs off, amplifier shutdown, BLE connected with validated low-power scheduling. Measure real power/black-pixel draw before declaring LED power gating mandatory. Model NFC on actual active duration: historical 5 s/min and LED 10 s/min were workload assumptions, not runtime quotas. Latest workload model: 28 LEDs at full brightness, 10 seconds total animation, 5 seconds NFC activity and 1.5 audio prompts per transaction. One transaction/minute is the normal-day scenario; three/minute is the busy scenario. These are energy-budget assumptions, not fixed firmware wait times: stop NFC promptly after capture. Voice clip duration and actual illuminated-pixel coverage remain unmeasured. At estimated 9.1 Wh pack energy, approximately 24 hours normal use is a target for typical moving animations, not an all-pixels-on or measured guarantee. Busy-day estimates discussed were approximately 6–9 hours depending on coverage/color; reset polling and real electronics loads require measurement.
 
 No-button power behavior and genuine software shutdown/wake remain dependent on charger/power-latch design. A shutdown sound is only possible while firmware has energy/time to play it; do not promise sound on abrupt power loss.
 
 ## 10. Lights and audio
 
-Animations run without blocking BLE, NFC deadlines or audio/state handling. Normal cap 50%; idle dark. Connection/pairing blue, awaiting/processing orange, success green, decline red. Exact color values, timings and brightness curve remain to tune. State transitions cancel obsolete animations immediately.
+Animations run without blocking BLE, NFC deadlines or audio/state handling: `animation.rs` is a pure function of time (`Animator::render(now, &mut [Rgb; 28])` every `ANIMATION_FRAME_MS`), a new pattern replaces the old at once, repeating the pattern on show does not restart it, normal patterns are scaled by the brightness cap and Emergency ignores it (colors and curves are first guesses to tune). Latest model uses full brightness; idle dark. Validate exact revision, peak current and animation coverage before hardware release. Connection/pairing blue, awaiting/processing orange, success green, decline red. Exact color values, timings and brightness curve remain to tune. State transitions cancel obsolete animations immediately.
 
 | Asset | Trigger |
 | --- | --- |
@@ -174,22 +177,22 @@ Animations run without blocking BLE, NFC deadlines or audio/state handling. Norm
 | payment_reminder | Once after 5 s awaiting tap; suggested “Please tap to pay.” |
 | failure_notification | Proposed addition for confirmed decline |
 
-Use local versioned audio assets; terminal sends event/status names, not streamed audio. Voice requires acoustic testing with the selected small speaker and enclosure. Speaker CMS-151103-088SP and MAX98357A remain candidates; verify assembly and hardware choice. PCM/ADPCM versus other encoding depends on flash/quality tests. Provide configurable volume/mute; visuals always remain. Result audio preempts reminder; do not overlap clips or play a queued reminder after capture. Startup/shutdown/pairing and warnings must not cause repeated nuisance sounds.
+Recorded audio production is deferred until requested. Keep the existing clip identifiers and build/test scheduling using placeholders meanwhile. Eventually use local versioned audio assets; terminal sends event/status names, not streamed audio. Voice requires acoustic testing with the selected small speaker and enclosure. Speaker CMS-151103-088SP and MAX98357A remain candidates; verify assembly and hardware choice. PCM/ADPCM versus other encoding depends on flash/quality tests. Provide configurable volume/mute; visuals always remain. Result audio preempts reminder; do not overlap clips or play a queued reminder after capture. Startup/shutdown/pairing and warnings must not cause repeated nuisance sounds.
 
 Emergency light: authenticated terminal command, separate from idle/payment behavior; bounded duration, battery protection and payment-state priority. Color/brightness and behavior on subsequent disconnection remain to finalize.
 
 ## 11. Firmware organization, constants and maintenance
 
-Keep shared protocol/NDEF/state tests hardware-independent. Add separate modules for BLE/authorization, NFC driver, state control, LEDs, audio, power/battery, storage and updates. Serialize state-changing events through one controller; drivers perform actions without blocking it.
+Persistent state (`storage.rs`): a `SlotStore` trait of two fixed record slots; a 28-byte record (magic, version, sequence, binding flag, optional unresolved attempt ids and purpose, volume and mute, CRC-16) holds only that; saving writes the slot that does not hold the newest valid record, so power lost mid-write leaves the previous state (tested at every cut point), identical state is not rewritten, and two damaged slots load as unbound. Keep shared protocol/NDEF/state tests hardware-independent. Add separate modules for BLE/authorization, NFC driver, state control, LEDs, audio, power/battery, storage and updates. Serialize state-changing events through one controller; drivers perform actions without blocking it.
 
 One top-level configuration module (Rust constants or equivalent in the selected runtime) contains:
 
-- Hardware: LED_COUNT = 20; LED_DATA_PIN; NFC SPI SCK/MOSI/MISO/CS, IRQ and VEN pins; audio pins; power/charge sensing; optional gauge bus; USB reservations. Values remain unassigned until GPIO review.
+- Hardware: LED_COUNT = 28; LED_DATA_PIN; NFC SPI SCK/MOSI/MISO/CS, IRQ and VEN pins; audio pins; power/charge sensing; optional gauge bus; USB reservations. Values remain unassigned until GPIO review.
 - Pairing: PAIRING_TX_POWER, NORMAL_TX_POWER, PAIRING_MIN_RSSI, PAIRING_RSSI_SAMPLE_WINDOW_MS, PAIRING_PROXIMITY_HOLD_MS, HANDSHAKE_TIMEOUT_MS.
 - Liveness: TERMINAL_HEARTBEAT_INTERVAL_MS, TERMINAL_HEARTBEAT_TIMEOUT_MS.
 - Recovery: RESET_CARD_TEXT = "SAY_GOODBYE", USB_RECOVERY_WINDOW_MS, RECOVERY_POLL_INTERVAL_MS, RECOVERY_SCAN_BURST_MS.
 - Operations: SCAN_TIMEOUT_MS, PAYMENT_REMINDER_DELAY_MS = 5000, message/reassembly limits, ACK/retry limits, result-display duration.
-- Presentation/power: NORMAL_LED_BRIGHTNESS_CAP = 50%, battery report interval/thresholds/hysteresis, volume defaults and emergency-light limits.
+- Presentation/power: NORMAL_LED_BRIGHTNESS_CAP_PERCENT = 100 (aligned in config.rs 2026-10-21), battery report interval/thresholds/hysteresis, volume defaults and emergency-light limits.
 
 Pin planning is the next separately authorized discussion. NFC antenna RF conductors are not MCU GPIO assignments. No physical button pin is required. Check ESP32-C3 bootstrap, flash, USB and module antenna constraints before assigning numbers.
 
@@ -215,7 +218,7 @@ Stable device UID must be independent of BLE privacy-address rotation. Backend a
 4. Exercise first boot, weak/fluctuating RSSI, unauthorized peer connections, failed handshake, returning terminal at normal range, and replacement terminal.
 5. Exercise reset card with USB insertion (without reboot), USB absent, authenticated/unauthenticated connection, heartbeat loss, unresolved attempt, wrong NDEF text, and power failure during reset. Verify backend ownership is retained.
 6. Exercise disconnect/reboot in every operation phase, duplicate/out-of-order frames, small MTU/fragment loss, delayed outcome, reader timeout and cancellation. No duplicate debit or false success.
-7. Verify 5-second reminder is once per waiting attempt and canceled by capture; warnings do not mask outcomes; all 20 LEDs and audio remain within measured current/thermal limits.
+7. Verify 5-second reminder is once per waiting attempt and canceled by capture; warnings do not mask outcomes; all 28 LEDs and audio remain within measured current/thermal limits.
 8. Test battery reports against a reference, actual iPad reconnect/sleep behavior, BLE range, NFC antenna tuning and interrupted signed updates.
 
 ## References
@@ -225,3 +228,10 @@ Stable device UID must be independent of BLE privacy-address rotation. Backend a
 - [PN7160/PN7161 controller documentation](https://www.nxp.com/docs/en/data-sheet/PN7160_PN7161.pdf).
 
 These references explain capabilities; they do not establish measured Orb range, battery life, a selected Rust HAL or completed integration.
+
+## 14. Next implementation work (recordings deferred)
+
+1. Done 2026-10-21: constants aligned (LED_COUNT 28, full brightness); nonblocking animations; audio scheduler with placeholder clips; reminder starts on reader readiness with stop on capture/cancel/timeout/disconnect; event resend (`EventAck`); storage interface; Swift mirrors.
+2. Next, still hardware independent: glue that drives `audio`, `animation`, `outbox` and `storage` from the controller's actions in one `tick`/`handle` loop with tests; a clip-finished input; storing a firmware/boot counter if needed.
+3. Finalize GPIO and board runtime, then connect drivers and secure BLE/storage transport. Resolve reboot/reconciliation recovery before production.
+4. Record and integrate audio later; validate intelligibility and energy with real hardware. Re-measure runtime against the confirmed custom pack capacity.

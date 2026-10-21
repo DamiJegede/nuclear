@@ -6,6 +6,8 @@
 //! * [`session`]: the small state machine that decides what to do with each frame, tick and tag read.
 #![cfg_attr(not(test), no_std)]
 
+pub mod animation;
+pub mod audio;
 pub mod battery;
 pub mod config;
 pub mod controller;
@@ -13,9 +15,11 @@ pub mod feedback;
 pub mod fragment;
 pub mod message;
 pub mod ndef;
+pub mod outbox;
 pub mod protocol;
 pub mod proximity;
 pub mod session;
+pub mod storage;
 
 /// Firmware version reported in the `Hello` frame.
 pub const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");

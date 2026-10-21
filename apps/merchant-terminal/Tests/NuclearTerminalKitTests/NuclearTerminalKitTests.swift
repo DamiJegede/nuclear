@@ -112,6 +112,69 @@ final class NuclearTerminalKitTests: XCTestCase {
         XCTAssertEqual(try OrbV1.encode(.stateChanged(.connectedIdle), .init(messageID: 5, session: 1)), [0x84, 0, 5, 0, 1, 3])
     }
 
+    func testOrbV1EventAckGoldenVector() throws {
+        XCTAssertEqual(try OrbV1.encode(.eventAck(of: 0x0102), .init(messageID: 7, session: 3)), [0x0A, 0, 7, 0, 3, 0x01, 0x02])
+        XCTAssertEqual(try OrbV1.decode([0x0A, 0, 7, 0, 3, 0x01, 0x02]).1, .eventAck(of: 0x0102))
+        XCTAssertThrowsError(try OrbV1.decode([0x0A, 0, 7, 0, 3, 0x01]))                  // truncated body
+    }
+
+    func testEventReceiverAcknowledgesEveryReliableEventAndDeliversOnce() throws {
+        var r = OrbV1.EventReceiver(firstMessageID: 100)
+        let h = OrbV1.Header(messageID: 0x0102, session: 3)
+        let first = try r.receive(h, .stateChanged(.completed))
+        XCTAssertTrue(first.deliver)
+        XCTAssertEqual(try OrbV1.decode(first.ack!).1, .eventAck(of: 0x0102))
+        XCTAssertEqual(try OrbV1.decode(first.ack!).0.session, 3)
+        let resend = try r.receive(h, .stateChanged(.completed))                           // the Orb did not hear our ack
+        XCTAssertFalse(resend.deliver)
+        XCTAssertNotNil(resend.ack)                                                        // still acknowledged, so the Orb stops
+        XCTAssertNotEqual(first.ack, resend.ack)                                           // each ack has its own message id
+        let plain = try r.receive(.init(messageID: 5, session: 3), .battery(.init(percent: 50, millivolts: 3900, charging: false, externalPower: false, low: false, critical: false, temperatureC: nil)))
+        XCTAssertTrue(plain.deliver)
+        XCTAssertNil(plain.ack)                                                            // telemetry is not acknowledged
+    }
+
+    func testEventReceiverCoversTapsAndErrorsAndForgetsOnReset() throws {
+        var r = OrbV1.EventReceiver()
+        let tap = OrbV1.Message.tapCaptured(purpose: .payment, attempt: OrbV1.attemptID(UUID()), url: "https://x.example/v1/abc")
+        XCTAssertTrue(try r.receive(.init(messageID: 9, session: 1), tap).deliver)
+        XCTAssertFalse(try r.receive(.init(messageID: 9, session: 1), tap).deliver)
+        XCTAssertNotNil(try r.receive(.init(messageID: 10, session: 1), .error(reason: .timeout, attempt: OrbV1.attemptID(UUID()))).ack)
+        r.reset()
+        XCTAssertTrue(try r.receive(.init(messageID: 9, session: 2), tap).deliver)          // a new session reuses ids
+    }
+
+    func testEventReceiverMemoryIsBounded() throws {
+        var r = OrbV1.EventReceiver()
+        for id in 1...UInt16(OrbV1.EventReceiver.memory + 5) { _ = try r.receive(.init(messageID: id, session: 1), .stateChanged(.connectedIdle)) }
+        XCTAssertTrue(try r.receive(.init(messageID: 1, session: 1), .stateChanged(.connectedIdle)).deliver)    // the oldest id was forgotten
+        XCTAssertFalse(try r.receive(.init(messageID: UInt16(OrbV1.EventReceiver.memory + 5), session: 1), .stateChanged(.connectedIdle)).deliver)
+    }
+
+    func testRetransmitQueueResendsUntilAckedThenGivesUp() {
+        var q = OrbV1.RetransmitQueue()
+        q.add(messageID: 7, bytes: [1, 2, 3])
+        XCTAssertEqual(q.due(now: 0), [.send(messageID: 7, bytes: [1, 2, 3])])
+        XCTAssertEqual(q.due(now: 1.0), [])
+        XCTAssertEqual(q.due(now: 1.5), [.send(messageID: 7, bytes: [1, 2, 3])])           // same id, same bytes
+        XCTAssertTrue(q.ack(of: 7))
+        XCTAssertFalse(q.ack(of: 7))
+        XCTAssertEqual(q.pending, 0)
+        XCTAssertEqual(q.due(now: 100), [])
+
+        q.add(messageID: 8, bytes: [9])
+        var sends = 0, now = 0.0
+        while true {
+            let d = q.due(now: now)
+            if d == [.gaveUp(messageID: 8)] { break }
+            if !d.isEmpty { sends += 1 }
+            now += OrbV1.RetransmitQueue.ackTimeout
+            XCTAssertLessThan(sends, 10)
+        }
+        XCTAssertEqual(sends, OrbV1.RetransmitQueue.maxRetries + 1)
+        XCTAssertEqual(q.pending, 0)
+    }
+
     func testOrbV1EveryMessageRoundTrips() throws {
         let a = OrbV1.attemptID(UUID())
         let msgs: [OrbV1.Message] = [
@@ -119,6 +182,7 @@ final class NuclearTerminalKitTests: XCTestCase {
             .heartbeat(counter: 0xDEADBEEF), .beginPayment(attempt: a, amountCents: 12_999, currency: "USD", timeoutSeconds: 30),
             .beginRead(purpose: .lookup, attempt: a, timeoutSeconds: 0), .cancel(attempt: a), .paymentStatus(attempt: a, outcome: .completed),
             .getStatus, .configure(volume: 70, muted: true), .setLightMode(.emergency, durationSeconds: 600),
+            .eventAck(of: 0xBEEF),
             .hello(uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocolVersion: 1, capabilities: 3),
             .handshakeResult(accepted: false, reason: .proximityNotMet), .commandAck(of: 77, accepted: true, reason: .ok),
             .stateChanged(.awaitingPayment), .tapCaptured(purpose: .payment, attempt: a, url: "https://tag.example/v1/0123456789abcdef"),

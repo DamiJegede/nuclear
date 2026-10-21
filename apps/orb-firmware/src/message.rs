@@ -83,6 +83,8 @@ pub enum Message<'a> {
     GetStatus,
     Configure { volume: u8, muted: bool },
     SetLightMode { mode: LightMode, duration_s: u16 },
+    /// Acknowledges an Orb event (state changed, tap captured, error) by its message id so the Orb stops resending it.
+    EventAck { of: u16 },
     // ---- Orb -> terminal
     Hello { uid: [u8; 6], model: &'a str, firmware: &'a str, protocol: u8, capabilities: u16 },
     HandshakeResult { accepted: bool, reason: Reason },
@@ -103,6 +105,7 @@ const OP_PAYMENT_STATUS: u8 = 0x06;
 const OP_GET_STATUS: u8 = 0x07;
 const OP_CONFIGURE: u8 = 0x08;
 const OP_SET_LIGHT: u8 = 0x09;
+const OP_EVENT_ACK: u8 = 0x0A;
 const OP_HELLO: u8 = 0x81;
 const OP_HANDSHAKE_RESULT: u8 = 0x82;
 const OP_COMMAND_ACK: u8 = 0x83;
@@ -217,6 +220,7 @@ impl<'a> Message<'a> {
             Message::GetStatus => OP_GET_STATUS,
             Message::Configure { .. } => OP_CONFIGURE,
             Message::SetLightMode { .. } => OP_SET_LIGHT,
+            Message::EventAck { .. } => OP_EVENT_ACK,
             Message::Hello { .. } => OP_HELLO,
             Message::HandshakeResult { .. } => OP_HANDSHAKE_RESULT,
             Message::CommandAck { .. } => OP_COMMAND_ACK,
@@ -261,6 +265,7 @@ impl<'a> Message<'a> {
                 w.u8(*mode as u8)?;
                 w.u16(*duration_s)?;
             }
+            Message::EventAck { of } => w.u16(*of)?,
             Message::Hello { uid, model, firmware, protocol, capabilities } => {
                 w.put(uid)?;
                 w.u8(*protocol)?;
@@ -336,6 +341,7 @@ impl<'a> Message<'a> {
                 let mode = LightMode::from_u8(r.u8()?).ok_or(MessageError::BadBody)?;
                 Message::SetLightMode { mode, duration_s: r.u16()? }
             }
+            OP_EVENT_ACK => Message::EventAck { of: r.u16()? },
             OP_HELLO => {
                 let uid = r.arr()?;
                 let protocol = r.u8()?;
@@ -409,6 +415,7 @@ mod tests {
         round(Message::GetStatus);
         round(Message::Configure { volume: 70, muted: true });
         round(Message::SetLightMode { mode: LightMode::Emergency, duration_s: 600 });
+        round(Message::EventAck { of: 0xBEEF });
         round(Message::Hello { uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocol: 1, capabilities: 0b11 });
         round(Message::HandshakeResult { accepted: false, reason: Reason::ProximityNotMet });
         round(Message::CommandAck { of: 77, accepted: true, reason: Reason::Ok });
@@ -435,6 +442,8 @@ mod tests {
         );
         let n = Message::StateChanged { state: OrbState::ConnectedIdle }.encode(Header { msg_id: 5, session: 1 }, &mut buf).unwrap();
         assert_eq!(&buf[..n], &[0x84, 0x00, 0x05, 0x00, 0x01, 0x03]);
+        let n = Message::EventAck { of: 0x0102 }.encode(Header { msg_id: 7, session: 3 }, &mut buf).unwrap();
+        assert_eq!(&buf[..n], &[0x0A, 0x00, 0x07, 0x00, 0x03, 0x01, 0x02]);
     }
 
     #[test]

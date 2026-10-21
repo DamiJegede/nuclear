@@ -51,6 +51,7 @@ public enum OrbV1 {
         case getStatus
         case configure(volume: UInt8, muted: Bool)
         case setLightMode(LightMode, durationSeconds: UInt16)
+        case eventAck(of: UInt16)                   // confirms an Orb event (StateChanged, TapCaptured, Error) so the Orb stops resending it
         // Orb -> terminal
         case hello(uid: [UInt8], model: String, firmware: String, protocolVersion: UInt8, capabilities: UInt16)
         case handshakeResult(accepted: Bool, reason: Reason)
@@ -81,6 +82,7 @@ public enum OrbV1 {
         case .getStatus: op = 0x07
         case .configure: op = 0x08
         case .setLightMode: op = 0x09
+        case .eventAck: op = 0x0A
         case .hello: op = 0x81
         case .handshakeResult: op = 0x82
         case .commandAck: op = 0x83
@@ -101,6 +103,7 @@ public enum OrbV1 {
         case .getStatus: break
         case .configure(let v, let mu): b += [v, mu ? 1 : 0]
         case .setLightMode(let mode, let d): b.append(mode.rawValue); u16(d)
+        case .eventAck(let of): u16(of)
         case .hello(let uid, let model, let fw, let p, let cap): try fixed(uid, 6); b.append(p); u16(cap); try str8(model); try str8(fw)
         case .handshakeResult(let ok, let r): b += [ok ? 1 : 0, r.rawValue]
         case .commandAck(let of, let ok, let r): u16(of); b += [ok ? 1 : 0, r.rawValue]
@@ -152,6 +155,7 @@ public enum OrbV1 {
         case 0x09:
             guard let mode = LightMode(rawValue: try u8()) else { throw CodecError.badBody }
             m = .setLightMode(mode, durationSeconds: try u16())
+        case 0x0A: m = .eventAck(of: try u16())
         case 0x81:
             let uid = try take(6), p = try u8(), cap = try u16()
             m = .hello(uid: uid, model: try str8(), firmware: try str8(), protocolVersion: p, capabilities: cap)

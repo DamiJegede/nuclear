@@ -11,7 +11,7 @@ tag  --NFC-->  Orb  --BLE-->  iPad (merchant-terminal)  --HTTPS-->  apps/api
 
 ## What is here
 
-A `no_std` Rust library, `orb_firmware`, with everything that does not need hardware, unit-tested on a laptop (67 tests). It follows
+A `no_std` Rust library, `orb_firmware`, with everything that does not need hardware, unit-tested on a laptop (127 tests). It follows
 `docs/ORB.md`. **Protocol v1** (`message`, `fragment`) is the current one; `protocol` and `session` are the older v0 one-tap format and
 are kept only until the terminal app has moved over.
 
@@ -20,9 +20,13 @@ are kept only until the terminal app has moved over.
 | `config` | Every board and behaviour constant in one place. Pins are `None` until the GPIO review; PROPOSED / UNCALIBRATED values are marked |
 | `message` | Protocol v1 messages (handshake, heartbeat, begin payment/read, cancel, payment status, configure, light mode; hello, acks, state, tap captured, battery, error) with message ids, session generation and 16-byte attempt ids. Opcodes are provisional |
 | `fragment` | Splitting messages into BLE-sized fragments and bounded reassembly (duplicates ignored, stalls dropped) |
-| `controller` | The state machine for ORB.md sections 4 to 10: pairing (bind needs proximity and a verified proof), sessions and heartbeat liveness, one reader owner, payment success only from an authenticated status, unresolved attempts that block new ones, buttonless reset by the `SAY_GOODBYE` card (USB power, no session, no unresolved attempt), recovery polling, battery warnings deferred while busy. Inputs in, actions out: no hardware, no clock |
+| `controller` | The state machine for ORB.md sections 4 to 10 (the five-second reminder starts on `Input::ReaderReady`, `Action::StopAudio` cancels it): pairing (bind needs proximity and a verified proof), sessions and heartbeat liveness, one reader owner, payment success only from an authenticated status, unresolved attempts that block new ones, buttonless reset by the `SAY_GOODBYE` card (USB power, no session, no unresolved attempt), recovery polling, battery warnings deferred while busy. Inputs in, actions out: no hardware, no clock |
 | `proximity`, `battery` | The setup RSSI gate with hysteresis, and battery warnings and report throttling |
-| `feedback` | Light patterns and audio clips |
+| `feedback` | Light patterns and audio clips (names only) |
+| `audio` | The audio scheduler: one clip at a time, startup then pairing prompt in order, results preempt reminders and warnings, no repeats, stale clips dropped, `stop` cancels a playing or queued clip, volume and mute. Placeholder lengths until real clips report their end |
+| `animation` | The nonblocking LED renderer: every pattern as a pure function of time into a 28-pixel frame, brightness cap (Emergency exempt), fade from the last frame |
+| `outbox` | Reliable event delivery: unacknowledged `StateChanged`/`TapCaptured`/`Error` resent unchanged until `EventAck`, bounded, gives up after `MAX_RETRIES` |
+| `storage` | The `SlotStore` trait and the two-slot record format (sequence + CRC) for the binding flag, unresolved attempt ids and volume; survives power loss mid-write; `MemStore` for tests |
 | `ndef` | URL and Text record extraction, and the reset card check |
 | `protocol`, `session` | v0 frames and one-tap state machine (to be retired) |
 
