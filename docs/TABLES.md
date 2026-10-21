@@ -396,7 +396,7 @@ Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an 
 | claim_token_hash | SHA-256 of the emailed claim token (the token is never stored); NULL once claimed. Replaced by each reminder. |
 | reminded_at | When the person was last emailed about held money. |
 | fixed_benefit | Migration 0036, nullable bigint cents (1 to 10,000,000). The amount the Fixed Benefits schedule credits this employee on each payment date; NULL = none. Set by the portal's fixed-benefits file, the per-employee edit and the Benefits API (0 or null clears). Logically before created_at (physically last today). |
-| status | active or removed (migration 0031). A removed employee is hidden everywhere and gets no reminders; removal is refused while money is held (CHECK: removed means balance 0 and no token); a later CSV that mentions the employee_id makes them active again. |
+| status | active or removed (migration 0031). A removed employee is hidden from the portal lists and counts and is not paid a fixed benefit, but removal never touches money: credit held for them (balance) and their claim token stay, so they can still claim it (migration 0038 dropped the 0031 check that forbade this); a later CSV that mentions the employee_id makes them active again. |
 | created_at | Row creation time. |
 | updated_at | Last change. |
 

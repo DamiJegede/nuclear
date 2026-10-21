@@ -32,7 +32,8 @@ benefitsApi.get("/balance", async (c) => {
   const { accountId } = c.get("orgKey");
   const [[b], [h]] = await Promise.all([
     sql<{ balance: bigint }[]>`select balance from balances where account_id = ${accountId}`,
-    sql<{ held: bigint; employees: number }[]>`select coalesce(sum(balance), 0)::bigint as held, count(*)::int as employees from employees where org_account_id = ${accountId} and status = 'active'`,
+    // held_for_unclaimed is ALL credit still held, including for removed employees (it is still theirs); employees counts the active ones.
+    sql<{ held: bigint; employees: number }[]>`select coalesce(sum(balance), 0)::bigint as held, (count(*) filter (where status = 'active'))::int as employees from employees where org_account_id = ${accountId}`,
   ]);
   const avail = b && b.balance > 0n ? b.balance : 0n;
   return c.json({ currency: "USD", balance: n(avail), held_for_unclaimed: n(h!.held), employees: h!.employees });
@@ -59,7 +60,7 @@ benefitsApi.post("/employees/get", async (c) => {
   return c.json({ employees: await getEmployees(c.get("sql"), c.get("orgKey").accountId, b.data.employee_ids) });
 });
 
-// Remove (hide) employees. All or none: unknown ids are a 404 and anyone with money still held for them a 409; removing someone twice is fine.
+// Remove (hide) employees. All or none: an unknown id is a 404; removing someone twice is fine. Credit held for them stays theirs (`held` says how much).
 benefitsApi.post("/employees/remove", async (c) => {
   const b = z.object({ employee_ids: z.array(employeeId).min(1).max(MAX_BATCH_ROWS) }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);

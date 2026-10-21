@@ -115,8 +115,11 @@ await sqlc.end();
 const emp = async (eid: string) => (await q("select id, status from employees where employee_id=$1", [eid]))[0];
 const rm = async (eid: string) => call("DELETE", `/v1/org/employees/${(await emp(eid)).id}`, { token: acme.session_token });
 const e003 = await emp("E003");
-const blocked = await call("DELETE", `/v1/org/employees/${e003.id}`, { token: acme.session_token });
-eq("remove: refused while money is held for the employee", [blocked.status, blocked.json.error, blocked.json.held, (await emp("E003")).status], [409, "has_held_balance", 700, "active"]);
+const heldBefore = (await call("GET", "/v1/org/overview", { token: acme.session_token })).json.held;
+const gone = await call("DELETE", `/v1/org/employees/${e003.id}`, { token: acme.session_token });
+eq("remove: credit held for an employee does not block removal; the money and the claim link stay theirs", [gone.status, (await q("select status, balance::int b, claim_token_hash is not null as t from employees where employee_id='E003'"))[0]], [204, { status: "removed", b: 700, t: true }]);
+eq("remove: a removed employee's held credit still counts as held, and the list and counts hide them", [(await call("GET", "/v1/org/overview", { token: acme.session_token })).json.held, heldBefore, (await call("GET", "/v1/org/employees", { token: acme.session_token })).json.employees.some((e: any) => e.employee_id === "E003")], [heldBefore, heldBefore, false]);
+await q("update employees set status='active' where employee_id='E003'");        // (put them back for the rest of this suite; a later CSV or API call does the same)
 eq("remove: another organization cannot remove them", (await call("DELETE", `/v1/org/employees/${e003.id}`, { token: (await sign("Other Org", "other@org.test", "O")).session_token })).status, 404);
 eq("remove: a claimed employee can be removed, then no longer shows or counts", [(await rm("E001")).status, (await q("select status, claim_token_hash is null as t from employees where employee_id='E001'"))[0],
   (await call("GET", "/v1/org/employees", { token: acme.session_token })).json.employees.map((e: any) => e.employee_id).sort(),

@@ -55,6 +55,7 @@ export type Program = {
   fixed: { employees: number; total: number }; balance: number; funded: boolean;
 };
 export type ProgramInput = { mode: "flexible" } | { mode: "fixed"; cadence: "monthly"; day_of_month: number } | { mode: "fixed"; cadence: "weekly" | "biweekly"; weekday: number };
+export type BulkAction = { action: "remove" } | { action: "clear_fixed" } | { action: "set_fixed"; amount: number };
 export type FixedRow = { employee_id: string; name: string; email: string; fixed_benefit: number };
 export type RunRowResult = {
   employee_id: string; name: string; email: string; amount: number; mode: "sent" | "held"; transaction_id: string;
@@ -105,6 +106,8 @@ export function createApi(token: string, base: string = API_URL) {
     removeEmployee: (eid: string) => request<null>("DELETE", `/v1/org/employees/${id(eid)}`),
     program: async () => (await request<{ program: Program }>("GET", "/v1/org/program")).program,
     setProgram: async (input: ProgramInput) => (await request<{ program: Program }>("PUT", "/v1/org/program", input)).program,
+    /** One action on many employees (their ids) at once, all or nothing. */
+    bulkEmployees: (ids: string[], op: BulkAction) => request<{ action: string; count: number }>("POST", "/v1/org/employees/bulk", { ids, ...op }),
     uploadFixedBenefits: (rows: FixedRow[]) => request<{ employees: unknown[]; fixed: { employees: number; total: number } }>("POST", "/v1/org/fixed-benefits", { rows }),
     setFixedBenefit: (eid: string, amountCents: number | null) => request<{ fixed_benefit: number | null }>("PATCH", `/v1/org/employees/${id(eid)}`, { fixed_benefit: amountCents }),
     runs: async () => (await request<{ runs: Run[] }>("GET", "/v1/org/benefit-runs")).runs,

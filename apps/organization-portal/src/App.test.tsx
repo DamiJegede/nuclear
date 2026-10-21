@@ -44,6 +44,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     revokeApiKey: vi.fn().mockResolvedValue(null),
     program: vi.fn().mockResolvedValue(PROGRAM_FLEX),
     setProgram: vi.fn().mockImplementation(async (input: any) => ({ ...PROGRAM_FLEX, ...input, chosen: true })),
+    bulkEmployees: vi.fn().mockImplementation(async (ids: string[], op: any) => ({ action: op.action, count: ids.length })),
     uploadFixedBenefits: vi.fn().mockResolvedValue({ employees: [], fixed: { employees: 2, total: 7500 } }),
     setFixedBenefit: vi.fn().mockResolvedValue({ fixed_benefit: null }),
     removeEmployee: vi.fn().mockResolvedValue(null),
@@ -155,13 +156,25 @@ describe("organization portal", () => {
     await waitFor(() => expect(api.removeEmployee).toHaveBeenCalledWith("e1"));
   });
 
-  it("explains why an employee with held money cannot be removed", async () => {
-    const api = fakeApi({ removeEmployee: vi.fn().mockRejectedValue(new ApiError(409, "has_held_balance", { held: 5000 })) });
+  it("an employee with credit held can be removed: the window says the credit stays theirs", async () => {
+    const api = fakeApi();
     const user = await open(api, "/employees");
     await screen.findByText("Sam Two");
     await user.click(screen.getAllByRole("button", { name: "Remove" })[1]!);
+    const dialog = screen.getByRole("dialog", { name: "Remove Employee" });
+    expect(dialog).toHaveTextContent("$50.00 of credit is held for them. It stays theirs: they can still claim it with their link.");
+    expect(within(dialog).getByRole("button", { name: "Confirm Remove" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Confirm Remove" }));
+    await waitFor(() => expect(api.removeEmployee).toHaveBeenCalledWith("e2"));
+  });
+
+  it("says so when the employee no longer exists", async () => {
+    const api = fakeApi({ removeEmployee: vi.fn().mockRejectedValue(new ApiError(404, "not_found")) });
+    const user = await open(api, "/employees");
+    await screen.findByText("Sam Two");
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]!);
     await user.click(within(screen.getByRole("dialog", { name: "Remove Employee" })).getByRole("button", { name: "Confirm Remove" }));
-    expect(await screen.findByText(/need to claim it before they can be removed/)).toBeInTheDocument();
+    expect(await screen.findByText(/no longer exist/)).toBeInTheDocument();
   });
 
   it("previews a CSV, asks for confirmation, and runs it as one benefits run", async () => {
@@ -465,6 +478,89 @@ describe("organization portal", () => {
       { employee_id: "E001", name: "Eve One", email: "eve@example.com", fixed_benefit: 5000 },
       { employee_id: "E002", name: "Sam Two", email: "sam@example.com", fixed_benefit: 2550 },
       { employee_id: "E003", name: "Zed", email: "zed@example.com", fixed_benefit: 0 }]));
+  });
+
+  describe("mass edit", () => {
+    const EMPS = [
+      { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", balance: 0, claimed: true, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: 5000 },
+      { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
+      { id: "e3", employee_id: "E003", name: "Zed Three", email: "zed@example.com", balance: 0, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
+    ];
+    const setup = (program = PROGRAM_FIXED) => fakeApi({ program: vi.fn().mockResolvedValue(program), employees: vi.fn().mockResolvedValue(EMPS) });
+
+    it("shows an action bar only when rows are checked; the header box selects everyone", async () => {
+      const user = await open(setup(), "/employees");
+      await screen.findByText("Zed Three");
+      expect(screen.queryByRole("toolbar", { name: "Selected employees" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: "Select Eve One" }));
+      const bar = screen.getByRole("toolbar", { name: "Selected employees" });
+      expect(bar).toHaveTextContent("1 selected");
+      expect((screen.getByRole("checkbox", { name: "Select all employees" }) as HTMLInputElement).indeterminate).toBe(true);
+      await user.click(screen.getByRole("checkbox", { name: "Select all employees" }));
+      expect(bar).toHaveTextContent("3 selected");
+      await user.click(within(bar).getByRole("button", { name: "Clear Selection" }));
+      expect(screen.queryByRole("toolbar", { name: "Selected employees" })).not.toBeInTheDocument();
+    });
+
+    it("sets one fixed benefit for everyone selected", async () => {
+      const api = setup();
+      const user = await open(api, "/employees");
+      await screen.findByText("Zed Three");
+      await user.click(screen.getByRole("checkbox", { name: "Select Sam Two" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select Zed Three" }));
+      await user.click(screen.getByRole("button", { name: "Set Fixed Benefit" }));
+      const dialog = screen.getByRole("dialog", { name: "Set Fixed Benefit" });
+      await user.type(within(dialog).getByLabelText("Amount (USD)"), "25.5");
+      expect(dialog).toHaveTextContent("$25.50 each, $51.00 in total per payment");
+      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.bulkEmployees).toHaveBeenCalledWith(["e2", "e3"], { action: "set_fixed", amount: 2550 }));
+      await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Selected employees" })).not.toBeInTheDocument());
+    });
+
+    it("clears fixed benefits after a confirmation", async () => {
+      const api = setup();
+      const user = await open(api, "/employees");
+      await screen.findByText("Zed Three");
+      await user.click(screen.getByRole("checkbox", { name: "Select all employees" }));
+      await user.click(screen.getByRole("button", { name: "Clear Fixed Benefit" }));
+      expect(api.bulkEmployees).not.toHaveBeenCalled();
+      await user.click(within(screen.getByRole("dialog", { name: "Clear Fixed Benefit" })).getByRole("button", { name: "Confirm Clear" }));
+      await waitFor(() => expect(api.bulkEmployees).toHaveBeenCalledWith(["e1", "e2", "e3"], { action: "clear_fixed" }));
+    });
+
+    it("removes everyone selected, including people with credit held, and says that credit stays theirs", async () => {
+      const api = setup();
+      const user = await open(api, "/employees");
+      await screen.findByText("Zed Three");
+      await user.click(screen.getByRole("checkbox", { name: "Select Sam Two" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select Zed Three" }));
+      await user.click(within(screen.getByRole("toolbar", { name: "Selected employees" })).getByRole("button", { name: "Remove" }));
+      const dialog = screen.getByRole("dialog", { name: "Remove Employees" });
+      expect(dialog).toHaveTextContent("1 of them has $50.00 of credit held. It stays theirs: they can still claim it with their link.");
+      expect(within(dialog).getByRole("button", { name: "Confirm Remove" })).toBeEnabled();
+      await user.click(within(dialog).getByRole("button", { name: "Confirm Remove" }));
+      await waitFor(() => expect(api.bulkEmployees).toHaveBeenCalledWith(["e2", "e3"], { action: "remove" }));
+    });
+
+    it("a flexible organization can only remove or clear the selection (no fixed-benefit actions)", async () => {
+      const user = await open(setup(PROGRAM_FLEX), "/employees");
+      await screen.findByText("Zed Three");
+      await user.click(screen.getByRole("checkbox", { name: "Select Zed Three" }));
+      const bar = screen.getByRole("toolbar", { name: "Selected employees" });
+      expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(["Remove", "Clear Selection"]);
+    });
+
+    it("says nothing changed when the server refuses", async () => {
+      const api = setup();
+      api.bulkEmployees = vi.fn().mockRejectedValue(new ApiError(500, "internal_error")) as any;
+      const user = await open(api, "/employees");
+      await screen.findByText("Zed Three");
+      await user.click(screen.getByRole("checkbox", { name: "Select Zed Three" }));
+      await user.click(within(screen.getByRole("toolbar", { name: "Selected employees" })).getByRole("button", { name: "Remove" }));
+      await user.click(within(screen.getByRole("dialog", { name: "Remove Employees" })).getByRole("button", { name: "Confirm Remove" }));
+      expect(await screen.findByText(/Nothing was changed/)).toBeInTheDocument();
+      expect(screen.getByRole("toolbar", { name: "Selected employees" })).toBeInTheDocument();     // the selection stays
+    });
   });
 
   it("the run history says where each run came from and whether it was paid", async () => {

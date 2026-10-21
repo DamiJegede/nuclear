@@ -13,15 +13,15 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `190f0797` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `0d15afb4` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5b578bbc` |
-| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5910bc50` |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `97d03fce` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 34 tables, 37 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 34 tables, 38 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, 37 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, 44 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 
@@ -82,8 +82,10 @@ Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgr
 - **Benefit runs** (migration 0035): `benefit_runs` and `benefit_run_rows` are the one record of every credit run, whoever starts it (portal CSV, Benefits API or the scheduler); they replaced `credit_batches`.
 - **Benefits API** (migration 0034 `api_keys`): `/v1/benefits-api/*` with a one-time `nk_org_` key; array endpoints to create or update, get, remove and credit employees, plus a balance read.
 - **Fixed and Flexible Benefits** (migration 0036): every organization gets a `benefit_programs` row at sign-up; the portal asks it to choose a mode on its first sign-in. Fixed credits each employee's `fixed_benefit` automatically on a monthly, weekly or biweekly payment date (warning ahead, three days of retries, then missed); Flexible credits only on request. One-off CSV and API credits work in both modes.
-- **Organization portal** (`nuclear-organization`, 37 tests): sign-up and sign-in, the mode and schedule windows, Overview, Employees (with a Fixed Benefit column in Fixed mode), Benefits (program card, CSV upload with Ready to Run checks, run history, a page per run with claimed and not-claimed reports), API (key and documentation) and Profile.
+- **Organization portal** (`nuclear-organization`, 44 tests): sign-up and sign-in, the mode and schedule windows, Overview, Employees (with a Fixed Benefit column in Fixed mode), Benefits (program card, CSV upload with Ready to Run checks, run history, a page per run with claimed and not-claimed reports), API (key and documentation) and Profile.
 - **Tests:** 31 API suites pass, including `org`, `benefits`, `benefitsapi`, `programs` and `orgjourney` (an end-to-end organization journey from sign-up to reconciliation).
+- **Removal never blocks on held credit** (2026-10-21, migration 0038): removing an employee only hides them; credit held for them stays theirs and claimable, and still counts as held.
+- **Mass edit of employees** (2026-10-21): checkboxes and an action bar on the Employees page (Set Fixed Benefit, Clear Fixed Benefit, Remove); one all-or-nothing call, `POST /v1/org/employees/bulk`.
 - **One daily value cap** (migration 0037): loads, incoming sends and Benefits-to-ordinary moves all use `cap - ordinary_opening - added_today - balance_pending`, kept on the `balances` row; organizations and businesses are exempt; refunds, claims and employer credits are never counted; `caps` suite (15 checks) and `daily_caps_match_ledger` reconciliation.
 - **Open:** consumer claim, balance and move screens; admin and support views of organizations; real bank funding and settlement; employer verification, employee identification and program classification. See `ORGANIZATIONS.md` ("Not built") and the cap-rule note there: only Benefits moves use the opening-value measure.
 
@@ -100,7 +102,7 @@ Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgr
 
 ## 7. Database
 
-37 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, settlements, bank number protection, organizations and employee escrow, Benefits wallets, API keys, benefit runs and benefit programs. `TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
+38 migrations, all applied to nuclear-dev: base schema, terminals and Orbs, payments and refunds, products, checkouts, admins and MFA, roles, throttles, system state, orders, shop, logs, uploads, photo keys, digital products, bio, settlements, bank number protection, organizations and employee escrow, Benefits wallets, API keys, benefit runs and benefit programs. `TABLES.md` documents every table and holds a "Pre-launch rebuild" table for columns whose logical position differs from where the dev migrations put them.
 
 ## 8. Tooling and data
 

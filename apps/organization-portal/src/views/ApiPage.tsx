@@ -33,7 +33,7 @@ const SNIP_EMPLOYEES_RESPONSE = `{ "employees": [
   { "employee_id": "E001", "result": "created" },
   { "employee_id": "E002", "result": "updated" }   // or "reactivated"
 ] }`;
-const SNIP_REMOVE_RESPONSE = `{ "employees": [ { "employee_id": "E002", "result": "removed" } ] }   // or "already_removed"`;
+const SNIP_REMOVE_RESPONSE = `{ "employees": [ { "employee_id": "E002", "result": "removed", "held": 0 } ] }   // or "already_removed"`;
 const DOC_LINKS = [
   { id: "doc-basics", label: "Basics" },
   { id: "doc-create", label: "POST /employees" },
@@ -159,14 +159,14 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
 
           <div className="card docs" id="doc-remove" aria-label="Remove employees">
             <h2><span className="verb">POST</span> /employees/remove</h2>
-            <p>Hides employees. Refused for an unknown <code>employee_id</code> (404) and for anyone who still has a credit held waiting to be claimed (409, they must claim first). Removing someone twice is fine.</p>
+            <p>Hides employees. Refused only for an unknown <code>employee_id</code> (404). Removing someone twice is fine. Credit already held for a removed employee stays theirs and their claim link keeps working; <code>held</code> says how much (in cents).</p>
             <Snippet text={SNIP_REMOVE} />
             <Snippet text={SNIP_REMOVE_RESPONSE} />
           </div>
 
           <div className="card docs" id="doc-balance" aria-label="Get balance">
             <h2><span className="verb get">GET</span> /balance</h2>
-            <p>Your wallet: <code>balance</code> is what is available to credit (cents), <code>held_for_unclaimed</code> is money already set aside for employees who haven't claimed yet, and <code>employees</code> counts your active employees.</p>
+            <p>Your wallet: <code>balance</code> is what is available to credit (cents), <code>held_for_unclaimed</code> is money already set aside for employees who haven't claimed yet (including employees you removed: it is still theirs), and <code>employees</code> counts your active employees.</p>
             <Snippet text={SNIP_BALANCE} />
             <Snippet text={SNIP_BALANCE_RESPONSE} />
           </div>
@@ -183,7 +183,6 @@ export function ApiPage({ api, onError }: { api: Api; onError: (e: unknown) => v
               <li><code>422 insufficient_balance</code> with <code>required</code> and <code>available</code></li>
               <li><code>422 recipient_unavailable</code></li>
               <li><code>409 idempotency_mismatch</code> same key, different credits</li>
-              <li><code>409 has_held_balance</code> a credit is still waiting to be claimed</li>
               <li><code>404 employee_not_found</code></li>
               <li><code>429 rate_limited</code> try again after <code>retry_after</code> seconds</li>
             </ul>

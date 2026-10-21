@@ -569,3 +569,10 @@ button.mode-card.on { border-color: var(--accent); }
 .program-line { margin: 8px 0 4px; font-size: 16px; }
 .program-ok { color: var(--good); margin: 6px 0 0; }
 .mode-text { text-transform: none; }
+
+/* Employees: mass edit */
+.check-col { width: 44px; text-align: center; padding-left: 12px; padding-right: 0; }
+.check-col input { width: auto; margin: 0; cursor: pointer; }
+tr.picked > * { background: var(--bg); }
+.bulkbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 16px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); position: sticky; top: 70px; z-index: 10; }
+.bulk-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

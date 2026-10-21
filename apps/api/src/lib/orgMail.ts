@@ -21,7 +21,7 @@ export async function sendCreditEmails(env: Env, sql: Sql, orgName: string, noti
 
 /**
  * The monthly nag: every unclaimed employee holding money who was last told 30 or more days ago (or never) gets a fresh claim link.
- * A new token replaces the old one, so only the newest email's link works. Runs in the daily cron, at most 200 people per run.
+ * A new token replaces the old one, so only the newest email's link works. Employees who were removed but still have credit held are included: it is still theirs. Runs in the daily cron, at most 200 people per run.
  */
 export async function remindUnclaimed(env: Env, sql: Sql, limit = 200) {
   const due = await sql<{ id: string; name: string; email: string; balance: bigint; org_name: string }[]>`

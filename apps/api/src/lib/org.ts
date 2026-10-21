@@ -254,11 +254,38 @@ export async function getEmployees(sql: Sql, orgId: string, ids: string[]): Prom
   });
 }
 
-export type RemoveOutcome =
-  | { kind: "ok"; results: { employee_id: string; result: "removed" | "already_removed" }[] }
-  | { kind: "error"; status: 404 | 409; error: string; employee_ids: string[] };
+export type BulkOp = { action: "remove" } | { action: "set_fixed"; amount: number } | { action: "clear_fixed" };
+export type BulkOutcome =
+  | { kind: "ok"; count: number; held_total: number }
+  | { kind: "error"; status: 404; error: string; ids: string[] };
 
-/** Removes (hides) employees, all or none. Refused for unknown ids and for anyone with money still held for them (they must claim first). Removing someone twice is fine. */
+/** One action on many employees (by row id) at once, all or nothing: an unknown or removed id is a 404. Removing hides people; credit held for them stays theirs (`held_total`). */
+export async function bulkEmployees(sql: Sql, orgId: string, ids: string[], op: BulkOp): Promise<BulkOutcome> {
+  return sql.begin(async (tx): Promise<BulkOutcome> => {
+    const rows = await tx<{ id: string; balance: bigint }[]>`
+      select id, balance from employees where org_account_id = ${orgId} and status = 'active' and id in ${tx(ids)} for no key update`;
+    const found = new Set(rows.map((r) => r.id));
+    const missing = ids.filter((x) => !found.has(x));
+    if (missing.length) return { kind: "error", status: 404, error: "employee_not_found", ids: missing };
+    if (op.action === "remove") {
+      await tx`update employees set status = 'removed' where id in ${tx(ids)}`;
+    } else if (op.action === "set_fixed") {
+      await tx`update employees set fixed_benefit = ${op.amount} where id in ${tx(ids)}`;
+    } else {
+      await tx`update employees set fixed_benefit = null where id in ${tx(ids)}`;
+    }
+    return { kind: "ok", count: ids.length, held_total: Number(rows.reduce((t, r) => t + r.balance, 0n)) };
+  });
+}
+
+export type RemoveOutcome =
+  | { kind: "ok"; results: { employee_id: string; result: "removed" | "already_removed"; held: number }[] }
+  | { kind: "error"; status: 404; error: string; employee_ids: string[] };
+
+/**
+ * Removes (hides) employees, all or none. Refused only for unknown ids; removing someone twice is fine. Removing never touches the money: credit held for
+ * a removed employee stays theirs and their claim link keeps working (`held` says how much, in cents).
+ */
 export async function removeEmployees(sql: Sql, orgId: string, ids: string[]): Promise<RemoveOutcome> {
   return sql.begin(async (tx): Promise<RemoveOutcome> => {
     const rows = await tx<{ id: string; employee_id: string; status: string; balance: bigint }[]>`
@@ -266,11 +293,9 @@ export async function removeEmployees(sql: Sql, orgId: string, ids: string[]): P
     const found = new Map(rows.map((r) => [r.employee_id, r]));
     const unknown = ids.filter((x) => !found.has(x));
     if (unknown.length) return { kind: "error", status: 404, error: "employee_not_found", employee_ids: unknown };
-    const held = rows.filter((r) => r.status === "active" && r.balance > 0n).map((r) => r.employee_id);
-    if (held.length) return { kind: "error", status: 409, error: "has_held_balance", employee_ids: held };
     const todo = rows.filter((r) => r.status === "active").map((r) => r.id);
-    if (todo.length) await tx`update employees set status = 'removed', claim_token_hash = null where id in ${tx(todo)}`;
-    return { kind: "ok", results: ids.map((x) => ({ employee_id: x, result: found.get(x)!.status === "removed" ? "already_removed" as const : "removed" as const })) };
+    if (todo.length) await tx`update employees set status = 'removed' where id in ${tx(todo)}`;
+    return { kind: "ok", results: ids.map((x) => ({ employee_id: x, result: found.get(x)!.status === "removed" ? "already_removed" as const : "removed" as const, held: Number(found.get(x)!.balance) })) };
   });
 }
 

@@ -72,6 +72,7 @@ await capi("POST", "/employees", { employees: [{ employee_id: "E4", name: "Api F
 eq("fixed: 0 through the API clears it", (await capi("POST", "/employees/get", { employee_ids: ["E4"] })).json.employees[0].fixed_benefit, null);
 
 // ---- the scheduler
+const cusToken = (await sign("Cus Bulk", "cusbulk@x.test")).session_token;
 const sql = connect(env);
 const release = () => q("update benefit_programs set last_attempt_at = null");
 const runDay = async (d: string) => { await release(); return runDuePrograms(env, sql, d); };
@@ -146,6 +147,22 @@ const rdue = (await call("GET", "/v1/org/program", { token: raceOrg.session_toke
 await release();
 const race = await Promise.all([runDuePrograms(env, sql, rdue), runDuePrograms(env, sql, rdue), runDuePrograms(env, sql, rdue)]);
 eq("scheduler: three simultaneous cron runs pay a due program exactly once", [race.reduce((t, x) => t + x.credited, 0), (await q("select count(*)::int n, coalesce(sum(total),0)::int t from benefit_runs where org_account_id=$1", [raceOrg.account_id]))[0], (await q("select balance::int b from balances where account_id=$1", [raceOrg.account_id]))[0].b], [1, { n: 1, t: 1000 }, 49000]);
+
+// ---- mass edit: one action on many employees, all or nothing
+const bulk = (token: string, body: unknown) => call("POST", "/v1/org/employees/bulk", { token, body });
+const idOf = async (eid: string) => (await q("select id from employees where org_account_id=$1 and employee_id=$2", [acme.account_id, eid]))[0]?.id as string;
+const bE1 = await idOf("E1"), bE3 = await idOf("E3"), bE4 = await idOf("E4");
+const fixedOf = async (ids: string[]) => (await q("select employee_id, fixed_benefit from employees where id = any($1::uuid[]) order by employee_id", [ids])).map((r: any) => [r.employee_id, r.fixed_benefit === null ? null : Number(r.fixed_benefit)]);
+eq("bulk: set a fixed benefit for several employees at once", [(await bulk(acme.session_token, { ids: [bE1, bE3, bE4], action: "set_fixed", amount: 3300 })).json, await fixedOf([bE1, bE3, bE4])], [{ action: "set_fixed", count: 3 }, [["E1", 3300], ["E3", 3300], ["E4", 3300]]]);
+eq("bulk: clear fixed benefits for several at once", [(await bulk(acme.session_token, { ids: [bE1, bE3], action: "clear_fixed" })).json.count, await fixedOf([bE1, bE3, bE4])], [2, [["E1", null], ["E3", null], ["E4", 3300]]]);
+await q("update employees set balance = 500 where id = $1", [bE4]);          // E4 has credit held (as an unclaimed employee after a payment would)
+const rmBulk = await bulk(acme.session_token, { ids: [bE3, bE4], action: "remove" });
+eq("bulk: removing people who still have credit held is allowed; the answer says how much stays theirs and the money is untouched", [rmBulk.json, (await q("select employee_id, status, balance::int b from employees where id = any($1::uuid[]) order by employee_id", [[bE3, bE4]])).map((r: any) => [r.employee_id, r.status, r.b])], [{ action: "remove", count: 2, held_total: 500 }, [["E3", "removed", 0], ["E4", "removed", 500]]]);
+await q("update employees set status = 'active' where id = any($1::uuid[])", [[bE3, bE4]]);       // (back for the rest of this suite)
+const freeIds = (await q("insert into employees (org_account_id, employee_id, name, email) values ($1,'F1','Free One','f1@x.test'), ($1,'F2','Free Two','f2@x.test') returning id", [acme.account_id])).map((r: any) => r.id);
+eq("bulk: employees with nothing held are removed together, and vanish from the list", [(await bulk(acme.session_token, { ids: freeIds, action: "remove" })).json, (await call("GET", "/v1/org/employees", { token: acme.session_token })).json.employees.some((e: any) => ["F1", "F2"].includes(e.employee_id))], [{ action: "remove", count: 2, held_total: 0 }, false]);
+eq("bulk: an unknown, removed or other organization's id is a 404 and changes nothing; bad bodies and strangers are refused", [(await bulk(acme.session_token, { ids: [bE4, freeIds[0]], action: "set_fixed", amount: 100 })).json, (await bulk(raceOrg.session_token, { ids: [bE4], action: "clear_fixed" })).status, (await fixedOf([bE4])), (await bulk(acme.session_token, { ids: [bE4], action: "set_fixed", amount: 0 })).status, (await bulk(acme.session_token, { ids: [], action: "remove" })).status, (await bulk(acme.session_token, { ids: [bE4, bE4], action: "clear_fixed" })).status, (await bulk(cusToken, { ids: [bE4], action: "clear_fixed" })).status], [{ error: "employee_not_found", ids: [freeIds[0]] }, 404, [["E4", 3300]], 400, 400, 422, 403]);
+await q("update employees set balance = 0 where id = $1", [bE4]);
 
 // ---- switching modes
 eq("switching: Flexible stops the schedule and keeps the fixed amounts; Fixed again picks a new date", [(await call("PUT", "/v1/org/program", { token: acme.session_token, body: { mode: "flexible" } })).json.program.next_run_date, (await q("select count(*)::int n from employees where org_account_id=$1 and fixed_benefit is not null", [acme.account_id]))[0].n > 0, (await runDay(addDays(next3, 40))).credited], [null, true, 0]);

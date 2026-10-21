@@ -95,12 +95,18 @@ eq("6. follow-up: the employee list shows fixed benefits and the Benefits wallet
 // ===== 7. a one-off credit in Fixed mode, a removal, and the next payday
 const bonus = await api("POST", "/credits", { credits: [{ employee_id: "E1", amount: 2500 }] }, "bonus-1");
 eq("7. one-off: a bonus through the API works in Fixed mode and lands in Ana's Benefits wallet", [bonus.status, bonus.json.credits[0].credited_as, bonus.json.run.source, (await call("GET", "/v1/wallets", { token: ana.session_token })).json.wallets.find((w: any) => w.type === "benefits").balance], [201, "benefits_wallet", "api", 8500]);
-eq("7. removal: Eli still has a credit held, so he cannot be removed; Dev (nothing held) can", [(await api("POST", "/employees/remove", { employee_ids: ["E5"] })).status, (await api("POST", "/employees/remove", { employee_ids: ["E4"] })).json.employees], [409, [{ employee_id: "E4", result: "removed" }]]);
+const eliHeld = (await call("GET", "/v1/org/overview", { token: org.session_token })).json.held;
+const rem = await api("POST", "/employees/remove", { employee_ids: ["E5", "E4"] });
+eq("7. removal: Eli still has a credit held and Dev has none; both can be removed, and the answer says how much stays held", [rem.status, rem.json.employees], [200, [{ employee_id: "E5", result: "removed", held: 5000 }, { employee_id: "E4", result: "removed", held: 0 }]]);
+eq("7. removal: they leave the list and the counts, but Eli's held credit still shows as held", [(await call("GET", "/v1/org/employees", { token: org.session_token })).json.employees.map((e: any) => e.employee_id).sort(), (await call("GET", "/v1/org/overview", { token: org.session_token })).json.held === eliHeld], [["E1", "E2", "E3"], true]);
+const eli = await sign("Eli Evans", "eli@northwind.test");
+const ce = await call("POST", "/v1/employee/claims", { token: eli.session_token, body: { token: tokenOf("eli@northwind.test") } });
+eq("7. removal: the removed employee still has access to the money: his claim link works and the credit lands in his Benefits wallet", [ce.status, ce.json.claimed, ce.json.wallet.balance], [200, 5000, 5000]);
 const due2 = (await call("GET", "/v1/org/program", { token: org.session_token })).json.program.next_run_date as string;
 await release();
 await runDuePrograms(env, sql, due2);
 const run2 = (await q("select row_count, total::int t, sent::int s, held::int h from benefit_runs where idempotency_key=$1", ["program:" + due2]))[0];
-eq("7. second payday: only active employees with a fixed benefit; claimed ones are paid into their Benefits wallets", [due2 === addDays(due, 14), run2], [true, { row_count: 4, t: 21000 - 0, s: 12000, h: 9000 }]);
+eq("7. second payday: only active employees with a fixed benefit (the removed ones are skipped); claimed ones are paid into their Benefits wallets", [due2 === addDays(due, 14), run2], [true, { row_count: 3, t: 16000, s: 12000, h: 4000 }]);
 const emailsAfter = mails.filter((m) => /claim\?token/.test(m.text)).length;
 eq("7. second payday: nobody already told is emailed again", emailsAfter, 4);
 
@@ -110,7 +116,7 @@ await release();
 eq("8. switch: nothing is paid on later days", (await runDuePrograms(env, sql, addDays(due2, 30))).credited, 0);
 const rec = (await stats()).reconciliation;
 eq("8. books: ledger balanced, balances match the ledger, escrow matches held employees, Benefits wallets match the ledger", [rec.ledger_balanced, rec.balances_match_ledger, rec.escrow_matches_employees, rec.benefits_match_ledger], [true, true, true, true]);
-eq("8. money: the organization paid out exactly what its runs say", [(await q("select balance::int b from balances where account_id=$1", [org.account_id]))[0].b, (await q("select sum(total)::int t from benefit_runs where org_account_id=$1 and status='credited'", [org.account_id]))[0].t], [2_000_000 - 21000 - 2500 - 21000, 21000 + 2500 + 21000]);
+eq("8. money: the organization paid out exactly what its runs say", [(await q("select balance::int b from balances where account_id=$1", [org.account_id]))[0].b, (await q("select sum(total)::int t from benefit_runs where org_account_id=$1 and status='credited'", [org.account_id]))[0].t], [2_000_000 - 21000 - 2500 - 16000, 21000 + 2500 + 16000]);
 await sql.end();
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end();

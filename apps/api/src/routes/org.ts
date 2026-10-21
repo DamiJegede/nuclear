@@ -9,7 +9,7 @@ import { sendCreditEmails } from "../lib/orgMail";
 import { keyStatus, revokeKey, rotateKey } from "../lib/orgApiKey";
 import { fixedTotals, getProgram, setProgram, type ProgramInput } from "../lib/programs";
 import { easternDate } from "../lib/dailyReset";
-import { upsertEmployees } from "../lib/org";
+import { bulkEmployees, upsertEmployees } from "../lib/org";
 import { requireOwner, requireSession } from "../session";
 
 /**
@@ -42,10 +42,12 @@ org.get("/overview", async (c) => {
   const id = c.get("auth").accountId;
   const [bal, emp, last] = await Promise.all([
     sql<{ balance: bigint }[]>`select balance from balances where account_id = ${id}`,
+    // Counts are for active employees; `held` is ALL credit still held, including for employees who were removed (it is still theirs).
     sql<{ total: number; claimed: number; unclaimed: number; held: bigint }[]>`
-      select count(*)::int as total, (count(*) filter (where employee_account_id is not null))::int as claimed,
-             (count(*) filter (where employee_account_id is null))::int as unclaimed, coalesce(sum(balance), 0) as held
-        from employees where org_account_id = ${id} and status = 'active'`,
+      select (count(*) filter (where status = 'active'))::int as total,
+             (count(*) filter (where status = 'active' and employee_account_id is not null))::int as claimed,
+             (count(*) filter (where status = 'active' and employee_account_id is null))::int as unclaimed, coalesce(sum(balance), 0) as held
+        from employees where org_account_id = ${id}`,
     sql<RunRow[]>`select ${sql.unsafe(RUN_COLS)} from benefit_runs where org_account_id = ${id} order by created_at desc, id desc limit 1`,
   ]);
   const e = emp[0]!;
@@ -163,6 +165,25 @@ org.post("/fixed-benefits", async (c) => {
   return c.json({ employees: results, fixed: await fixedTotals(c.get("sql"), accountId).then((f) => ({ employees: f.employees, total: n(f.total) })) });
 });
 
+// Mass edit: one action on many employees (their row ids) at once, all or nothing. Remove, set a fixed benefit, or clear it.
+const bulkIds = z.array(z.string().uuid()).min(1).max(MAX_BATCH_ROWS);
+const bulkBody = z.union([
+  z.object({ ids: bulkIds, action: z.literal("remove") }),
+  z.object({ ids: bulkIds, action: z.literal("clear_fixed") }),
+  z.object({ ids: bulkIds, action: z.literal("set_fixed"), amount: z.number().int().min(1).max(Number(MAX_CREDIT)) }),
+]);
+org.post("/employees/bulk", async (c) => {
+  const b = bulkBody.safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  if (new Set(b.data.ids).size !== b.data.ids.length) return c.json({ error: "duplicate_id" }, 422);
+  const { accountId } = c.get("auth");
+  const op = b.data.action === "set_fixed" ? { action: "set_fixed" as const, amount: b.data.amount } : { action: b.data.action };
+  const out = await bulkEmployees(c.get("sql"), accountId, b.data.ids, op);
+  if (out.kind === "error") return c.json({ error: out.error, ids: out.ids }, out.status);
+  await customerLog(c, accountId, null, "org.employees_bulk", { action: b.data.action, count: out.count, ...(b.data.action === "set_fixed" ? { amount: b.data.amount } : {}) });
+  return c.json({ action: b.data.action, count: out.count, ...(b.data.action === "remove" ? { held_total: out.held_total } : {}) });
+});
+
 // One employee's fixed benefit (null or 0 clears it).
 org.patch("/employees/:id", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
@@ -186,13 +207,11 @@ org.delete("/employees/:id", async (c) => {
     const [e] = await tx<{ id: string; balance: bigint; status: string; employee_id: string }[]>`
       select id, balance, status, employee_id from employees where id = ${id.data} and org_account_id = ${orgId} for no key update`;
     if (!e || e.status !== "active") return { status: 404 as const };
-    if (e.balance > 0n) return { status: 409 as const, balance: Number(e.balance) };
-    await tx`update employees set status = 'removed', claim_token_hash = null where id = ${e.id}`;
-    return { status: 204 as const, employee_id: e.employee_id };
+    await tx`update employees set status = 'removed' where id = ${e.id}`;          // hides them; credit held for them stays theirs
+    return { status: 204 as const, employee_id: e.employee_id, held: Number(e.balance) };
   });
   if (out.status === 404) return c.json({ error: "not_found" }, 404);
-  if (out.status === 409) return c.json({ error: "has_held_balance", held: out.balance }, 409);
-  await customerLog(c, orgId, null, "org.employee_removed", { employee_id: out.employee_id });
+  await customerLog(c, orgId, null, "org.employee_removed", { employee_id: out.employee_id, held: out.held });
   return c.body(null, 204);
 });
 
