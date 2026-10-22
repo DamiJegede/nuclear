@@ -2,6 +2,7 @@ import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
@@ -12,7 +13,6 @@ import { requireOwner, requireSession } from "../session";
 export const tags = new Hono<AppContext>();
 tags.use("*", requireSession);
 
-const uuid = z.string().uuid();
 
 type TagView = {
   id: string;

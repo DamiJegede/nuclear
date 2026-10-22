@@ -4,7 +4,7 @@ import { randomBytes, createCipheriv } from "node:crypto";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import app from "../src/index.ts";
-import { resetDailyCounters } from "../src/lib/ledger.ts";
+import { resetDailyCounters } from "./db.ts";
 import { connect } from "../src/db.ts";
 psql(["-c", "drop schema public cascade; create schema public;"]);
 migrate();

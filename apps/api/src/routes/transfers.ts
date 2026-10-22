@@ -2,20 +2,16 @@ import { track } from "../lib/tracker";
 import { RULES, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amount, n } from "../lib/money";
-import { DEFAULT_DAILY_VALUE_CAP, sendFunds, type TxRow } from "../lib/ledger";
+import { dailyCap } from "../lib/config";
+import { sendFunds, type TxRow } from "../lib/ledger";
 import { requireSession } from "../session";
 
 export const transfers = new Hono<AppContext>();
 transfers.use("*", requireSession);
 
-const uuid = z.string().uuid();
-
-export function dailyCap(env: { DAILY_VALUE_CAP_CENTS?: string }): bigint {
-  const v = env.DAILY_VALUE_CAP_CENTS;
-  return v && /^\d+$/.test(v) ? BigInt(v) : DEFAULT_DAILY_VALUE_CAP;
-}
 
 function txJson(t: TxRow, viewerAccountId: string) {
   return {

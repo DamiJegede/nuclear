@@ -4,7 +4,7 @@ import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
 
 /** Escapes LIKE wildcards so a typed filter is matched literally. */
-const like = (q: string) => `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+import { likePattern as like } from "./sqlText";
 
 export async function merchantList(sql: Sql, q: string | null) {
   const rows = await sql<{

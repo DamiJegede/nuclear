@@ -2,6 +2,7 @@ import { RULES, byIp, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
 import { achProvider } from "../lib/ach";
@@ -19,6 +20,7 @@ import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTa
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
+import { decodeTimeCursor, pageLimit } from "../lib/paging";
 import { dropDay, probeCounters, readCounters, shardCount, track } from "../lib/tracker";
 import { readStats, refreshLive, refreshReconciliation } from "../lib/statsCache";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
@@ -397,7 +399,6 @@ admin.post("/admins/:id/rotate-token", requireStaff, async (c) => {
   return c.json({ admin: a, credentials: { access_id: a.access_id, access_token: issued } });
 });
 
-const uuid = z.string().uuid();
 
 // ---- System snapshot --------------------------------------------------------------------------
 
@@ -444,10 +445,10 @@ admin.get("/users", async (c) => {
 });
 
 // ---- One merchant, for support: profile and numbers, terminals, staff, products, payments and refunds ----
-const merchantId = z.string().uuid();
+const merchantId = uuid;
 const merchantTxQuery = z.object({
   kind: z.enum(MERCHANT_TX_KINDS as [MerchantTxKind, ...MerchantTxKind[]]).default("all"),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: pageLimit,
   cursor: z.string().max(100).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -473,7 +474,9 @@ admin.get("/merchants/:id/staff", async (c) => {
 admin.get("/merchants/:id/products", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success || !(await merchantDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
-  return c.json({ products: await merchantProducts(c.get("sql"), id.data) });
+  const limit = pageLimit.safeParse(c.req.query("limit")), cursor = decodeTimeCursor(c.req.query("cursor"));
+  if (!limit.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await merchantProducts(c.get("sql"), id.data, limit.data, cursor));
 });
 admin.get("/merchants/:id/transactions", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
@@ -545,8 +548,9 @@ admin.get("/organizations/:id", async (c) => {
 admin.get("/organizations/:id/employees", async (c) => {
   const id = merchantId.safeParse(c.req.param("id")), q = nameFilter.safeParse(c.req.query());
   if (!id.success || !(await organizationDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
-  if (!q.success) return c.json({ error: "invalid_request" }, 400);
-  return c.json({ employees: await organizationEmployees(c.get("sql"), id.data, q.data.q || null) });
+  const limit = pageLimit.safeParse(c.req.query("limit")), cursor = decodeTimeCursor(c.req.query("cursor"));
+  if (!q.success || !limit.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await organizationEmployees(c.get("sql"), id.data, q.data.q || null, limit.data, cursor));
 });
 admin.get("/organizations/:id/runs", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
@@ -589,7 +593,7 @@ admin.put("/organizations/:id/status", async (c) => {
 // ---- One person, for support ------------------------------------------------------------------------
 const userTxQuery = z.object({
   kind: z.enum(USER_TX_KINDS as [UserTxKind, ...UserTxKind[]]).default("all"),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: pageLimit,
   cursor: z.string().max(100).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -841,7 +845,7 @@ admin.post("/settlements/:id/confirm", async (c) => {
 
 const txQuery = z.object({
   kind: z.enum(TX_KINDS as [TxKind, ...TxKind[]]).default("all"),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: pageLimit,
   cursor: z.string().max(100).optional(),
   // Program dates (America/New_York), inclusive: from the start of `from` to the end of `to`.
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

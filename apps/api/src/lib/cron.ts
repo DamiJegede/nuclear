@@ -2,6 +2,7 @@ import { connect } from "../db";
 import type { Env } from "../env";
 import { easternDate, ensureDay } from "./dailyReset";
 import { sweep } from "./throttle";
+import { purge } from "./retention";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
@@ -20,6 +21,8 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
   const sql = connect(env);
   try {
     const swept = await sweep(sql);
+    // Finished sessions and used or expired links go; never blocks the rest of the job.
+    const purged = await purge(sql).catch((err) => (console.error("purge failed", err), null));
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
     await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})
               on conflict (key) do update set value = excluded.value`;
@@ -44,7 +47,7 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     }
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
     await pruneCounters(env, addDays(today, -3)).catch(() => null);
-    return { ...day, swept, reminders, programs, settlement, polled, snapshots, reconciled };
+    return { ...day, swept, reminders, programs, settlement, polled, snapshots, reconciled, purged };
   } finally {
     await sql.end();
   }

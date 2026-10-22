@@ -16,15 +16,17 @@ const PROGRAM_FLEX: Program = { mode: "flexible", chosen: true, cadence: null, d
 const PROGRAM_FIXED: Program = { ...PROGRAM_FLEX, mode: "fixed", cadence: "monthly", day_of_month: 15, next_run_date: "2026-11-15", fixed: { employees: 3, total: 16000 } };
 const RUN = { id: "0198b2b2-0000-7000-8000-000000000002", rows: 2, total: 7500, sent: 0, held: 7500, source: "csv" as const, status: "credited" as const, run_date: "2026-10-19", created_at: "2026-10-19T10:00:00Z" };
 
+const pageOf = <T,>(employees: T[]) => ({ employees, next_cursor: null, total: employees.length });
+
 function fakeApi(over: Partial<Api> = {}): Api {
   return {
     logout: vi.fn().mockResolvedValue(null),
     account: vi.fn().mockResolvedValue(ACCOUNT),
     overview: vi.fn().mockResolvedValue(OVERVIEW),
-    employees: vi.fn().mockResolvedValue([
+    employees: vi.fn().mockResolvedValue(pageOf([
       { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", balance: 0, claimed: true, reminded_at: null, created_at: "2026-10-18T10:00:00Z" },
       { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z" },
-    ]),
+    ])),
     runs: vi.fn().mockResolvedValue([RUN]),
     run: vi.fn().mockResolvedValue({
       run: RUN, summary: { claimed: 1, unclaimed: 1, still_held: 5000 },
@@ -144,7 +146,7 @@ describe("organization portal", () => {
     expect(await screen.findByText("Sam Two")).toBeInTheDocument();
     expect(screen.getByText("$50.00")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Status"), "unclaimed");
-    await waitFor(() => expect(api.employees).toHaveBeenLastCalledWith("", "unclaimed"));
+    await waitFor(() => expect(api.employees).toHaveBeenLastCalledWith("", "unclaimed", undefined));
   });
 
   it("removes an employee after a confirmation", async () => {
@@ -453,10 +455,10 @@ describe("organization portal", () => {
   it("Fixed mode adds a Fixed Benefit column, an upload and a per-employee edit", async () => {
     const api = fakeApi({
       program: vi.fn().mockResolvedValue(PROGRAM_FIXED),
-      employees: vi.fn().mockResolvedValue([
+      employees: vi.fn().mockResolvedValue(pageOf([
         { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", balance: 0, claimed: true, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: 5000 },
         { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
-      ]),
+      ])),
     });
     const user = await open(api, "/employees");
     expect(await screen.findByText("Fixed Benefit")).toBeInTheDocument();
@@ -487,7 +489,7 @@ describe("organization portal", () => {
       { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", balance: 5000, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
       { id: "e3", employee_id: "E003", name: "Zed Three", email: "zed@example.com", balance: 0, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null },
     ];
-    const setup = (program = PROGRAM_FIXED) => fakeApi({ program: vi.fn().mockResolvedValue(program), employees: vi.fn().mockResolvedValue(EMPS) });
+    const setup = (program = PROGRAM_FIXED) => fakeApi({ program: vi.fn().mockResolvedValue(program), employees: vi.fn().mockResolvedValue(pageOf(EMPS)) });
 
     it("shows an action bar only when rows are checked; the header box selects everyone", async () => {
       const user = await open(setup(), "/employees");
@@ -653,5 +655,43 @@ describe("email links and forgot password", () => {
     window.history.replaceState(null, "", "/reset-password");
     render(<App />);
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
+  });
+});
+
+describe("employees paging", () => {
+  const mk = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `e${from + i}`, employee_id: `E${from + i}`, name: `Person ${from + i}`, email: `p${from + i}@example.com`, balance: 0, claimed: false, reminded_at: null, created_at: "2026-10-18T10:00:00Z", fixed_benefit: null }));
+  it("shows a page, says how many there are, and loads the next page on request", async () => {
+    const employees = vi.fn()
+      .mockResolvedValueOnce({ employees: mk(20, 1), next_cursor: "c2", total: 45 })
+      .mockResolvedValueOnce({ employees: mk(20, 21), next_cursor: "c3", total: 45 })
+      .mockResolvedValueOnce({ employees: mk(5, 41), next_cursor: null, total: 45 });
+    const user = await open(fakeApi({ employees }), "/employees");
+    expect(await screen.findByText("Person 1")).toBeInTheDocument();
+    expect(screen.getByText("Showing 20 of 45")).toBeInTheDocument();
+    expect(employees).toHaveBeenLastCalledWith("", "", undefined);
+    await user.click(screen.getByRole("button", { name: "Load More" }));
+    expect(await screen.findByText("Person 40")).toBeInTheDocument();
+    expect(employees).toHaveBeenLastCalledWith("", "", "c2");
+    expect(screen.getByText("Showing 40 of 45")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load More" }));
+    expect(await screen.findByText("Person 45")).toBeInTheDocument();
+    expect(screen.getByText("Showing 45 of 45")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
+  });
+
+  it("a new search starts again from the first page", async () => {
+    const employees = vi.fn().mockResolvedValue({ employees: mk(3, 1), next_cursor: null, total: 3 });
+    const user = await open(fakeApi({ employees }), "/employees");
+    await screen.findByText("Person 1");
+    await user.type(screen.getByLabelText("Search employees"), "x");
+    await waitFor(() => expect(employees).toHaveBeenLastCalledWith("x", "", undefined));
+  });
+
+  it("selection counts only the people loaded so far", async () => {
+    const employees = vi.fn().mockResolvedValue({ employees: mk(20, 1), next_cursor: "c2", total: 45 });
+    const user = await open(fakeApi({ employees, program: vi.fn().mockResolvedValue(PROGRAM_FIXED) }), "/employees");
+    await screen.findByText("Person 1");
+    await user.click(screen.getByRole("checkbox", { name: "Select all employees" }));
+    expect(screen.getByRole("toolbar", { name: "Selected employees" })).toHaveTextContent("20 selected");
   });
 });

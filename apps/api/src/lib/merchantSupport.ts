@@ -2,6 +2,7 @@ import type { Sql } from "../db";
 import { imageUrl } from "./images";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
+import { DEFAULT_PAGE, encodePair } from "./paging";
 import { party, type DayRange } from "./adminLists";
 
 /** Read-only views of one merchant for the support team. Everything comes from existing tables. */
@@ -95,16 +96,25 @@ export async function merchantStaff(sql: Sql, id: string) {
   return rows;
 }
 
-export async function merchantProducts(sql: Sql, id: string) {
+export async function merchantProducts(sql: Sql, id: string, limit: number = DEFAULT_PAGE, cursor: { ts: string; id: string } | null = null) {
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from products where account_id = ${id}`;
+  const total = cnt!.total;
   const rows = await sql<{
     id: string; name: string; category: string | null; price: bigint; discount: bigint; stock: number | null; active: boolean;
-    status: string; total_sold: bigint; sold_today: number;
+    status: string; total_sold: bigint; sold_today: number; ts_key: string;
   }[]>`
-    select p.id, p.name, c.name as category, p.price, p.discount, p.stock, p.active, p.status, p.total_sold, p.sold_today
+    select p.id, p.name, c.name as category, p.price, p.discount, p.stock, p.active, p.status, p.total_sold, p.sold_today, p.created_at::text as ts_key
       from products p left join categories c on c.id = p.category_id and c.account_id = p.account_id
      where p.account_id = ${id}
-     order by p.created_at, p.id`;
-  return rows.map((r) => ({ ...r, price: n(r.price), discount: n(r.discount), total_sold: n(r.total_sold) }));
+       ${cursor ? sql`and (p.created_at, p.id) > (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
+     order by p.created_at, p.id limit ${limit + 1}`;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    products: page.map(({ ts_key: _t, ...r }) => ({ ...r, price: n(r.price), discount: n(r.discount), total_sold: n(r.total_sold) })),
+    next_cursor: rows.length > limit && last ? encodePair(last.ts_key, last.id) : null,
+    total,
+  };
 }
 
 export type MerchantTxKind = "all" | "payments" | "refunds" | "pending";

@@ -3,6 +3,7 @@ import { ApiError, type Api, type Employee } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
+import { usePaged } from "../usePaged";
 import { BulkModal, type BulkKind } from "./BulkActions";
 import { EditFixedBenefit, UploadFixedBenefits } from "./FixedBenefits";
 import { Modal } from "./Modal";
@@ -14,7 +15,7 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
   usePageTitle("Employees");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Filter>("");
-  const { data, failed, retry } = useList<Employee[]>(useCallback(() => api.employees(q.trim(), status), [api, q, status]), onError, `employees:${status}:${q.trim()}`);
+  const { rows: data, total, hasMore, more, failed, retry, loadMore } = usePaged<Employee>(useCallback(async (cursor?: string) => { const r = await api.employees(q.trim(), status, cursor); return { items: r.employees, next: r.next_cursor, total: r.total }; }, [api, q, status]), onError);
   const program = useList(useCallback(async () => ({ p: await api.program() }), [api]), onError, "program");
   const fixedMode = program.data?.p.mode === "fixed";
   const [uploading, setUploading] = useState(false);
@@ -87,6 +88,12 @@ export function Employees({ api, onError }: { api: Api; onError: (e: unknown) =>
             </table>
           )}
       </div>
+      {data && data.length > 0 && (
+        <p className="more">
+          <span className="muted">Showing {int(data.length)} of {int(total)}</span>
+          {hasMore && <button type="button" className="ghost" disabled={more} onClick={() => void loadMore()}>{more ? "Loading…" : "Load More"}</button>}
+        </p>
+      )}
       {bulk && <BulkModal api={api} kind={bulk} selected={selected} onClose={() => setBulk(null)} onDone={() => { setBulk(null); setPicked(new Set()); retry(); program.retry(); }} onError={onError} />}
       {uploading && <UploadFixedBenefits api={api} onClose={() => setUploading(false)} onDone={() => { setUploading(false); retry(); program.retry(); }} onError={onError} />}
       {editing && <EditFixedBenefit api={api} employee={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); retry(); program.retry(); }} onError={onError} />}

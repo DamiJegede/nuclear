@@ -152,7 +152,7 @@ export function createApi(token: string, base: string = API_URL) {
     createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,
     updateCategory: async (cid: string, patch: Partial<{ name: string; active: boolean }>) => (await request<{ category: Category }>("PATCH", `/v1/business/categories/${id(cid)}`, patch)).category,
     deleteCategory: (cid: string) => request<null>("DELETE", `/v1/business/categories/${id(cid)}`),
-    products: async (filter: { category_id?: string; q?: string } = {}) => (await request<{ products: Product[] }>("GET", `/v1/business/products${qs(filter)}`)).products,
+    products: (filter: { category_id?: string; q?: string; cursor?: string } = {}) => request<{ products: Product[]; next_cursor: string | null; total: number }>("GET", `/v1/business/products${qs(filter)}`),
     createProduct: async (input: Partial<ProductInput> & { name: string; price: number }) => (await request<{ product: Product }>("POST", "/v1/business/products", input)).product,
     updateProduct: async (pid: string, patch: Partial<ProductInput>) => (await request<{ product: Product }>("PATCH", `/v1/business/products/${id(pid)}`, patch)).product,
     deleteProduct: (pid: string) => request<null>("DELETE", `/v1/business/products/${id(pid)}`),

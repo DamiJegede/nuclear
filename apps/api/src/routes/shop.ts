@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { downloadMime, getUpload } from "../lib/uploads";
 import { customerLog } from "../lib/audit";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { sessionGuard } from "../session";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
@@ -10,7 +11,6 @@ import { MAX_PER_ORDER, availableItems, availableModels, getOrder, listOrders, o
 
 export const shop = new Hono<AppContext>();
 
-const uuid = z.string().uuid();
 
 // ---- Catalogue (public) -----------------------------------------------------------------------
 

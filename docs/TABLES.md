@@ -420,7 +420,7 @@ Migration 0039. One-time links for **email verification** and **password reset**
 
 ## snapshots
 
-Migration 0040. One row per program day (America/New_York), written by the nightly job from that day's completed transactions; the admin Overview shows the latest row plus today's running estimate (Durable Object counters, see AGENTS.md), so it never scans history. Money is bigint cents, counts are bigint. Written once per date (`snapshot_date` is unique); a missed night is made up later.
+Migration 0040. One row per program day (America/New_York), written by the nightly job from that day's completed transactions; the admin Overview shows the latest row plus today's running estimate (Durable Object counters, see AGENTS.md), so it never scans history. Money is bigint cents, counts are bigint. Written once per date (`snapshot_date` is unique); a missed night is made up later. **A snapshot is final**: once the day is over its numbers never change, even if a transaction is later reversed (the correction counts on the day it happens). A trigger (migration 0041) refuses deletes and every update except writing `reconciled` / `reconciliation` once.
 
 | Group | Columns |
 | --- | --- |

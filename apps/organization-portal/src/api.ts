@@ -108,7 +108,7 @@ export function createApi(token: string, base: string = API_URL) {
     devices: async () => (await request<{ devices: Device[] }>("GET", "/v1/devices")).devices,
     revokeDevice: (did: string) => request<null>("POST", `/v1/devices/${id(did)}/revoke`),
     overview: () => request<Overview>("GET", "/v1/org/overview"),
-    employees: async (q = "", status: "" | "claimed" | "unclaimed" = "") => (await request<{ employees: Employee[] }>("GET", `/v1/org/employees${qs({ q, status })}`)).employees,
+    employees: (q = "", status: "" | "claimed" | "unclaimed" = "", cursor?: string) => request<{ employees: Employee[]; next_cursor: string | null; total: number }>("GET", `/v1/org/employees${qs({ q, status, cursor })}`),
     removeEmployee: (eid: string) => request<null>("DELETE", `/v1/org/employees/${id(eid)}`),
     program: async () => (await request<{ program: Program }>("GET", "/v1/org/program")).program,
     setProgram: async (input: ProgramInput) => (await request<{ program: Program }>("PUT", "/v1/org/program", input)).program,

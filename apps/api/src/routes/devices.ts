@@ -2,13 +2,13 @@ import { RULES, byIp, rateLimit } from "../lib/throttle";
 import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { newSessionToken, verifyWalletLink } from "../crypto";
 import { requireDeviceSession, requireOwner } from "../session";
 
 export const devices = new Hono<AppContext>();
 
-const uuid = z.string().uuid();
 
 // Redeem is unauthenticated: the one-time link JWT is the credential.
 // Explicit POST (never GET) so message-preview fetches cannot consume the link.

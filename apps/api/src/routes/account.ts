@@ -6,7 +6,7 @@ import type { AppContext } from "../env";
 import { amount, n } from "../lib/money";
 import { sandboxFund } from "../lib/ledger";
 import { dailyHeadroom } from "../lib/benefits";
-import { dailyCap } from "./transfers";
+import { dailyCap } from "../lib/config";
 import { handleSchema } from "../lib/handle";
 import { requireOwner, requireSession } from "../session";
 import { imageUrl } from "../lib/images";

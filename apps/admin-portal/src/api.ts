@@ -308,8 +308,8 @@ export function createApi(token: string, base: string = API_URL) {
     organizations: async (q?: string) =>
       (await request<{ organizations: OrganizationRow[] }>("GET", `/v1/admin/organizations${q ? `?q=${encodeURIComponent(q)}` : ""}`)).organizations,
     organization: async (id: string) => absolutePhoto((await request<{ organization: OrganizationDetailData }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}`)).organization),
-    organizationEmployees: async (id: string, q?: string) =>
-      (await request<{ employees: OrgEmployeeRow[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/employees${q ? `?q=${encodeURIComponent(q)}` : ""}`)).employees,
+    organizationEmployees: (id: string, q?: string, cursor?: string) =>
+      request<{ employees: OrgEmployeeRow[]; next_cursor: string | null; total: number }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/employees${[q ? `q=${encodeURIComponent(q)}` : "", cursor ? `cursor=${encodeURIComponent(cursor)}` : ""].filter(Boolean).map((x, i) => (i ? "&" : "?") + x).join("")}`),
     organizationRuns: async (id: string) => (await request<{ runs: OrgRunRow[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/runs`)).runs,
     organizationDocuments: async (id: string) => (await request<{ documents: MerchantDocument[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/documents`)).documents,
     downloadOrganizationDocument: async (id: string, uploadId: string): Promise<Blob> => {
@@ -325,7 +325,7 @@ export function createApi(token: string, base: string = API_URL) {
     merchant: async (id: string) => absolutePhoto((await request<{ merchant: MerchantDetailData }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}`)).merchant),
     merchantTerminals: async (id: string) => (await request<{ terminals: MerchantTerminal[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/terminals`)).terminals,
     merchantStaff: async (id: string) => (await request<{ staff: MerchantStaffRow[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/staff`)).staff,
-    merchantProducts: async (id: string) => (await request<{ products: MerchantProduct[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/products`)).products,
+    merchantProducts: (id: string, cursor?: string) => request<{ products: MerchantProduct[]; next_cursor: string | null; total: number }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/products${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
     merchantTransactions: async (id: string, kind: MerchantTxKind = "all", cursor?: string, range: DayRange = {}) =>
       absTx(await request<MerchantTxPage>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
     /** Business approval (Admin, Merchants): the uploaded documents, a download, and the decision. */

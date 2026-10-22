@@ -3,6 +3,7 @@ import type { Api, DayRange, MerchantDetailData, MerchantProduct, MerchantStaffR
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
+import { usePaged } from "../usePaged";
 import { BusinessApproval } from "./BusinessApproval";
 import { EmailMerchants } from "./EmailMerchants";
 import { Avatar } from "./Avatar";
@@ -245,8 +246,9 @@ function Staff({ api, id, onError }: { api: Api; id: string; onError: (e: unknow
 }
 
 function Products({ api, id, onError }: { api: Api; id: string; onError: (e: unknown) => void }) {
-  const { data, failed, retry } = useList<MerchantProduct[]>(useCallback(() => api.merchantProducts(id), [api, id]), onError);
+  const { rows: data, total, hasMore, more, failed, retry, loadMore } = usePaged<MerchantProduct>(useCallback(async (cursor?: string) => { const r = await api.merchantProducts(id, cursor); return { items: r.products, next: r.next_cursor, total: r.total }; }, [api, id]), onError);
   return (
+    <>
     <div className="card flush">
       {failed && !data ? <p className="error pad" role="alert">Couldn't load products. <button className="link" onClick={retry}>Try Again</button></p>
         : !data ? <p className="muted pad" role="status">Loading…</p>
@@ -274,6 +276,13 @@ function Products({ api, id, onError }: { api: Api; id: string; onError: (e: unk
           </table>
         )}
     </div>
+      {data && data.length > 0 && (
+        <p className="more">
+          <span className="muted">Showing {int(data.length)} of {int(total)}</span>
+          {hasMore && <button type="button" className="ghost" disabled={more} onClick={() => void loadMore()}>{more ? "Loading…" : "Load More"}</button>}
+        </p>
+      )}
+    </>
   );
 }
 

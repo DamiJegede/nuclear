@@ -3,6 +3,7 @@ import type { Api, MerchantDocument, OrgEmployeeRow, OrgRunRow, OrganizationDeta
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
+import { usePaged } from "../usePaged";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 
@@ -167,7 +168,7 @@ function Employees({ api, id, onError }: { api: Api; id: string; onError: (e: un
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), q ? 250 : 0); return () => clearTimeout(t); }, [q]);
-  const { data, failed, retry } = useList<OrgEmployeeRow[]>(useCallback(() => api.organizationEmployees(id, term || undefined), [api, id, term]), onError);
+  const { rows: data, total, hasMore, more, failed, retry, loadMore } = usePaged<OrgEmployeeRow>(useCallback(async (cursor?: string) => { const r = await api.organizationEmployees(id, term || undefined, cursor); return { items: r.employees, next: r.next_cursor, total: r.total }; }, [api, id, term]), onError);
   return (
     <>
       <div className="filter-box"><input type="search" aria-label="Filter employees" placeholder="Filter by name, email or employee ID" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off" spellCheck={false} /></div>
@@ -198,6 +199,12 @@ function Employees({ api, id, onError }: { api: Api; id: string; onError: (e: un
             </table>
           )}
       </div>
+      {data && data.length > 0 && (
+        <p className="more">
+          <span className="muted">Showing {int(data.length)} of {int(total)}</span>
+          {hasMore && <button type="button" className="ghost" disabled={more} onClick={() => void loadMore()}>{more ? "Loading…" : "Load More"}</button>}
+        </p>
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { imageUrl } from "../lib/images";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { hashToken, signTerminalJwt } from "../crypto";
 import { decryptTagUrl } from "../lib/tagproof";
@@ -8,7 +9,6 @@ import { consumeCounter, isFresh, loadTag } from "../lib/tap";
 import { requireOwner, requireSession, requireTerminal } from "../session";
 import type { Sql } from "../db";
 
-const uuid = z.string().uuid();
 const nameSchema = z.string().trim().min(1).max(80);
 
 type TerminalRow = { id: string; account_id: string; name: string; allow_refunds: boolean; created_at: Date; updated_at: Date };

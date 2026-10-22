@@ -1,10 +1,11 @@
 import type { Sql } from "../db";
 import { imageUrl } from "./images";
 import { n } from "./money";
+import { DEFAULT_PAGE, encodePair } from "./paging";
 
 /** Read-only views of one organization (an employer, account type O) for the admin portal. Everything comes from existing tables. */
 
-const like = (q: string) => `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+import { likePattern as like } from "./sqlText";
 
 export async function organizationList(sql: Sql, q: string | null) {
   const rows = await sql<{
@@ -77,16 +78,25 @@ export async function organizationDetail(sql: Sql, id: string) {
 }
 
 /** The organization's people. Claim tokens, employee account ids and anything secret are never returned. */
-export async function organizationEmployees(sql: Sql, id: string, q: string | null) {
+export async function organizationEmployees(sql: Sql, id: string, q: string | null, limit: number = DEFAULT_PAGE, cursor: { ts: string; id: string } | null = null) {
+  const filters = sql`${q ? sql`and (name ilike ${like(q)} or email ilike ${like(q)} or employee_id ilike ${like(q)})` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from employees where org_account_id = ${id} ${filters}`;
+  const total = cnt!.total;
   const rows = await sql<{
     id: string; employee_id: string; name: string; email: string; status: string; claimed: boolean; balance: bigint; fixed_benefit: bigint | null;
-    reminded_at: Date | null; created_at: Date;
+    reminded_at: Date | null; created_at: Date; ts_key: string;
   }[]>`
-    select id, employee_id, name, email, status, (employee_account_id is not null) as claimed, balance, fixed_benefit, reminded_at, created_at
-      from employees where org_account_id = ${id}
-       ${q ? sql`and (name ilike ${like(q)} or email ilike ${like(q)} or employee_id ilike ${like(q)})` : sql``}
-     order by created_at desc, id desc limit 500`;
-  return rows.map((r) => ({ ...r, balance: n(r.balance), fixed_benefit: r.fixed_benefit === null ? null : n(r.fixed_benefit) }));
+    select id, employee_id, name, email, status, (employee_account_id is not null) as claimed, balance, fixed_benefit, reminded_at, created_at, created_at::text as ts_key
+      from employees where org_account_id = ${id} ${filters}
+       ${cursor ? sql`and (created_at, id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
+     order by created_at desc, id desc limit ${limit + 1}`;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    employees: page.map(({ ts_key: _t, ...r }) => ({ ...r, balance: n(r.balance), fixed_benefit: r.fixed_benefit === null ? null : n(r.fixed_benefit) })),
+    next_cursor: rows.length > limit && last ? encodePair(last.ts_key, last.id) : null,
+    total,
+  };
 }
 
 export async function organizationRuns(sql: Sql, id: string) {

@@ -16,12 +16,21 @@ export type ResetResult = { reset: boolean; wallets: number; products: number };
  * nothing, so spend made after midnight is never wiped. Safe to call any number of times, from any
  * number of requests at once: a second caller waits for the first to commit and then sees the new day.
  */
+/**
+ * The latest reset day this isolate has seen done. The stored day only ever moves forward, so once it has been seen at or past `day` no request
+ * in this isolate needs to ask the database again until the next program day starts: money requests no longer start with an extra round trip.
+ */
+let knownDay = "";
+/** Forget the cached day (tests that rewind the stored day on purpose). */
+export const forgetResetDay = () => { knownDay = ""; };
+
 export async function ensureDay(sql: Sql, day: string): Promise<ResetResult> {
+  if (knownDay >= day) return { reset: false, wallets: 0, products: 0 };            // no database read at all
   const [cur] = await sql<{ value: string }[]>`select value from system where key = 'daily_reset_day'`;
-  if (cur && cur.value >= day) return { reset: false, wallets: 0, products: 0 };    // the usual case: one cheap read
-  return sql.begin(async (tx) => {
+  if (cur && cur.value >= day) { knownDay = cur.value; return { reset: false, wallets: 0, products: 0 }; }    // one cheap read per isolate per day
+  const result = await sql.begin(async (tx) => {
     const won = await tx`update system set value = ${day} where key = 'daily_reset_day' and value < ${day} returning value`;
-    if (won.length === 0) return { reset: false, wallets: 0, products: 0 };
+    if (won.length === 0) { knownDay = day; return { reset: false, wallets: 0, products: 0 }; }
     const w = await tx`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
     const p = await tx`update products set sold_today = 0 where sold_today <> 0 returning id`;
     // The daily value cap: every consumer account starts the day with its actual ordinary value (balance minus Benefits wallets) as the
@@ -31,7 +40,9 @@ export async function ensureDay(sql: Sql, day: string): Promise<ResetResult> {
                             added_today = 0, opening_day = ${day}::date
         from accounts a where a.id = b.account_id and a.type = 'C' and b.opening_day < ${day}::date`;
     return { reset: true, wallets: w.length, products: p.length };
-  }) as Promise<ResetResult>;
+  }) as ResetResult;
+  if (result.reset) knownDay = day;          // committed: this isolate can stop asking
+  return result;
 }
 
 /** Middleware for routes that read or change the daily counters: catches up first if the cron missed a day. */

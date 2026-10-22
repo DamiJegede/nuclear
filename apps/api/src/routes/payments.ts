@@ -3,6 +3,7 @@ import { RULES, rateLimit } from "../lib/throttle";
 import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
@@ -13,7 +14,6 @@ import { checkStock, quoteCart, type CartLine } from "../lib/catalog";
 import { getCheckout, getItems, itemJson, payCheckout } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
 
-const uuid = z.string().uuid();
 const reference = z.string().trim().min(1).max(64).optional();
 
 export const credentialSchema = z.discriminatedUnion("type", [

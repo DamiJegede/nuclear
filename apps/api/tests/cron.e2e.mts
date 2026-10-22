@@ -1,7 +1,7 @@
 import postgres from "postgres";
 import app from "../src/index.ts";
 import { dailyJobs } from "../src/lib/cron.ts";
-import { easternDate, ensureDay } from "../src/lib/dailyReset.ts";
+import { easternDate, ensureDay, forgetResetDay } from "../src/lib/dailyReset.ts";
 import { connect } from "../src/db.ts";
 import { migrate, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
@@ -14,7 +14,7 @@ const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g)
 const at = (y: number, m: number, d: number, h: number, min = 0) => Date.UTC(y, m - 1, d, h, min);
 const local = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
 const sql = connect(env);
-const setDay = (d: string) => q("update system set value = $1 where key = 'daily_reset_day'", [d]);
+const setDay = async (d: string) => { forgetResetDay(); await q("update system set value = $1 where key = 'daily_reset_day'", [d]); };   // rewinding on purpose: drop the isolate's cached day
 const day = async () => (await q("select value d from system where key = 'daily_reset_day'"))[0].d as string;
 
 // ---- program dates around daylight saving

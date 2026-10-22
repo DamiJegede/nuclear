@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { requireOwner, requireSession } from "../session";
 
-const uuid = z.string().uuid();
 
 export const staff = new Hono<AppContext>();
 staff.use("*", requireSession, requireOwner, async (c, next) => {

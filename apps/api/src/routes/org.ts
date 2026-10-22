@@ -1,10 +1,13 @@
 import { track } from "../lib/tracker";
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
 import { n } from "../lib/money";
 import { profileBody, profileJson, type ProfileRow } from "./business";
+import { likePattern } from "../lib/sqlText";
+import { decodeTimeCursor, encodePair, pageLimit } from "../lib/paging";
 import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runBenefitRun } from "../lib/org";
 import { sendCreditEmails } from "../lib/orgMail";
 import { keyStatus, revokeKey, rotateKey } from "../lib/orgApiKey";
@@ -24,7 +27,6 @@ org.use("*", requireSession, requireOwner, async (c, next) => {
   await next();
 });
 
-const uuid = z.string().uuid();
 const creditRow = z.object({
   employee_id: z.string().trim().regex(/^[A-Za-z0-9]{1,64}$/),
   name: z.string().trim().min(1).max(120),
@@ -104,18 +106,31 @@ org.get("/employees", async (c) => {
   const sql = c.get("sql");
   const id = c.get("auth").accountId;
   const q = (c.req.query("q") ?? "").trim().slice(0, 80);
-  const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+  const like = likePattern(q);
   const status = c.req.query("status");
   if (status && !["claimed", "unclaimed"].includes(status)) return c.json({ error: "invalid_request" }, 400);
-  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date; benefits_wallet_id: string | null; fixed_benefit: bigint | null }[]>`
-    select e.id, e.employee_id, e.name, e.email, e.balance, (e.employee_account_id is not null) as claimed, e.reminded_at, e.created_at,
+  const limit = pageLimit.safeParse(c.req.query("limit"));
+  const cursor = decodeTimeCursor(c.req.query("cursor"));
+  if (!limit.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  const filters = sql`
+       ${q ? sql`and (e.name ilike ${like} or e.email ilike ${like} or e.employee_id ilike ${like})` : sql``}
+       ${status === "claimed" ? sql`and e.employee_account_id is not null` : status === "unclaimed" ? sql`and e.employee_account_id is null` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from employees e where e.org_account_id = ${id} and e.status = 'active' ${filters}`;
+  const total = cnt!.total;
+  const rows = await sql<{ id: string; employee_id: string; name: string; email: string; balance: bigint; claimed: boolean; reminded_at: Date | null; created_at: Date; ts_key: string; benefits_wallet_id: string | null; fixed_benefit: bigint | null }[]>`
+    select e.id, e.employee_id, e.name, e.email, e.balance, (e.employee_account_id is not null) as claimed, e.reminded_at, e.created_at, e.created_at::text as ts_key,
            e.fixed_benefit, (select w.id from wallets w where w.account_id = e.employee_account_id and w.org_account_id = e.org_account_id and w.type = 'benefits' and w.status <> 'closed') as benefits_wallet_id
       from employees e
-     where e.org_account_id = ${id} and e.status = 'active'
-       ${q ? sql`and (e.name ilike ${like} or e.email ilike ${like} or e.employee_id ilike ${like})` : sql``}
-       ${status === "claimed" ? sql`and e.employee_account_id is not null` : status === "unclaimed" ? sql`and e.employee_account_id is null` : sql``}
-     order by e.created_at desc, e.id desc limit 500`;
-  return c.json({ employees: rows.map((r) => ({ ...r, balance: n(r.balance), fixed_benefit: n(r.fixed_benefit) })) });
+     where e.org_account_id = ${id} and e.status = 'active' ${filters}
+       ${cursor ? sql`and (e.created_at, e.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
+     order by e.created_at desc, e.id desc limit ${limit.data + 1}`;
+  const page = rows.slice(0, limit.data);
+  const last = page[page.length - 1];
+  return c.json({
+    employees: page.map(({ ts_key: _t, ...r }) => ({ ...r, balance: n(r.balance), fixed_benefit: n(r.fixed_benefit) })),
+    next_cursor: rows.length > limit.data && last ? encodePair(last.ts_key, last.id) : null,
+    total,
+  });
 });
 
 // ---- The benefit program: Fixed Benefits (a schedule) or Flexible Benefits (credit when you choose) ----

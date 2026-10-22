@@ -1216,7 +1216,7 @@ describe("merchant support page", () => {
   const api = (extra: Partial<Api> = {}) => fakeApi({
     merchants: vi.fn().mockResolvedValue([ML]), merchant: vi.fn().mockResolvedValue(DETAIL), merchantTerminals: vi.fn().mockResolvedValue(TERMS),
     merchantStaff: vi.fn().mockResolvedValue([{ id: "s1", staff_account_id: "x", name: "Sam Staff", email: "sam@example.com", handle: "sam", role: "write", bank_last4: "9876", created_at: "2026-10-03T00:00:00Z" }]),
-    merchantProducts: vi.fn().mockResolvedValue([{ id: "p1", name: "Latte", category: "Drinks", price: 450, discount: 50, stock: 12, active: true, status: "available", total_sold: 30, sold_today: 4 }, { id: "p2", name: "Muffin", category: null, price: 300, discount: 0, stock: null, active: false, status: "available", total_sold: 0, sold_today: 0 }]),
+    merchantProducts: vi.fn().mockResolvedValue({ products: [{ id: "p1", name: "Latte", category: "Drinks", price: 450, discount: 50, stock: 12, active: true, status: "available", total_sold: 30, sold_today: 4 }, { id: "p2", name: "Muffin", category: null, price: 300, discount: 0, stock: null, active: false, status: "available", total_sold: 0, sold_today: 0 }], next_cursor: null, total: 2 }),
     merchantTransactions: vi.fn().mockResolvedValue(TXPAGE), signOutTerminal: vi.fn().mockResolvedValue(null), ...extra,
   } as Partial<Api>);
   async function open(a: Api, signed: SignedIn = SIGNED) {
@@ -1812,7 +1812,7 @@ describe("organizations", () => {
   const RUNS = [{ id: "r1", source: "schedule" as const, run_date: "2026-10-15", status: "missed" as const, row_count: 3, total: 16000, sent: 0, held: 0, failure_code: "insufficient_balance", created_at: "2026-10-15T09:00:00Z" }];
   const api = (extra: Partial<Api> = {}) => fakeApi({
     organizations: vi.fn().mockResolvedValue([ROW]), organization: vi.fn().mockResolvedValue(DETAIL),
-    organizationEmployees: vi.fn().mockResolvedValue(EMPLOYEES), organizationRuns: vi.fn().mockResolvedValue(RUNS),
+    organizationEmployees: vi.fn().mockResolvedValue({ employees: EMPLOYEES, next_cursor: null, total: EMPLOYEES.length }), organizationRuns: vi.fn().mockResolvedValue(RUNS),
     organizationDocuments: vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-03T00:00:00Z", file: "pdf" }]),
     downloadOrganizationDocument: vi.fn().mockResolvedValue(new Blob(["x"])),
     setOrganizationStatus: vi.fn().mockResolvedValue({ organization: { id: OID, status: "suspended" } }),
@@ -1868,7 +1868,7 @@ describe("organizations", () => {
     expect(eve).toHaveTextContent("$50.00");
     expect(screen.getByRole("row", { name: /Sam Two/ })).toHaveTextContent("removed");
     await user.type(screen.getByLabelText("Filter employees"), "eve");
-    await waitFor(() => expect(a.organizationEmployees).toHaveBeenLastCalledWith(OID, "eve"));
+    await waitFor(() => expect(a.organizationEmployees).toHaveBeenLastCalledWith(OID, "eve", undefined));
     await user.click(tab("Benefit Runs"));
     const run = await screen.findByRole("row", { name: /Schedule/ });
     expect(run).toHaveTextContent("missed");
@@ -1902,5 +1902,20 @@ describe("organizations", () => {
     const accounting: SignedIn = { ...SIGNED, role: "accounting", pages: ["overview", "transactions"], landing: "overview" };
     await signIn(api(), vi.fn().mockResolvedValue(accounting));
     expect(screen.queryByRole("link", { name: "Organizations" })).not.toBeInTheDocument();
+  });
+
+  it("an organization's employees load a page at a time", async () => {
+    const mk = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `e${from + i}`, employee_id: `E${from + i}`, name: `Person ${from + i}`, email: `p${from + i}@x.test`, status: "active" as const, claimed: false, balance: 0, fixed_benefit: null, reminded_at: null, created_at: "2026-10-02T00:00:00Z" }));
+    const organizationEmployees = vi.fn()
+      .mockResolvedValueOnce({ employees: mk(20, 1), next_cursor: "c2", total: 30 })
+      .mockResolvedValueOnce({ employees: mk(10, 21), next_cursor: null, total: 30 });
+    const user = await open(api({ organizationEmployees }));
+    await user.click(tab("Employees"));
+    expect(await screen.findByText("Person 1")).toBeInTheDocument();
+    expect(screen.getByText("Showing 20 of 30")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load More" }));
+    expect(await screen.findByText("Person 30")).toBeInTheDocument();
+    expect(organizationEmployees).toHaveBeenLastCalledWith(OID, undefined, "c2");
+    expect(screen.queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
   });
 });

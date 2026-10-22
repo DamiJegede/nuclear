@@ -517,7 +517,7 @@ const shopAct = (await call("GET", "/v1/activity?limit=100", { token: S })).json
 eq("merchant sees refund to member", [shopAct.direction, shopAct.counterparty.display_name], ["out", "Ada"]);
 
 // ============ catalogue: sales, stock, restock ============
-import { resetDailyCounters } from "../src/lib/ledger.ts";
+import { resetDailyCounters } from "./db.ts";
 const mkProduct = async (acct: string, name: string, price: number, o: { stock?: number | null; discount?: number; active?: boolean; status?: string; currency?: string } = {}) =>
   (await q("insert into products(account_id,name,price,discount,stock,active,status,currency) values($1,$2,$3,$4,$5,$6,$7,$8) returning id",
     [acct, name, price, o.discount ?? 0, o.stock === undefined ? null : o.stock, o.active ?? true, o.status ?? "available", o.currency ?? "USD"]))[0].id as string;

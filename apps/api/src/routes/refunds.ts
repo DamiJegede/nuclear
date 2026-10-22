@@ -2,6 +2,7 @@ import { track } from "../lib/tracker";
 import { Hono } from "hono";
 import type { TransactionSql } from "postgres";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext, Env } from "../env";
 import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
@@ -13,7 +14,6 @@ import {
 } from "../lib/refund";
 import { requireOwner, requireSession, requireTerminal } from "../session";
 
-const uuid = z.string().uuid();
 
 const credential = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tag"), url: z.string().min(1).max(512) }),

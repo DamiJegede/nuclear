@@ -4,10 +4,11 @@ import { ApiError, type Api, type Category, type Product } from "../api";
 import { dollarsToCents, int, money } from "../format";
 import { decimalOnly, digitsOnly } from "../inputs";
 import { peek, put } from "../cache";
+import { usePaged } from "../usePaged";
 import { usePageTitle } from "../title";
 import { Modal } from "./Modal";
 
-type Load = { categories: Category[]; products: Product[] };
+type Load = { categories: Category[] };
 
 /** The product catalog: categories on the left, products on the right (add, edit, deactivate, delete, picture). */
 export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
@@ -23,45 +24,56 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Categories are loaded once (and cached); products come a page at a time, filtered by the server (category and name).
+  const [term, setTerm] = useState("");
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), q ? 250 : 0); return () => clearTimeout(t); }, [q]);
+  const products = usePaged<Product>(useCallback(async (cursor?: string) => {
+    const r = await api.products({ ...(filter ? { category_id: filter } : {}), ...(term ? { q: term } : {}), ...(cursor ? { cursor } : {}) });
+    return { items: r.products, next: r.next_cursor, total: r.total };
+  }, [api, filter, term]), onError);
+  const [allTotal, setAllTotal] = useState<number | null>(null);          // every product, whatever the filter (the "All products" count)
+  useEffect(() => { if (!filter && !term && products.rows) setAllTotal(products.total); }, [filter, term, products.rows, products.total]);
+
   const load = useCallback(async (force = false) => {
     const hit = force ? undefined : peek<Load>("catalog");
     if (hit) { setData(hit); setFailed(false); return; }          // back to the page: no request
-    try { const [categories, products] = await Promise.all([api.categories(), api.products()]); const d = { categories, products }; put("catalog", d); setData(d); setFailed(false); }
+    try { const categories = await api.categories(); const d = { categories }; put("catalog", d); setData(d); setFailed(false); }
     catch (e) { setFailed(true); onError(e); }
   }, [api, onError]);
   useEffect(() => { void load(); }, [load]);
+  /** After any change: categories and the first page of products are read again. */
+  const reload = useCallback(async () => { await load(true); products.retry(); }, [load, products]);
 
   async function remove() {
     if (!removing) return;
     setBusy(true); setError(null);
-    try { await api.deleteProduct(removing.id); setRemoving(null); await load(); }
+    try { await api.deleteProduct(removing.id); setRemoving(null); await reload(); }
     catch (e) { onError(e); setError(e instanceof ApiError && e.code === "product_in_use" ? "This product has been sold, so it can't be deleted. Deactivate it instead." : "Couldn't delete it. Try again."); }
     finally { setBusy(false); }
   }
   async function removeCategory() {
     if (!catRemoving) return;
     setBusy(true); setError(null);
-    try { await api.deleteCategory(catRemoving.id); setCatRemoving(null); if (filter === catRemoving.id) setFilter(""); await load(); }
+    try { await api.deleteCategory(catRemoving.id); setCatRemoving(null); if (filter === catRemoving.id) setFilter(""); await reload(); }
     catch (e) { onError(e); setError(e instanceof ApiError && e.code === "category_has_products" ? "Move or delete its products first." : "Couldn't delete it. Try again."); }
     finally { setBusy(false); }
   }
   async function toggle(p: Product) {
-    try { await api.updateProduct(p.id, { active: !p.active }); await load(); } catch (e) { onError(e); }
+    try { await api.updateProduct(p.id, { active: !p.active }); await reload(); } catch (e) { onError(e); }
   }
 
   if (!data) return <section><h1>Catalog</h1>{failed ? <p className="error" role="alert">Couldn't load the catalog. <button className="link" onClick={() => void load(true)}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>}</section>;
-  const term = q.trim().toLowerCase();
-  const rows = data.products.filter((p) => (filter === "" || p.category_id === filter) && (!term || p.name.toLowerCase().includes(term)));
+  const rows = products.rows;
   const catName = (id: string | null) => data.categories.find((c) => c.id === id)?.name ?? "—";
 
   return (
     <section>
-      <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button><RefreshButton onClick={() => void load(true)} /></div></div>
+      <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button><RefreshButton onClick={() => void reload()} /></div></div>
       <div className="catalog">
         <aside className="card categories" aria-label="Categories">
           <h2>Categories</h2>
           <ul>
-            <li><button type="button" className={filter === "" ? "cat active" : "cat"} onClick={() => setFilter("")}>All products <span className="subtab-n">{data.products.length}</span></button></li>
+            <li><button type="button" className={filter === "" ? "cat active" : "cat"} onClick={() => setFilter("")}>All products {allTotal !== null && <span className="subtab-n">{allTotal}</span>}</button></li>
             {data.categories.map((c) => (
               <li key={c.id} className="cat-row">
                 <button type="button" className={filter === c.id ? "cat active" : "cat"} onClick={() => setFilter(c.id)}>{c.name} <span className="subtab-n">{c.products}</span></button>
@@ -75,7 +87,9 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
         <div>
           <div className="filter-box"><input type="search" aria-label="Filter products by name" placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off" /></div>
           <div className="card flush">
-            {rows.length === 0 ? <p className="muted pad">{data.products.length === 0 ? "No products yet. Add your first one." : "No products match."}</p> : (
+            {products.failed && !rows ? <p className="error pad" role="alert">Couldn't load products. <button className="link" onClick={products.retry}>Try Again</button></p>
+              : !rows ? <p className="muted pad" role="status">Loading…</p>
+              : rows.length === 0 ? <p className="muted pad">{!filter && !term ? "No products yet. Add your first one." : "No products match."}</p> : (
               <table>
                 <thead><tr><th scope="col">Product</th><th scope="col">Category</th><th scope="col" className="num">Price</th><th scope="col" className="num">Stock</th><th scope="col" className="num">Sold Today</th><th scope="col" className="num">Sold</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
@@ -99,11 +113,17 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
               </table>
             )}
           </div>
+          {rows && rows.length > 0 && (
+            <p className="more">
+              <span className="muted">Showing {int(rows.length)} of {int(products.total)}</span>
+              {products.hasMore && <button type="button" className="ghost" disabled={products.more} onClick={() => void products.loadMore()}>{products.more ? "Loading…" : "Load More"}</button>}
+            </p>
+          )}
         </div>
       </div>
 
-      {form && <ProductForm api={api} product={form === "new" ? undefined : form} categories={data.categories} defaultCategory={filter} onClose={() => setForm(null)} onError={onError} onSaved={async () => { setForm(null); await load(); }} />}
-      {catForm && <CategoryForm api={api} category={catForm === "new" ? undefined : catForm} onClose={() => setCatForm(null)} onError={onError} onSaved={async () => { setCatForm(null); await load(); }} />}
+      {form && <ProductForm api={api} product={form === "new" ? undefined : form} categories={data.categories} defaultCategory={filter} onClose={() => setForm(null)} onError={onError} onSaved={async () => { setForm(null); await reload(); }} />}
+      {catForm && <CategoryForm api={api} category={catForm === "new" ? undefined : catForm} onClose={() => setCatForm(null)} onError={onError} onSaved={async () => { setCatForm(null); await reload(); }} />}
       {removing && (
         <Modal title="Delete Product" onClose={() => setRemoving(null)} locked={busy}>
           <p>Delete <strong>{removing.name}</strong>? This can't be undone. A product that has already been sold can only be deactivated.</p>

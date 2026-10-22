@@ -15,3 +15,10 @@ export const migrationFiles = () => readdirSync(ROOT + "migrations").filter((f) 
 export const applyMigration = (file: string) => psql(["-f", ROOT + "migrations/" + file]);
 /** Applies every migration in order (or up to and including `upTo`). */
 export const migrate = (upTo?: string) => { for (const f of migrationFiles()) { if (upTo && f > upTo) break; applyMigration(f); } };
+
+/** Zeroes wallets.spent_today and products.sold_today (what the midnight reset does), for tests that move the day by hand. */
+export async function resetDailyCounters(sql: any): Promise<{ wallets: number; products: number }> {
+  const w = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
+  const p = await sql`update products set sold_today = 0 where sold_today <> 0 returning id`;
+  return { wallets: w.length, products: p.length };
+}

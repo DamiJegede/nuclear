@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
+import { decodePair, encodePair, pageLimit } from "../lib/paging";
 import type { AppContext } from "../env";
 import { customerLog } from "../lib/audit";
 import { encryptBankField } from "../lib/bankCrypto";
@@ -23,7 +25,6 @@ business.use("*", requireSession, requireOwner, async (c, next) => {
   await next();
 });
 
-const uuid = z.string().uuid();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 // ---- Overview: every number the portal's first page shows, in one request (they were ten, each repeating sign-in checks) ----
@@ -68,7 +69,7 @@ business.get("/overview", async (c) => {
 // ---- Transactions: this business's payments and refunds -----------------------------------------
 const txQuery = z.object({
   kind: z.enum(MERCHANT_TX_KINDS as [MerchantTxKind, ...MerchantTxKind[]]).default("all"),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: pageLimit,
   cursor: z.string().max(100).optional(),
   from: date.optional(),
   to: date.optional(),
@@ -247,16 +248,23 @@ const productJson = (p: ProductRow) => ({
 });
 
 business.get("/products", async (c) => {
-  const q = z.object({ category_id: uuid.optional(), q: z.string().trim().max(80).optional() }).safeParse(c.req.query());
-  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  const q = z.object({ category_id: uuid.optional(), q: z.string().trim().max(80).optional(), limit: pageLimit, cursor: z.string().max(400).optional() }).safeParse(c.req.query());
+  const cursor = q.success ? decodePair(q.data.cursor) : null;
+  if (!q.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
   const sql = c.get("sql");
   const term = (q.data.q ?? "").replace(/[\\%_]/g, "\\$&");
-  const rows = await sql<ProductRow[]>`
-    select ${sql.unsafe(PCOLS)} from products where account_id = ${c.get("auth").accountId}
+  const filters = sql`
       ${q.data.category_id ? sql`and category_id = ${q.data.category_id}` : sql``}
-      ${term ? sql`and name ilike ${"%" + term + "%"}` : sql``}
-    order by name, id limit 500`;
-  return c.json({ products: rows.map(productJson) });
+      ${term ? sql`and name ilike ${"%" + term + "%"}` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from products where account_id = ${c.get("auth").accountId} ${filters}`;
+  const total = cnt!.total;
+  const rows = await sql<ProductRow[]>`
+    select ${sql.unsafe(PCOLS)} from products where account_id = ${c.get("auth").accountId} ${filters}
+      ${cursor ? sql`and (name, id) > (${cursor[0]}, ${cursor[1]}::uuid)` : sql``}
+    order by name, id limit ${q.data.limit + 1}`;
+  const page = rows.slice(0, q.data.limit);
+  const last = page[page.length - 1];
+  return c.json({ products: page.map(productJson), next_cursor: rows.length > q.data.limit && last ? encodePair(last.name, last.id) : null, total });
 });
 
 const productBody = z.object({

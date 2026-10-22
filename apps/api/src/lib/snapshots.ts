@@ -12,7 +12,8 @@ import { liveStats, type LiveStats } from "./stats";
  * running lifetime (previous row + the day). The admin Overview shows the latest snapshot plus today's running estimate (tracker.ts), so it never
  * scans history.
  */
-export const addDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+export { addDays } from "./dates";
+import { addDays } from "./dates";
 
 /** What each activity column counts: a filter over completed transactions. */
 const FILTERS: Record<string, string> = {
@@ -201,8 +202,8 @@ export async function overviewStats(env: Env, sql: Sql): Promise<LiveStats> {
   };
 }
 
-/** Records the ledger check on the day's snapshot row. */
+/** Records the ledger check on the day's snapshot row, once (the database refuses any other change to a snapshot). */
 export const saveReconciliation = (sql: Sql, date: string, rec: Record<string, unknown>, ok: boolean) =>
-  sql`update snapshots set reconciled = ${ok}, reconciliation = ${JSON.stringify(rec)}::text::jsonb where snapshot_date = ${date}::date`;
+  sql`update snapshots set reconciled = ${ok}, reconciliation = ${JSON.stringify(rec)}::text::jsonb where snapshot_date = ${date}::date and reconciled is null`;   // written once: a snapshot is final
 
 export type { Deltas };

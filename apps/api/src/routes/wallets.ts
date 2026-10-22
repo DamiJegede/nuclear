@@ -3,19 +3,19 @@ import { imageUrl } from "../lib/images";
 import { saveProfilePhoto } from "../lib/profilePhoto";
 import { customerLog } from "../lib/audit";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { LINK_TTL, newAgentKey, signWalletLink } from "../crypto";
 import { amount as amountPositive, amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { setWalletBalance } from "../lib/walletFunds";
 import { moveFunds } from "../lib/benefits";
-import { dailyCap } from "./transfers";
+import { dailyCap } from "../lib/config";
 
 export const wallets = new Hono<AppContext>();
 wallets.use("*", requireSession);
 
 const MAX_WALLETS_PER_ACCOUNT = 25;
-const uuid = z.string().uuid();
 
 type WalletRow = {
   id: string;

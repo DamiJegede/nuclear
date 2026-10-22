@@ -39,12 +39,6 @@ export async function creditWallet(tx: Tx, walletId: string, amount: bigint) {
   await tx`update wallets set balance = balance + ${amount.toString()} where id = ${walletId} and balance is not null`;
 }
 
-/** Money leaving an earmarked wallet. */
-export async function debitWallet(tx: Tx, walletId: string, amount: bigint) {
-  if (amount <= 0n) return;
-  await tx`update wallets set balance = balance - ${amount.toString()} where id = ${walletId} and balance is not null`;
-}
-
 export type SetBalanceResult =
   | { ok: true; balance: bigint | null; delta: bigint }
   | { ok: false; error: "not_found" | "wallet_closed" | "insufficient_shared_balance" | "account_restricted" | "benefits_wallet_locked"; available?: bigint };

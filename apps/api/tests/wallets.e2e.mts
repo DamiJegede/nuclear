@@ -1,7 +1,7 @@
 import { ROOT, applyMigration, migrate, psql, resetSchema } from "./db.ts";
 import { readFileSync } from "node:fs";
 import app from "../src/index.ts";
-import { resetDailyCounters } from "../src/lib/ledger.ts";
+import { resetDailyCounters } from "./db.ts";
 import { easternDate } from "../src/lib/dailyReset.ts";
 import { connect } from "../src/db.ts";
 

@@ -237,9 +237,3 @@ export async function liveStats(sql: Sql): Promise<LiveStats> {
     },
   };
 }
-
-/** Everything, computed now (no cache). The cache layer calls the two halves on their own schedules. */
-export async function systemStats(sql: Sql): Promise<SystemStats> {
-  const [live, rec] = await Promise.all([liveStats(sql), reconciliationStats(sql)]);
-  return { ...live, reconciliation: rec, reconciliation_checked_at: new Date().toISOString(), reconciliation_stale: false };
-}

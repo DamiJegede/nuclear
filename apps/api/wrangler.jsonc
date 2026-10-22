@@ -17,8 +17,8 @@
     // The organization portal (local dev and hosted).
     "ORG_ORIGINS": "http://localhost:5175,https://nuclear-organization.a-space.workers.dev",
     "ADMIN_ORIGINS": "http://localhost:5173,https://nuclear-admin.a-space.workers.dev",
-    // System emails go out from this address through the EMAIL (Cloudflare Email Service) binding; nclr.app must be a verified sending domain.
-    "EMAIL_FROM": "Nuclear <noreply@nclr.app>",
+    // EMAIL IS OFF (owner, 2026-10-22: a send failed and hurt the sender reputation). With no EMAIL_FROM nothing is sent and the text is kept in the
+    // audit log. To turn it back on, restore: "EMAIL_FROM": "Nuclear <noreply@nclr.app>" (nclr.app must be a verified sending domain) and deploy.
     // Where emailed links (verify email, reset password) open for businesses and organizations.
     "MERCHANT_PORTAL_URL": "https://nuclear-merchant.a-space.workers.dev",
     "ORG_PORTAL_URL": "https://nuclear-organization.a-space.workers.dev",

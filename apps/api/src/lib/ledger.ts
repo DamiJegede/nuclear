@@ -9,7 +9,6 @@ type Tx = TransactionSql<{ bigint: bigint }>;
 /** Program day boundary: 00:00 America/New_York (spent_today resets here). */
 export const PROGRAM_TZ = "America/New_York";
 
-export const DEFAULT_DAILY_VALUE_CAP = 200_000n; // $2,000, configurable (spec target, not final)
 
 export type TxRow = {
   id: string;
@@ -274,11 +273,4 @@ export async function sandboxFund(
        where id = ${fundingId} returning ${tx.unsafe(F_COLS)}`;
     return { kind: "ok", funding: f!, replayed: false };
   }) as Promise<FundingOutcome>;
-}
-
-/** Zeroes wallets.spent_today and products.sold_today. Prefer ensureDay (lib/dailyReset.ts), which does this once per program day. */
-export async function resetDailyCounters(sql: Sql): Promise<{ wallets: number; products: number }> {
-  const w = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
-  const p = await sql`update products set sold_today = 0 where sold_today <> 0 returning id`;
-  return { wallets: w.length, products: p.length };
 }

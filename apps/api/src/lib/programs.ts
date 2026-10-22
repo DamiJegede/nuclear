@@ -21,7 +21,8 @@ export const WARN_DAYS = 3;
 
 const toDate = (s: string) => new Date(`${s}T00:00:00Z`);
 const fmt = (d: Date) => d.toISOString().slice(0, 10);
-export const addDays = (s: string, n: number) => fmt(new Date(toDate(s).getTime() + n * 86_400_000));
+export { addDays } from "./dates";
+import { addDays } from "./dates";
 export const weekdayOf = (s: string) => toDate(s).getUTCDay();
 export const daysBetween = (a: string, b: string) => Math.round((toDate(b).getTime() - toDate(a).getTime()) / 86_400_000);
 

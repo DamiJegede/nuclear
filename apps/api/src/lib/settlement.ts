@@ -3,6 +3,7 @@ import type { Sql } from "../db";
 import type { Env } from "../env";
 import { achProvider, type AchItem, type AchProvider } from "./ach";
 import { log } from "./audit";
+import { addDays } from "./dates";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
 
@@ -25,7 +26,6 @@ type Tx = TransactionSql<{ bigint: bigint }>;
  * If the cron is missed, the next run's net already includes everything since (the net is the live balance).
  */
 
-const dayBefore = (iso: string) => new Date(Date.parse(`${iso}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
 export type SettlementRun = { id: string; cutoff_date: string; status: string };
 export type RunSummary =
@@ -35,7 +35,7 @@ export type RunSummary =
 /** Settles the program day before `today`. Safe to call repeatedly. */
 export async function runSettlement(env: Env, sql: Sql, today: string, provider: AchProvider | null = achProvider(env)): Promise<RunSummary> {
   if (!provider) return { ran: false, reason: "no_provider" };
-  const date = dayBefore(today);
+  const date = addDays(today, -1);
   const [claimed] = await sql<{ id: string }[]>`
     insert into settlements (cutoff_date, cutoff_at) values (${date}::date, now())
     on conflict (cutoff_date) do nothing returning id`;

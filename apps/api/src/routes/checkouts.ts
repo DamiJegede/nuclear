@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amount } from "../lib/money";
 import { quoteCart, type CartLine } from "../lib/catalog";
 import { checkoutJson, getCheckout, getItems, insertCheckout, listCheckouts } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
 
-const uuid = z.string().uuid();
 
 // ---- Terminal: /v1/terminal/checkouts ---------------------------------------------------------
 // The POS creates an order, then the customer pays it (tap via /v1/terminal/payments, or their own

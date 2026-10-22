@@ -38,6 +38,8 @@ const today = easternDate(new Date()), y = addDays(today, -1);
 const sqlc = connect(env);
 const traced: string[] = [];
 (globalThis as any).__sqlTrace = (s: string) => traced.push(s);
+// Snapshots are final (a trigger refuses deletes), so tests that simulate a missed night switch it off around their setup.
+const wipe = async (sqlText: string, p: unknown[] = []) => { await q("alter table snapshots disable trigger snapshots_final"); await q(sqlText, p); await q("alter table snapshots enable trigger snapshots_final"); };
 const noonOf = (d: string) => `((${"'" + d + "'"}::date)::timestamp + interval '12 hours') at time zone 'America/New_York'`;
 
 // ---- the counters themselves
@@ -131,12 +133,12 @@ eq("lifetime is the previous day's plus the day, and equals a full recount", [Nu
 eq("the day's own columns are only the day", [Number(s2.sends_count), Number(s2.sends_volume), Number(s2.loads_volume)], [1, 700, 2000]);
 
 // ---- a missed cron is made up, oldest first
-await q("delete from snapshots where snapshot_date = $1::date", [today]);
+await wipe("delete from snapshots where snapshot_date = $1::date", [today]);
 const made = await catchUpSnapshots(sqlc, addDays(today, 2));
 eq("missing days are written in order", made, [today, addDays(today, 1), addDays(today, 2)]);
 
 // ---- the nightly job: snapshot, ledger checks recorded on the day, old counters pruned
-await q("delete from snapshots where snapshot_date > $1::date", [y]);
+await wipe("delete from snapshots where snapshot_date > $1::date", [y]);
 await fund(payer, 100, "f9");
 const night = Date.parse(`${addDays(today, 1)}T05:00:00Z`);
 const job: any = await dailyJobs(night, env);

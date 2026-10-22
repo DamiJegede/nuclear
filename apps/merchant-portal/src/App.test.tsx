@@ -28,7 +28,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     payouts: vi.fn().mockResolvedValue([]),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
-    products: vi.fn().mockResolvedValue([]),
+    products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }),
     checkouts: vi.fn().mockResolvedValue([]),
     transactions: vi.fn().mockResolvedValue({ counts: { all: 0, payments: 0, refunds: 0, pending: 0 }, totals: { payments: { count: 0, volume: 0 }, refunds: { count: 0, volume: 0 } }, transactions: [], next_cursor: null }),
     ...over,
@@ -280,7 +280,7 @@ describe("transactions and orders", () => {
 describe("catalog", () => {
   it("shows products with discounts and stock, filters by category and name, and adds a product (numeric-only fields, price in cents)", async () => {
     const createProduct = vi.fn().mockResolvedValue({ ...PRODUCT, id: "pr2", name: "Muffin" });
-    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products: vi.fn().mockResolvedValue([PRODUCT, { ...PRODUCT, id: "pr3", name: "Bagel", category_id: null, discount: 0, stock: null }]), createProduct }));
+    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products: vi.fn().mockImplementation(async ({ category_id }: { category_id?: string } = {}) => { const all = [PRODUCT, { ...PRODUCT, id: "pr3", name: "Bagel", category_id: null, discount: 0, stock: null }]; const rows = category_id ? all.filter((p) => p.category_id === category_id) : all; return { products: rows, next_cursor: null, total: rows.length }; }), createProduct }));
     await user.click(await navLink("Catalog"));
     const row = await screen.findByRole("row", { name: /Latte/ });
     expect(row).toHaveTextContent("$4.00");
@@ -299,9 +299,29 @@ describe("catalog", () => {
     expect(createProduct).toHaveBeenCalledWith({ name: "Muffin", price: 350, discount: 0, category_id: "c1", stock: 12, active: true });
   });
 
+  it("products load a page at a time: the count, Load More, and a filter that asks the server", async () => {
+    const mk = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ ...PRODUCT, id: `p${from + i}`, name: `Thing ${String(from + i).padStart(2, "0")}` }));
+    const products = vi.fn()
+      .mockResolvedValueOnce({ products: mk(20, 1), next_cursor: "c2", total: 25 })
+      .mockResolvedValueOnce({ products: mk(5, 21), next_cursor: null, total: 25 })
+      .mockResolvedValue({ products: [], next_cursor: null, total: 0 });
+    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products }));
+    await user.click(await navLink("Catalog"));
+    expect(await screen.findByText("Thing 01")).toBeInTheDocument();
+    expect(screen.getByText("Showing 20 of 25")).toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "Categories" })).getByRole("button", { name: /^All products/ })).toHaveTextContent("25");
+    await user.click(screen.getByRole("button", { name: "Load More" }));
+    expect(await screen.findByText("Thing 25")).toBeInTheDocument();
+    expect(products).toHaveBeenLastCalledWith({ cursor: "c2" });
+    expect(screen.getByText("Showing 25 of 25")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Filter products by name"), "xyz");
+    await waitFor(() => expect(products).toHaveBeenLastCalledWith({ q: "xyz" }));
+    expect(await screen.findByText("No products match.")).toBeInTheDocument();
+  });
+
   it("a product that was sold can't be deleted and the page says to deactivate it", async () => {
     const deleteProduct = vi.fn().mockRejectedValue(new ApiError(409, "product_in_use"));
-    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([]), products: vi.fn().mockResolvedValue([PRODUCT]), deleteProduct }));
+    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([]), products: vi.fn().mockResolvedValue({ products: [PRODUCT], next_cursor: null, total: 1 }), deleteProduct }));
     await user.click(await navLink("Catalog"));
     await user.click(await screen.findByRole("button", { name: "Delete" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm Delete" }));

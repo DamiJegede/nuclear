@@ -1,0 +1,33 @@
+import { randomBytes } from "node:crypto";
+import app from "../src/index.ts";
+import { forgetResetDay } from "../src/lib/dailyReset.ts";
+import { migrate, resetSchema, PG_URL } from "./db.ts";
+resetSchema(); migrate();
+const OP = "op-" + randomBytes(16).toString("hex");
+const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", STATS_TTL_SECONDS: "0" };
+const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
+let pass = 0, fail = 0;
+const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
+let log: string[] = [];
+(globalThis as any).__sqlTrace = (s: string) => log.push(s.replace(/\s+/g, " "));
+const call = async (m: string, p: string, o: any = {}) => { const r = await app.fetch(new Request("http://x" + p, { method: m, headers: { "content-type": "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...(o.key ? { "idempotency-key": o.key } : {}) }, body: o.body === undefined ? undefined : JSON.stringify(o.body) }), env, ctx); const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null }; };
+const resetReads = () => log.filter((l) => l.includes("daily_reset_day")).length;
+
+const a = (await call("POST", "/v1/auth/signup", { body: { name: "A", email: "a@x.test", password: "correct horse battery" } })).json;
+forgetResetDay();
+log = [];
+await call("POST", "/v1/sandbox/fundings", { token: a.session_token, key: "f1", body: { amount: 1000 } });
+eq("the first money request in an isolate reads the reset day once", resetReads(), 1);
+log = [];
+await call("POST", "/v1/sandbox/fundings", { token: a.session_token, key: "f2", body: { amount: 1000 } });
+await call("GET", "/v1/wallets", { token: a.session_token });
+await call("GET", "/v1/balance", { token: a.session_token });
+eq("later requests in the same isolate do not read it again", resetReads(), 0);
+eq("and the money still moved", (await call("GET", "/v1/balance", { token: a.session_token })).json.balance, 2000);
+forgetResetDay();
+log = [];
+await call("GET", "/v1/wallets", { token: a.session_token });
+eq("a new isolate (cache gone) reads it again", resetReads(), 1);
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
