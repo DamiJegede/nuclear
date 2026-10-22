@@ -14,7 +14,7 @@ const UPLOADS = {
   get: async (k: string) => { const f = files.get(k); return f ? { httpMetadata: f.httpMetadata, arrayBuffer: async () => f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.byteLength) } : null; },
 };
 const sent: any[] = [];
-const EMAIL = { send: async (m: any) => { sent.push(m); } };
+const EMAIL = { send: async (m: any) => { if (m.subject !== "Verify your email for Nuclear") sent.push(m); } };
 const env: any = { MERCHANT_ORIGINS: "http://localhost:5174,https://portal.example", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"), SANDBOX_FUNDING: "true", UPLOADS, EMAIL, EMAIL_FROM: "Nuclear <no-reply@example.com>" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;

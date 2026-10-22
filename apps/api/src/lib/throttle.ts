@@ -12,6 +12,10 @@ export const RULES = {
   adminLoginIp: { limit: 20, windowSec: 60 },
   signupIp: { limit: 10, windowSec: 60 * 60 },
   redeemIp: { limit: 20, windowSec: 60 },
+  tokenIp: { limit: 20, windowSec: 60 },                // opening an emailed verification or reset link
+  resetIp: { limit: 10, windowSec: 60 * 60 },           // asking for a password reset email, per IP
+  resetEmail: { limit: 3, windowSec: 60 * 60 },         // ... and per email address (stops mail bombing someone)
+  verifyResend: { limit: 3, windowSec: 60 * 60 },       // asking for another verification email, per account
   lookupEmail: { limit: 30, windowSec: 60 * 60 },      // recipient lookup by email, per account (stops enumeration)
   lookupHandle: { limit: 60, windowSec: 60 },
   tagClaim: { limit: 20, windowSec: 60 * 60 },

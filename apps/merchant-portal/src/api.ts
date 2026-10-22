@@ -35,7 +35,7 @@ async function send<T>(base: string, token: string | null, method: string, path:
 export type Session = { account_id: string; device_id: string; session_token: string; session_expires_at: string };
 export type AccountStatus = "active" | "pending" | "declined" | "suspended" | "closed";
 export type Account = {
-  account_id: string; type: "B" | "C"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; bio: string | null;
+  account_id: string; type: "B" | "C"; handle: string | null; name: string; email: string | null; email_verified?: boolean; phone: string | null; photo: string | null; bio: string | null;
   tier: string; status: AccountStatus; decline?: { reason: string | null; at: string };
 };
 export type Balance = { balance: number; earmarked: number; balance_pending: number; credit_limit: number; credit_spent: number; available_to_send: number; available_to_pay: number; restricted: boolean };
@@ -86,6 +86,11 @@ export const signIn = (email: string, password: string, base: string = API_URL) 
 export const signUp = (input: { name: string; email: string; password: string; phone?: string }, base: string = API_URL) =>
   send<Session>(base, null, "POST", "/v1/auth/signup", { ...input, type: "B", platform: "web" });
 
+// Emailed links and "forgot password": public, no session.
+export const requestPasswordReset = (email: string, base: string = API_URL) => send<{ ok: true }>(base, null, "POST", "/v1/auth/password-reset", { email });
+export const confirmPasswordReset = (token: string, password: string, base: string = API_URL) => send<{ ok: true }>(base, null, "POST", "/v1/auth/password-reset/confirm", { token, password });
+export const verifyEmail = (token: string, base: string = API_URL) => send<{ verified: true }>(base, null, "POST", "/v1/auth/verify-email", { token });
+
 export type Api = ReturnType<typeof createApi>;
 
 /** Calls made as a signed-in business owner. The session token is held by the caller, never logged. */
@@ -103,6 +108,7 @@ export function createApi(token: string, base: string = API_URL) {
   };
   return {
     logout: () => request<null>("POST", "/v1/auth/logout"),
+    resendVerification: () => request<{ already_verified?: boolean; email?: string }>("POST", "/v1/auth/verify-email/resend"),
     account: () => request<Account>("GET", "/v1/account"),
     balance: () => request<Balance>("GET", "/v1/balance"),
     setBio: async (bio: string | null) => (await request<{ bio: string | null }>("PUT", "/v1/account/bio", { bio })).bio,

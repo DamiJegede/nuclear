@@ -10,12 +10,16 @@ export interface Env {
   UPLOADS?: R2Bucket;
   /** Cloudflare Email Service binding (send_email). Needs a verified sending domain; see EMAIL_FROM. */
   EMAIL?: { send(message: { from: string; to: string; subject: string; text: string }): Promise<unknown> };
-  /** Sender address for system emails, on a domain verified in Cloudflare Email Service, e.g. "Nuclear <no-reply@example.com>". Unset = emails are not sent (the text is kept in the audit log). */
+  /** Sender address for system emails, on a domain verified in Cloudflare Email Service, e.g. "Nuclear <noreply@nclr.app>". Unset = emails are not sent (the text is kept in the audit log). */
   EMAIL_FROM?: string;
   /** HS256 secret for wallet magic-link JWTs. `wrangler secret put JWT_SECRET`; `.dev.vars` locally. */
   JWT_SECRET: string;
-  /** Base URL used to build magic links. Defaults to https://app.nuclear.us */
+  /** Base URL used to build magic links and customer email links. Defaults to https://app.nuclear.us */
   APP_URL?: string;
+  /** Where email links for business accounts open (the merchant portal). Falls back to APP_URL. */
+  MERCHANT_PORTAL_URL?: string;
+  /** Where email links for organization accounts open (the organization portal). Falls back to APP_URL. */
+  ORG_PORTAL_URL?: string;
   /** "true" enables POST /v1/sandbox/fundings (simulated bank load). Never enable in live. */
   SANDBOX_FUNDING?: string;
   /**

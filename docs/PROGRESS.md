@@ -13,15 +13,15 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `0d15afb4` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `324e4e17` |
-| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5b578bbc` |
-| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `97d03fce` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `3a7c8cd9` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `68a8e729` |
+| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5067028f` |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `68e8b4cc` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 34 tables, 38 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 35 tables, 39 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgres), 156 admin-portal tests, 24 merchant-portal tests, 44 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 34 API test suites (about 1,457 checks, run on a throwaway local Postgres), 163 admin-portal tests, 29 merchant-portal tests, 49 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 
@@ -87,7 +87,7 @@ Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgr
 - **Removal never blocks on held credit** (2026-10-21, migration 0038): removing an employee only hides them; credit held for them stays theirs and claimable, and still counts as held.
 - **Mass edit of employees** (2026-10-21): checkboxes and an action bar on the Employees page (Set Fixed Benefit, Clear Fixed Benefit, Remove); one all-or-nothing call, `POST /v1/org/employees/bulk`.
 - **One daily value cap** (migration 0037): loads, incoming sends and Benefits-to-ordinary moves all use `cap - ordinary_opening - added_today - balance_pending`, kept on the `balances` row; organizations and businesses are exempt; refunds, claims and employer credits are never counted; `caps` suite (15 checks) and `daily_caps_match_ledger` reconciliation.
-- **Open:** consumer claim, balance and move screens; admin and support views of organizations; real bank funding and settlement; employer verification, employee identification and program classification. See `ORGANIZATIONS.md` ("Not built") and the cap-rule note there: only Benefits moves use the opening-value measure.
+- **Open:** consumer claim, balance and move screens; real bank funding and a real ACH provider for settlement; employer verification, employee identification and program classification. See `ORGANIZATIONS.md` ("Not built") and the cap-rule note there: only Benefits moves use the opening-value measure.
 
 ## 5b. Terminal app and Orb firmware (scaffolds)
 
@@ -111,10 +111,10 @@ Quality: 31 API test suites (about 1,385 checks, run on a throwaway local Postgr
 
 ## Open items and known gaps
 
-- **Settlement job** not built: the `settlements` table and `settle` transaction type exist, but nothing runs the daily cutoff, so there are no payouts yet.
+- **Settlement job** built 2026-10-22 (`lib/settlement.ts`, daily cron): whole-net payouts and collections per active merchant with a bank, confirmation by the bank rail, reversals for returned payouts, resumable and idempotent; only a sandbox rail exists (no ACH provider chosen), and there is no admin screen for settlements yet. No new tables.
 - **Email sending**: approval and merchant emails are not delivered until `EMAIL_FROM` is set to an address on a domain verified in Cloudflare Email Service. Until then the text is kept in the Logs.
 - **Bank account numbers** are stored encrypted (AES-256-GCM, key `BANK_ENCRYPTION_KEY`, done 2026-10-19); routing numbers are public and stored as plain digits. Remaining: copy the key into the password manager, and consider a KMS or HSM-held key before launch.
-- **Not built**: pass issuance, real bank linking and funding, merchant staff logins, merchant two-step verification, password reset, email verification, credit-limit approval flow, per-transaction caps and recipient allow-lists for agents.
+- **Not built**: pass issuance, real bank linking and funding, merchant staff logins, merchant two-step verification, credit-limit approval flow, per-transaction caps and recipient allow-lists for agents.
 - **Passkeys** (discussed, not built): need a final domain decided first.
 - **Admin portal page cache**: only the merchant portal has it so far.
 - **Before launch**: rebuild into a fresh database with consolidated migrations (see the rebuild table in `TABLES.md`), and resize the database from its current 1/16 vCPU PS-5.

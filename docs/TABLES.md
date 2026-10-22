@@ -4,7 +4,7 @@ Updated October 13, 2026. Working schema consolidation; not an applied database 
 
 ## Current decisions
 
-The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, and the admin portal adds two more, admins and admin_sessions, for twenty-one in total (migrations 0001 to 0008). Later migrations add wallet_allocations, throttles, system, shop, orders, logs, uploads, settlements, employees, benefit_runs, benefit_run_rows, benefit_programs and api_keys, for 34 tables in nuclear-dev today (the counts above are historical). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
+The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, and the admin portal adds two more, admins and admin_sessions, for twenty-one in total (migrations 0001 to 0008). Later migrations add wallet_allocations, throttles, system, shop, orders, logs, uploads, settlements, employees, benefit_runs, benefit_run_rows, benefit_programs, api_keys and account_tokens, for 35 tables in nuclear-dev today (the counts above are historical). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
 
 Confirmed refinements: accounts.handle after type (nullable, set or changed later only by the primary account's own session; 4-12 alphanumeric, unique index); password_hash; owner-issued five-minute wallet magic links and devices, with no member_account_id; businesses.account_id primary key; bank_accounts.last4 and provider_account_id without verified_at; separate account-wide balance plus approved credit; sends use funded balance only, merchant payments may also use approved credit; no pending-funding availability; spent_today counts successful sends/payments and resets at midnight Eastern; nullable tags.transaction_limit; inline business address; refund/adjustment types; transactions.status_code; explicit endpoint foreign keys; failed funding attempts remain in fundings.
 
@@ -24,6 +24,7 @@ The old pending/open/early-spend model and early-spend return policy are withdra
 | photo | R2 key of the account's profile picture (`accounts/<id>-<epoch ms>.jpg`, 256 x 256 JPEG, uploaded after the account exists), or NULL. Older rows may hold an https address. |
 | tier | free, plus, or insider. |
 | status | Account access/lifecycle status: active, pending (a new business awaiting approval), declined (refused; the business may upload a new document, which returns it to pending), suspended or closed. Businesses start pending; customers start active. A pending or declined business can sign in, see its status, upload documents and sign out, and nothing else. |
+| email_verified_at | Migration 0039. When the owner proved control of `email` by opening the emailed link (or by resetting the password with one); NULL = not verified. Nothing is blocked while it is NULL. Logically after email (physically last in the dev database). |
 | bio | Short text the owner writes about themselves or their business, up to **128 characters** (CHECK); NULL = none. Added by migration 0023 (limit set to 128 by 0024) (physically last in the dev database; here at its logical position). |
 | created_at | Creation timestamp. |
 | ordinary_opening | Migration 0037. Bigint: the account's ordinary funded value (balance minus its Benefits wallets) at the start of the program day (America/New_York). Only meaningful for consumer accounts. Rolled once a day by ensureDay. Logically after balance_pending (physically last today). |
@@ -402,6 +403,21 @@ Migration 0030, see [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an 
 
 There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in benefit_run_rows and the transactions.
 
+## account_tokens
+
+Migration 0039. One-time links for **email verification** and **password reset**. Only the SHA-256 of the random token is stored; the token travels in the emailed link and is shown nowhere else.
+
+| Field | Description |
+| --- | --- |
+| id | UUID primary key. |
+| account_id | The account the link is for. |
+| kind | `verify_email` (valid 24 hours) or `reset_password` (valid 1 hour). |
+| email | The address the link was sent to. A verification link only verifies if it still matches the account's email. |
+| token_hash | SHA-256 of the token. Unique. |
+| expires_at | When the link stops working. |
+| used_at | Set when the link is used; a used link never works again. Asking for a new link marks the older unused ones of that kind used. |
+| created_at | When it was issued. |
+
 ## api_keys
 
 Migration 0034, see [ORGANIZATIONS.md](ORGANIZATIONS.md#benefits-api). A generic table of API keys; today only organizations (account type O) use it, for the Benefits API.
@@ -567,7 +583,7 @@ An authenticated merchant payment intent supplies merchant and amount; a tag URL
 
 ## settlements
 
-One row per settlement run, i.e. per daily cutoff (migration 0025; the settlement job that writes it is not built yet). The run is created first, which claims its `cutoff_date`, then writes one `settle` transaction per merchant with a non-zero net, then closes.
+One row per settlement run, i.e. per daily cutoff (migration 0025; written by the settlement job, `lib/settlement.ts`). The run is created first, which claims its `cutoff_date`, then writes one `settle` transaction per merchant with a non-zero net, then closes.
 
 | Field | Description |
 | --- | --- |
@@ -618,6 +634,7 @@ The dev database (nuclear-dev) will be rebuilt from scratch into a new database 
 | Table | Column | Logical position | Added by |
 | --- | --- | --- | --- |
 | accounts | bio | before created_at | 0023 |
+| accounts | email_verified_at | after email | 0039 |
 | transactions | settlement_id | after related_transaction_id (end of the table today) | 0025 |
 | orders | delivery | after status/transaction_id block as listed above (end of the table today) | 0022 |
 | shop | kind, file | kind after status, file after kind (end of the table today) | 0022 |

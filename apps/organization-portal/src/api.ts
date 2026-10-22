@@ -33,7 +33,7 @@ async function send<T>(base: string, token: string | null, method: string, path:
 
 // ---- Types ----------------------------------------------------------------------------------------
 export type Session = { account_id: string; device_id: string; session_token: string; session_expires_at: string };
-export type Account = { account_id: string; type: "C" | "B" | "O"; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; status: string };
+export type Account = { account_id: string; type: "C" | "B" | "O"; handle: string | null; name: string; email: string | null; email_verified?: boolean; phone: string | null; photo: string | null; status: string };
 export type Balance = { balance: number; balance_pending: number };
 /** One benefits run: every credit run is the same record, whether it came from this portal's CSV, the API or (later) the scheduler. */
 export type Run = { id: string; rows: number; total: number; sent: number; held: number; source: "csv" | "api" | "schedule"; status: "credited" | "waiting_for_funds" | "missed"; run_date: string; created_at: string };
@@ -72,6 +72,11 @@ export const signIn = (email: string, password: string, base: string = API_URL) 
 export const signUp = (input: { name: string; email: string; password: string; phone?: string }, base: string = API_URL) =>
   send<Session>(base, null, "POST", "/v1/auth/signup", { ...input, type: "O", platform: "web" });
 
+// Emailed links and "forgot password": public, no session.
+export const requestPasswordReset = (email: string, base: string = API_URL) => send<{ ok: true }>(base, null, "POST", "/v1/auth/password-reset", { email });
+export const confirmPasswordReset = (token: string, password: string, base: string = API_URL) => send<{ ok: true }>(base, null, "POST", "/v1/auth/password-reset/confirm", { token, password });
+export const verifyEmail = (token: string, base: string = API_URL) => send<{ verified: true }>(base, null, "POST", "/v1/auth/verify-email", { token });
+
 export type Api = ReturnType<typeof createApi>;
 
 /** Calls made as a signed-in organization owner. The session token is held by the caller, never logged. */
@@ -89,6 +94,7 @@ export function createApi(token: string, base: string = API_URL) {
   };
   return {
     logout: () => request<null>("POST", "/v1/auth/logout"),
+    resendVerification: () => request<{ already_verified?: boolean; email?: string }>("POST", "/v1/auth/verify-email/resend"),
     account: () => request<Account>("GET", "/v1/account"),
     uploadPhoto: (file: Blob) => request<{ photo: string }>("PUT", "/v1/account/photo", file),
     apiKey: async () => (await request<{ key: ApiKeyStatus | null }>("GET", "/v1/org/api-key")).key,

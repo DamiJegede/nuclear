@@ -13,8 +13,8 @@ export async function sendCreditEmails(env: Env, sql: Sql, orgName: string, noti
   for (const x of notices) {
     const m = creditEmail(x.name, orgName, x.amount, claimLink(env, x.token));
     const r = await sendMail(env, { to: x.email, ...m });
-    out[r] += 1;
-    if (r !== "sent") await sql`update employees set reminded_at = null where claim_token_hash = ${hashToken(x.token)}`;
+    out[r === "suppressed" ? "not_configured" : r] += 1;
+    if (r !== "sent" && r !== "suppressed") await sql`update employees set reminded_at = null where claim_token_hash = ${hashToken(x.token)}`;
   }
   return out;
 }
@@ -34,7 +34,8 @@ export async function remindUnclaimed(env: Env, sql: Sql, limit = 200) {
   for (const e of due) {
     const token = randomBytes(32).toString("base64url");
     const m = creditReminderEmail(e.name, e.org_name, e.balance, claimLink(env, token));
-    if ((await sendMail(env, { to: e.email, ...m })) === "sent") {
+    const r = await sendMail(env, { to: e.email, ...m });
+    if (r === "sent" || r === "suppressed") {            // a suppressed (seeded) address counts as told, so it never crowds out real ones
       await sql`update employees set claim_token_hash = ${hashToken(token)}, reminded_at = now() where id = ${e.id} and employee_account_id is null`;
       sent += 1;
     }

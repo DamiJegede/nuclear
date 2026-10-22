@@ -17,6 +17,11 @@
     // The organization portal (local dev and hosted).
     "ORG_ORIGINS": "http://localhost:5175,https://nuclear-organization.a-space.workers.dev",
     "ADMIN_ORIGINS": "http://localhost:5173,https://nuclear-admin.a-space.workers.dev",
+    // System emails go out from this address through the EMAIL (Cloudflare Email Service) binding; nclr.app must be a verified sending domain.
+    "EMAIL_FROM": "Nuclear <noreply@nclr.app>",
+    // Where emailed links (verify email, reset password) open for businesses and organizations.
+    "MERCHANT_PORTAL_URL": "https://nuclear-merchant.a-space.workers.dev",
+    "ORG_PORTAL_URL": "https://nuclear-organization.a-space.workers.dev",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },

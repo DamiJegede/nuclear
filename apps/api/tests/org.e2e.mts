@@ -12,7 +12,7 @@ const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const OP = "op-" + randomBytes(16).toString("hex");
 const mails: { to: string; subject: string; text: string }[] = [];
-const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", APP_URL: "https://app.test", EMAIL_FROM: "Nuclear <no-reply@test>", EMAIL: { send: async (m: any) => { mails.push(m); } } };
+const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", APP_URL: "https://app.test", EMAIL_FROM: "Nuclear <no-reply@test>", EMAIL: { send: async (m: any) => { if (m.subject !== "Verify your email for Nuclear") mails.push(m); } } };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };

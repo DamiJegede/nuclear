@@ -4,6 +4,7 @@ import { easternDate, ensureDay } from "./dailyReset";
 import { sweep } from "./throttle";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
+import { pollSubmittedSettlements, runSettlement } from "./settlement";
 
 /**
  * The daily job. Cloudflare fires it at 04:00 and 05:00 UTC, which brackets midnight in New York in
@@ -24,7 +25,11 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const reminders = await remindUnclaimed(env, sql).catch((err) => (console.error("reminders failed", err), null));
     // Fixed Benefits programs: credit what is due today (and retry or close what is waiting). Never blocks the reset.
     const programs = await runDuePrograms(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("programs failed", err), null));
-    return { ...day, swept, reminders, programs };
+    // Merchant settlement: pay out (or collect) every active merchant's net for the day that just ended, and poll runs the bank still owes
+    // an answer for. Never blocks the reset; the run claims its date, so the second cron of the day does nothing new.
+    const settlement = await runSettlement(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("settlement failed", err), null));
+    const polled = await pollSubmittedSettlements(env, sql).catch((err) => (console.error("settlement poll failed", err), null));
+    return { ...day, swept, reminders, programs, settlement, polled };
   } finally {
     await sql.end();
   }

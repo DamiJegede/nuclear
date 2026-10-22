@@ -5,7 +5,7 @@ import { AGENT_KEY_PREFIX, hashToken, verifyTerminalJwt } from "./crypto";
 import { connect } from "./db";
 
 /** The only routes a pending or declined business may use. */
-const PENDING_OK = new Set(["/v1/account", "/v1/account/documents", "/v1/auth/logout"]);
+const PENDING_OK = new Set(["/v1/account", "/v1/account/documents", "/v1/auth/logout", "/v1/auth/verify-email/resend"]);
 
 /** Opens one DB client per request and closes it after the response. */
 export const withDb: MiddlewareHandler<AppContext> = async (c, next) => {

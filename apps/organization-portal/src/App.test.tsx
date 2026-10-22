@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { App } from "./App";
+import { Login } from "./views/Login";
 import { ApiError, type Account, type Api, type Program, type Session } from "./api";
 import { parseCsv, readCreditCsv, readFixedCsv } from "./csv";
 import { fit } from "./format";
@@ -583,5 +584,74 @@ describe("organization portal", () => {
   it("signs out when the session ends", async () => {
     await open(fakeApi({ overview: vi.fn().mockRejectedValue(new ApiError(401, "unauthorized")) }));
     expect(await screen.findByText("Your session ended. Sign in again.")).toBeInTheDocument();
+  });
+});
+
+describe("email links and forgot password", () => {
+  it("asks for a reset link from the sign-in page and gives the same answer either way", async () => {
+    window.history.replaceState(null, "", "/");
+    const user = userEvent.setup();
+    const request = vi.fn().mockResolvedValue({ ok: true });
+    render(<Login signIn={vi.fn()} signUp={vi.fn()} notice={null} onSignedIn={vi.fn()} requestPasswordReset={request} />);
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Email"), "Me@Example.com");
+    await user.click(screen.getByRole("button", { name: "Send Reset Link" }));
+    expect(request).toHaveBeenCalledWith("me@example.com");
+    expect(await screen.findByText(/If an account exists for that email/)).toBeInTheDocument();
+  });
+
+  it("opens the reset page from the emailed link, checks the passwords and sends the token", async () => {
+    window.history.replaceState(null, "", "/reset-password?token=tok-abc");
+    const user = userEvent.setup();
+    const confirm = vi.fn().mockResolvedValue({ ok: true });
+    render(<App confirmPasswordReset={confirm} />);
+    expect(screen.getByRole("heading", { name: "Choose a new password" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("New Password"), "short");
+    await user.type(screen.getByLabelText("Repeat Password"), "short");
+    await user.click(screen.getByRole("button", { name: "Change Password" }));
+    expect(await screen.findByText("Use a password of at least 10 characters.")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("New Password")); await user.clear(screen.getByLabelText("Repeat Password"));
+    await user.type(screen.getByLabelText("New Password"), "a long new password");
+    await user.type(screen.getByLabelText("Repeat Password"), "a different one 1");
+    await user.click(screen.getByRole("button", { name: "Change Password" }));
+    expect(await screen.findByText("The two passwords don't match.")).toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText("Repeat Password"));
+    await user.type(screen.getByLabelText("Repeat Password"), "a long new password");
+    await user.click(screen.getByRole("button", { name: "Change Password" }));
+    expect(confirm).toHaveBeenCalledWith("tok-abc", "a long new password");
+    expect(await screen.findByRole("heading", { name: "Password changed" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    expect(window.location.pathname).toBe("/");
+    expect(await screen.findByLabelText("Email")).toBeInTheDocument();
+  });
+
+  it("explains a reset link that is no longer valid", async () => {
+    window.history.replaceState(null, "", "/reset-password?token=old");
+    const user = userEvent.setup();
+    render(<App confirmPasswordReset={vi.fn().mockRejectedValue(new ApiError(400, "invalid_token"))} />);
+    await user.type(screen.getByLabelText("New Password"), "a long new password");
+    await user.type(screen.getByLabelText("Repeat Password"), "a long new password");
+    await user.click(screen.getByRole("button", { name: "Change Password" }));
+    expect(await screen.findByText(/invalid, already used, or has expired/)).toBeInTheDocument();
+  });
+
+  it("confirms the email address from the verify link, and says so when the link is bad", async () => {
+    window.history.replaceState(null, "", "/verify-email?token=good");
+    const verify = vi.fn().mockResolvedValue({ verified: true });
+    const { unmount } = render(<App verifyEmail={verify} />);
+    expect(await screen.findByRole("heading", { name: "Email verified" })).toBeInTheDocument();
+    expect(verify).toHaveBeenCalledWith("good");
+    unmount();
+    window.history.replaceState(null, "", "/verify-email?token=bad");
+    render(<App verifyEmail={vi.fn().mockRejectedValue(new ApiError(400, "invalid_token"))} />);
+    expect(await screen.findByRole("heading", { name: "This link can't be used" })).toBeInTheDocument();
+  });
+
+  it("ignores these addresses without a token", () => {
+    window.history.replaceState(null, "", "/reset-password");
+    render(<App />);
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 });

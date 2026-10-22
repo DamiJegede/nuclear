@@ -166,7 +166,7 @@ business.put("/bank", async (c) => {
 });
 
 // Settlements to and from the payout bank: type 'settle' transactions (a positive daily net is a payout to the bank, a negative one a collection
-// from it). The settlement job is not built yet, so this is empty until it runs; the table is the transactions table, no separate payouts table.
+// from it). Written by the daily settlement job (lib/settlement.ts); the table is the transactions table, no separate payouts table.
 business.get("/payouts", async (c) => {
   const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);

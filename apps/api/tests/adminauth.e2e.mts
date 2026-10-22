@@ -107,7 +107,7 @@ eq("before enrolling, nothing but /me, /logout and MFA setup is open", [
   (await call("GET", "/v1/admin/stats", { token: T1 })).json.error,
   (await call("GET", "/v1/admin/tag-models", { token: T1 })).status,
   (await call("POST", "/v1/admin/admins", { token: T1, body: { name: "Sneaky" } })).status], ["mfa_setup_required", 403, 403]);
-eq("/me has no token-change flag", (await call("GET", "/v1/admin/me", { token: T1 })).json, { access_id: "JANE.DOE", name: "Jane Doe", role: "admin", pages: ["overview", "merchants", "users", "tags", "admins", "transactions", "shop", "audit"], landing: "overview", mfa_enabled: false });
+eq("/me has no token-change flag", (await call("GET", "/v1/admin/me", { token: T1 })).json, { access_id: "JANE.DOE", name: "Jane Doe", role: "admin", pages: ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions", "shop", "audit"], landing: "overview", mfa_enabled: false });
 const recov = await enroll(T1, "JANE.DOE");
 eq("after enrolling, the same session reaches the data", [recov.length, (await call("GET", "/v1/admin/stats", { token: T1 })).status], [10, 200]);
 eq("there is no route to change an Access Token", [(await call("POST", "/v1/admin/access-token", { token: T1, body: { current_access_token: TOKEN0, new_access_token: "q".repeat(32) } })).status >= 400, (await signIn("JANE.DOE", TOKEN0)).status], [true, 200]);
@@ -125,7 +125,7 @@ const list = (await as("GET", "/v1/admin/admins")).json.admins;
 eq("the list shows who created whom (the operator shows as null)", [list.find((a: any) => a.access_id === byJane.json.credentials.access_id).created_by, list.find((a: any) => a.access_id === cr.access_id).created_by], ["JANE.DOE", null]);
 eq("the list never contains tokens or hashes", [JSON.stringify(list).includes("scrypt"), JSON.stringify(list).includes(byJane.json.credentials.access_token), JSON.stringify(list).includes("hash")], [false, false, false]);
 eq("changing existing admins stays with the operator", [(await as("PATCH", `/v1/admin/admins/${jane}`, { status: "disabled" })).status, (await as("PATCH", `/v1/admin/admins/${jane}`, { reset_access_token: true })).status], [403, 403]);
-eq("the operator token still works for scripts", [(await op("GET", "/v1/admin/stats")).status, (await op("GET", "/v1/admin/me")).json], [200, { operator: true, role: "admin", pages: ["overview", "merchants", "users", "tags", "admins", "transactions", "shop", "audit"], landing: "overview" }]);
+eq("the operator token still works for scripts", [(await op("GET", "/v1/admin/stats")).status, (await op("GET", "/v1/admin/me")).json], [200, { operator: true, role: "admin", pages: ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions", "shop", "audit"], landing: "overview" }]);
 eq("a random token opens nothing", (await call("GET", "/v1/admin/stats", { token: randomBytes(24).toString("base64url") })).status, 401);
 eq("the new admin can sign in, has no MFA yet", await (async () => { const r = await signInRaw(byJane.json.credentials.access_id, byJane.json.credentials.access_token); return [r.status, r.json.mfa_enabled]; })(), [200, false]);
 

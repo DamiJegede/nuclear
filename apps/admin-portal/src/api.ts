@@ -81,6 +81,29 @@ export type TxPage = {
 /** Program dates (America/New_York, YYYY-MM-DD), inclusive. */
 export type DayRange = { from?: string; to?: string };
 
+export type OrganizationRow = {
+  id: string; name: string; email: string | null; status: string; created_at: string; email_verified: boolean; balance: number;
+  mode: "fixed" | "flexible" | null; chosen: boolean | null; employees: number; claimed: number; held: number; runs: number;
+};
+export type OrganizationDetailData = {
+  id: string; name: string; legal_name: string | null; handle: string | null; status: string; email: string | null; email_verified: boolean; phone: string | null;
+  created_at: string; website: string | null; photo: string | null; bio: string | null;
+  address: { line: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null };
+  balance: number;
+  program: { mode: "fixed" | "flexible"; chosen: boolean; cadence: "monthly" | "weekly" | "biweekly" | null; day_of_month: number | null; weekday: number | null; next_run_date: string | null; fixed_total: number };
+  employees: { total: number; claimed: number; unclaimed: number; removed: number; held: number };
+  runs: { count: number; credited: number; last_run_at: string | null };
+  api_key: { hint: string; created_at: string; last_used_at: string | null } | null;
+  documents: number;
+};
+export type OrgEmployeeRow = {
+  id: string; employee_id: string; name: string; email: string; status: "active" | "removed"; claimed: boolean; balance: number; fixed_benefit: number | null;
+  reminded_at: string | null; created_at: string;
+};
+export type OrgRunRow = {
+  id: string; source: "csv" | "api" | "schedule"; run_date: string; status: "credited" | "waiting_for_funds" | "missed"; row_count: number;
+  total: number; sent: number; held: number; failure_code: string | null; created_at: string;
+};
 export type MerchantDetailData = {
   id: string; name: string; legal_name: string | null; handle: string | null; status: string; email: string | null; phone: string | null;
   created_at: string; website: string | null; photo: string | null; bio?: string | null; tier: string | null;
@@ -275,6 +298,23 @@ export function createApi(token: string, base: string = API_URL) {
       (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
     transactions: async (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       absTx(await request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
+    organizations: async (q?: string) =>
+      (await request<{ organizations: OrganizationRow[] }>("GET", `/v1/admin/organizations${q ? `?q=${encodeURIComponent(q)}` : ""}`)).organizations,
+    organization: async (id: string) => absolutePhoto((await request<{ organization: OrganizationDetailData }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}`)).organization),
+    organizationEmployees: async (id: string, q?: string) =>
+      (await request<{ employees: OrgEmployeeRow[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/employees${q ? `?q=${encodeURIComponent(q)}` : ""}`)).employees,
+    organizationRuns: async (id: string) => (await request<{ runs: OrgRunRow[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/runs`)).runs,
+    organizationDocuments: async (id: string) => (await request<{ documents: MerchantDocument[] }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/documents`)).documents,
+    downloadOrganizationDocument: async (id: string, uploadId: string): Promise<Blob> => {
+      let res: Response;
+      try { res = await fetch(`${base.replace(/\/$/, "")}/v1/admin/organizations/${encodeURIComponent(id)}/documents/${encodeURIComponent(uploadId)}`, { headers: { authorization: `Bearer ${token}` } }); }
+      catch { throw new ApiError(0, "network_error"); }
+      if (!res.ok) throw new ApiError(res.status, `http_${res.status}`);
+      return res.blob();
+    },
+    setOrganizationStatus: (id: string, status: "active" | "suspended") =>
+      request<{ organization: { id: string; status: string } }>("PUT", `/v1/admin/organizations/${encodeURIComponent(id)}/status`, { status }),
+    organizationActivity: (id: string, cursor?: string) => request<LogPage>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/activity?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
     merchant: async (id: string) => absolutePhoto((await request<{ merchant: MerchantDetailData }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}`)).merchant),
     merchantTerminals: async (id: string) => (await request<{ terminals: MerchantTerminal[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/terminals`)).terminals,
     merchantStaff: async (id: string) => (await request<{ staff: MerchantStaffRow[] }>("GET", `/v1/admin/merchants/${encodeURIComponent(id)}/staff`)).staff,

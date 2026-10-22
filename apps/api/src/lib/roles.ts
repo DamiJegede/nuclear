@@ -5,15 +5,15 @@
 export const ROLES = ["admin", "accounting", "sales", "support", "tags", "merchants"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const PAGES = ["overview", "merchants", "users", "tags", "admins", "transactions", "shop", "audit"] as const;
+export const PAGES = ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions", "shop", "audit"] as const;
 export type Page = (typeof PAGES)[number];
 
 /** Pages per role. Every role can also open its own Security page (its own two-step verification). */
 export const ROLE_PAGES: Record<Role, readonly Page[]> = {
   admin: PAGES,
   accounting: ["overview", "transactions"],
-  sales: ["users", "merchants", "tags", "shop"],
-  support: ["users", "transactions"],
+  sales: ["users", "merchants", "organizations", "tags", "shop"],
+  support: ["users", "organizations", "transactions"],
   tags: ["tags"],
   merchants: ["merchants"],
 };
@@ -32,6 +32,9 @@ export const MERCHANT_WRITERS: readonly Role[] = ["admin", "merchants"];
 
 /** Roles that may approve or reject a merchant's pending refunds and suspend or reactivate a merchant. */
 export const MERCHANT_ADMINS: readonly Role[] = ["admin"];
+
+/** Roles that may run a settlement now or ask the bank for a run's answer. Everyone with the Transactions page may read settlements. */
+export const SETTLEMENT_ADMINS: readonly Role[] = ["admin"];
 
 /** Roles that may take support actions on a person: sign them out everywhere, unlock their login, revoke an agent key. */
 export const USER_WRITERS: readonly Role[] = ["admin", "support"];

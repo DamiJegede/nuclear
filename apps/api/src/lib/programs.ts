@@ -109,7 +109,8 @@ export async function runDuePrograms(env: Env, sql: Sql, today: string = eastern
   // 1. Warn ahead.
   const soon = await sql<Due[]>`
     select ${sql.unsafe(P_COLS)} from benefit_programs
-     where mode = 'fixed' and next_run_date > ${today}::date and next_run_date <= ${addDays(today, WARN_DAYS)}::date and warned_for is distinct from next_run_date`;
+     where mode = 'fixed' and next_run_date > ${today}::date and next_run_date <= ${addDays(today, WARN_DAYS)}::date and warned_for is distinct from next_run_date
+       and exists (select 1 from accounts a where a.id = org_account_id and a.status = 'active')`;
   for (const p of soon) {
     const f = await fixedTotals(sql, p.org_account_id);
     const [o] = await sql<{ name: string; email: string | null; balance: bigint }[]>`select a.name, a.email, b.balance from accounts a join balances b on b.account_id = a.id where a.id = ${p.org_account_id}`;
@@ -122,7 +123,9 @@ export async function runDuePrograms(env: Env, sql: Sql, today: string = eastern
 
   // 2. Run what is due.
   const due = await sql<Due[]>`
-    select ${sql.unsafe(P_COLS)} from benefit_programs where mode = 'fixed' and next_run_date <= ${today}::date order by next_run_date, org_account_id limit 100`;
+    select ${sql.unsafe(P_COLS)} from benefit_programs where mode = 'fixed' and next_run_date <= ${today}::date
+       and exists (select 1 from accounts a where a.id = org_account_id and a.status = 'active')   -- a suspended organization pays nobody
+     order by next_run_date, org_account_id limit 100`;
   for (const p of due) {
     const claimed = await sql`
       update benefit_programs set last_attempt_at = now()

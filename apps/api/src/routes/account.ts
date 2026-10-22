@@ -20,15 +20,15 @@ account.use("*", requireSession);
 account.get("/account", requireOwner, async (c) => {
   const sql = c.get("sql");
   const [a] = await sql<
-    { id: string; type: string; handle: string | null; name: string; email: string | null; phone: string | null; photo: string | null; bio: string | null; tier: string; status: string }[]
-  >`select id, type, handle, name, email, phone, photo, bio, tier, status from accounts where id = ${c.get("auth").accountId}`;
+    { id: string; type: string; handle: string | null; name: string; email: string | null; email_verified_at: Date | null; phone: string | null; photo: string | null; bio: string | null; tier: string; status: string }[]
+  >`select id, type, handle, name, email, email_verified_at, phone, photo, bio, tier, status from accounts where id = ${c.get("auth").accountId}`;
   if (!a) return c.json({ error: "not_found" }, 404);
   // A declined business is told why (the reason an admin wrote when declining).
   const [d] = a.status === "declined"
     ? await sql<{ reason: string | null; at: Date }[]>`select details->>'reason' as reason, created_at as at from logs where action = 'merchant.declined' and target_id = ${a.id} order by created_at desc, id desc limit 1`
     : [];
   return c.json({
-    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, phone: a.phone, photo: imageUrl(a.photo), bio: a.bio, tier: a.tier, status: a.status,
+    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, email_verified: a.email_verified_at !== null, phone: a.phone, photo: imageUrl(a.photo), bio: a.bio, tier: a.tier, status: a.status,
     ...(d ? { decline: { reason: d.reason, at: d.at } } : {}),
   });
 });

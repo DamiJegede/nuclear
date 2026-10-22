@@ -1,12 +1,24 @@
 import type { Env } from "../env";
 
-export type MailResult = "sent" | "failed" | "not_configured";
+export type MailResult = "sent" | "failed" | "not_configured" | "suppressed";
+
+/**
+ * Addresses on these domains belong to seeded demo and test data and must never receive real mail (the demo scripts create hundreds of
+ * them). A message to one is not sent and reports "suppressed", which callers treat as handled, not as a failure.
+ */
+const SUPPRESSED_DOMAINS = ["seed.nuclear.test"];
+
+export function isSuppressed(address: string): boolean {
+  const domain = address.trim().toLowerCase().split("@").pop() ?? "";
+  return SUPPRESSED_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
+}
 
 /**
  * Sends one plain-text email through Cloudflare Email Service. It never throws: the caller records the
  * outcome (and the text) in the audit log, so an email problem never undoes the action that caused it.
  */
 export async function sendMail(env: Env, m: { to: string; subject: string; text: string }): Promise<MailResult> {
+  if (isSuppressed(m.to)) return "suppressed";
   if (!env.EMAIL || !env.EMAIL_FROM) return "not_configured";
   try {
     await env.EMAIL.send({ from: env.EMAIL_FROM, to: m.to, subject: m.subject, text: m.text });
@@ -53,4 +65,22 @@ export const lowFundsEmail = (org: string, date: string, total: bigint, balance:
 export const runMissedEmail = (org: string, date: string, total: bigint, reason: string) => ({
   subject: `Your ${dateLabel(date)} benefits payment was missed`,
   text: `Hello ${org},\n\nWe could not make your scheduled Fixed Benefits payment of ${usd(total)} for ${dateLabel(date)} (${reason}). Nobody was charged and no employee was credited.\n\nThe next scheduled payment is unchanged. If you still want to pay these benefits now, you can credit them from the Benefits page or the Benefits API.\n\nThe Nuclear team`,
+});
+
+/** Sent at sign-up (and on request): proves the person controls the address. */
+export const verifyEmail = (name: string, link: string) => ({
+  subject: "Verify your email for Nuclear",
+  text: `Hello ${name},\n\nPlease confirm this is your email address by opening this link within 24 hours:\n${link}\n\nIf you did not create a Nuclear account, you can ignore this email.\n\nThe Nuclear team`,
+});
+
+/** Sent when someone asks to reset a password. The link works once, for one hour. */
+export const resetPasswordEmail = (name: string, link: string) => ({
+  subject: "Reset your Nuclear password",
+  text: `Hello ${name},\n\nWe received a request to reset your Nuclear password. Open this link within one hour to choose a new one:\n${link}\n\nFor your security, resetting signs you out everywhere. If you did not ask for this, ignore this email and your password stays as it is.\n\nThe Nuclear team`,
+});
+
+/** Sent after a password was changed through a reset link, in case it was not the owner. */
+export const passwordChangedEmail = (name: string) => ({
+  subject: "Your Nuclear password was changed",
+  text: `Hello ${name},\n\nYour Nuclear password was just changed with a reset link, and every device was signed out. If this was you, no action is needed. If it was not, reply to this email right away.\n\nThe Nuclear team`,
 });

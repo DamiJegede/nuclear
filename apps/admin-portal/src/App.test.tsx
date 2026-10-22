@@ -1768,3 +1768,114 @@ describe("shop and audit log", () => {
     expect(userActivity).toHaveBeenCalledWith(UID, undefined);
   });
 });
+
+describe("organizations", () => {
+  const OID = "0190dddd-eeee-7fff-8aaa-bbbbbbbbbbbb";
+  const ROW = { id: OID, name: "Acme Corp", email: "hr@acme.test", status: "active", created_at: "2026-10-01T00:00:00Z", email_verified: true, balance: 100000, mode: "fixed" as const, chosen: true, employees: 3, claimed: 1, held: 7500, runs: 2 };
+  const DETAIL = {
+    id: OID, name: "Acme Corp", legal_name: "Acme Corporation Inc", handle: "acme", status: "active", email: "hr@acme.test", email_verified: false, phone: null,
+    created_at: "2026-10-01T00:00:00Z", website: "https://acme.test", photo: null, bio: null,
+    address: { line: "1 Main St", city: "Brooklyn", state: "NY", post_code: "11201", country: "US" }, balance: 100000,
+    program: { mode: "fixed" as const, chosen: true, cadence: "monthly" as const, day_of_month: 15, weekday: null, next_run_date: "2026-11-15", fixed_total: 16000 },
+    employees: { total: 3, claimed: 1, unclaimed: 2, removed: 1, held: 7500 }, runs: { count: 2, credited: 20000, last_run_at: "2026-10-18T10:00:00Z" },
+    api_key: { hint: "AB12", created_at: "2026-10-05T00:00:00Z", last_used_at: null }, documents: 1,
+  };
+  const EMPLOYEES = [
+    { id: "e1", employee_id: "E001", name: "Eve One", email: "eve@example.com", status: "active" as const, claimed: false, balance: 5000, fixed_benefit: 5000, reminded_at: null, created_at: "2026-10-02T00:00:00Z" },
+    { id: "e2", employee_id: "E002", name: "Sam Two", email: "sam@example.com", status: "removed" as const, claimed: true, balance: 0, fixed_benefit: null, reminded_at: null, created_at: "2026-10-02T00:00:00Z" },
+  ];
+  const RUNS = [{ id: "r1", source: "schedule" as const, run_date: "2026-10-15", status: "missed" as const, row_count: 3, total: 16000, sent: 0, held: 0, failure_code: "insufficient_balance", created_at: "2026-10-15T09:00:00Z" }];
+  const api = (extra: Partial<Api> = {}) => fakeApi({
+    organizations: vi.fn().mockResolvedValue([ROW]), organization: vi.fn().mockResolvedValue(DETAIL),
+    organizationEmployees: vi.fn().mockResolvedValue(EMPLOYEES), organizationRuns: vi.fn().mockResolvedValue(RUNS),
+    organizationDocuments: vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-03T00:00:00Z", file: "pdf" }]),
+    downloadOrganizationDocument: vi.fn().mockResolvedValue(new Blob(["x"])),
+    setOrganizationStatus: vi.fn().mockResolvedValue({ organization: { id: OID, status: "suspended" } }),
+    organizationActivity: vi.fn().mockResolvedValue({ logs: [], next_cursor: null }), ...extra,
+  } as Partial<Api>);
+  const PAGES: Page[] = ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions"];
+  async function open(a: Api, signed: SignedIn = { ...SIGNED, pages: PAGES }) {
+    const user = await signIn(a, vi.fn().mockResolvedValue(signed));
+    await user.click(await screen.findByRole("link", { name: "Organizations" }));
+    await user.click(await screen.findByRole("link", { name: "Acme Corp" }));
+    await screen.findByRole("article", { name: "Wallet" });
+    return user;
+  }
+  const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
+
+  it("lists organizations and opens one at its own address with the numbers first", async () => {
+    await open(api());
+    expect(window.location.pathname).toBe(`/organizations/${OID}`);
+    expect(document.title).toBe("Acme Corp · Organizations · Nuclear Admin");
+    expect(within(screen.getByRole("article", { name: "Wallet" })).getByText("$1,000.00")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Employees" })).toHaveTextContent("1 claimed · 2 not yet");
+    expect(screen.getByRole("article", { name: "Employees" })).toHaveTextContent("1 removed");
+    expect(screen.getByRole("article", { name: "Held for employees" })).toHaveTextContent("$75.00");
+    expect(screen.getByRole("article", { name: "Benefit runs" })).toHaveTextContent("$200.00 credited");
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: "Organizations" })).toHaveClass("active");
+  });
+
+  it("the list shows wallet, program, people and money held", async () => {
+    const user = await signIn(api(), vi.fn().mockResolvedValue({ ...SIGNED, pages: PAGES }));
+    await user.click(await screen.findByRole("link", { name: "Organizations" }));
+    const row = await screen.findByRole("row", { name: /Acme Corp/ });
+    expect(row).toHaveTextContent("hr@acme.test");
+    expect(row).toHaveTextContent("fixed");
+    expect(row).toHaveTextContent("$1,000.00");
+    expect(row).toHaveTextContent("$75.00");
+  });
+
+  it("Details: contact with the verified state, the schedule in words, the API key's last four and IDs", async () => {
+    await open(api());
+    expect(screen.getByText("not verified")).toBeInTheDocument();
+    expect(screen.getByText(/Fixed: monthly on day 15/)).toBeInTheDocument();
+    expect(screen.getByText("Acme Corporation Inc")).toBeInTheDocument();
+    expect(screen.getByText(/•••• AB12/)).toBeInTheDocument();
+    expect(screen.getByText(OID)).toBeInTheDocument();
+  });
+
+  it("Employees and Benefit Runs tabs show what support needs", async () => {
+    const a = api();
+    const user = await open(a);
+    await user.click(tab("Employees"));
+    const eve = await screen.findByRole("row", { name: /Eve One/ });
+    expect(eve).toHaveTextContent("unclaimed");
+    expect(eve).toHaveTextContent("$50.00");
+    expect(screen.getByRole("row", { name: /Sam Two/ })).toHaveTextContent("removed");
+    await user.type(screen.getByLabelText("Filter employees"), "eve");
+    await waitFor(() => expect(a.organizationEmployees).toHaveBeenLastCalledWith(OID, "eve"));
+    await user.click(tab("Benefit Runs"));
+    const run = await screen.findByRole("row", { name: /Schedule/ });
+    expect(run).toHaveTextContent("missed");
+    expect(run).toHaveTextContent("insufficient balance");
+  });
+
+  it("Documents: lists the files and downloads one", async () => {
+    const a = api();
+    URL.createObjectURL = vi.fn().mockReturnValue("blob:x"); URL.revokeObjectURL = vi.fn();
+    const user = await open(a);
+    await user.click(tab("Documents"));
+    await user.click(await screen.findByRole("button", { name: "Download" }));
+    await waitFor(() => expect(a.downloadOrganizationDocument).toHaveBeenCalledWith(OID, "d1"));
+  });
+
+  it("an admin suspends an organization behind a confirmation", async () => {
+    const a = api();
+    const user = await open(a);
+    await user.click(screen.getByRole("button", { name: "Suspend Organization" }));
+    const dialog = screen.getByRole("dialog", { name: "Suspend Organization" });
+    expect(dialog).toHaveTextContent("Benefits API key stops working");
+    await user.click(within(dialog).getByRole("button", { name: "Confirm Suspend" }));
+    await waitFor(() => expect(a.setOrganizationStatus).toHaveBeenCalledWith(OID, "suspended"));
+  });
+
+  it("support can look but not suspend, and a role without the page never sees it", async () => {
+    const support: SignedIn = { ...SIGNED, role: "support", pages: ["users", "organizations", "transactions"], landing: "users" };
+    await open(api(), support);
+    expect(screen.queryByRole("button", { name: "Suspend Organization" })).not.toBeInTheDocument();
+    cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    const accounting: SignedIn = { ...SIGNED, role: "accounting", pages: ["overview", "transactions"], landing: "overview" };
+    await signIn(api(), vi.fn().mockResolvedValue(accounting));
+    expect(screen.queryByRole("link", { name: "Organizations" })).not.toBeInTheDocument();
+  });
+});

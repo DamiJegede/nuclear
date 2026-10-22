@@ -58,6 +58,7 @@ function Identity({ api, account, onChanged, onError }: { api: Api; account: Acc
         <div>
           <p className="big small">{account.name}</p>
           <p className="muted">{account.email ?? "—"}{account.phone ? ` · ${account.phone}` : ""}</p>
+          <EmailStatus api={api} account={account} onError={onError} />
           {editing && <button type="button" className="ghost" onClick={() => input.current?.click()}>{account.photo ? "Replace Picture" : "Upload Picture"}</button>}
           <input ref={input} type="file" className="sr-only" aria-label="Profile picture" accept="image/png,image/jpeg,image/webp" onChange={(e) => { photo(e.target.files?.[0]); e.target.value = ""; }} />
           {crop && <PhotoCrop file={crop} onClose={() => setCrop(null)} onSave={async (jpeg) => { try { await api.uploadPhoto(jpeg); setCrop(null); onChanged(); } catch (e) { onError(e); throw e; } }} />}
@@ -224,5 +225,22 @@ function Sessions({ api, onError }: { api: Api; onError: (e: unknown) => void })
         </Modal>
       )}
     </>
+  );
+}
+
+/** Shows whether the sign-in email is verified, with a button to send the verification email again. */
+function EmailStatus({ api, account, onError }: { api: Api; account: Account; onError: (e: unknown) => void }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  if (!account.email || account.email_verified === undefined) return null;
+  if (account.email_verified) return <p className="muted small">Email verified</p>;
+  async function resend() {
+    setState("sending");
+    try { await api.resendVerification(); setState("sent"); } catch (e) { setState("idle"); onError(e); }
+  }
+  return (
+    <p className="muted small">
+      Email not verified{" "}
+      {state === "sent" ? <span role="status">Check your inbox.</span> : <button type="button" className="link" disabled={state === "sending"} onClick={() => void resend()}>Send Verification Email</button>}
+    </p>
   );
 }

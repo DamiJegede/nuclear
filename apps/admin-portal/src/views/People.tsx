@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Api, MerchantRow, UserRow } from "../api";
+import type { Api, MerchantRow, OrganizationRow, UserRow } from "../api";
 import { int, money } from "../format";
 import { EmailMerchants } from "./EmailMerchants";
 
@@ -116,6 +116,48 @@ export function Users({ api, onError, open }: { api: Api; onError: (e: unknown) 
                     <td className="num">{int(u.wallets)}</td>
                     <td className="num">{int(u.agents)}</td>
                     <td>{joined(u.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </div>
+    </section>
+  );
+}
+
+export function Organizations({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
+  const load = useCallback((q: string) => api.organizations(q || undefined), [api]);
+  const { q, setQ, rows, failed, retry } = useFiltered<OrganizationRow>(load, onError);
+  return (
+    <section>
+      <div className="head"><h1>Organizations</h1></div>
+      <FilterBox label="Filter organizations by name or email" value={q} onChange={setQ} />
+      <div className="card flush">
+        {failed && !rows ? <p className="error pad" role="alert">Couldn't load organizations. <button className="link" onClick={retry}>Try Again</button></p>
+          : !rows ? <p className="muted pad" role="status">Loading…</p>
+          : rows.length === 0 ? <p className="muted pad">{q ? "No organizations match that." : "No organizations yet."}</p>
+          : (
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Name</th><th scope="col">Email</th><th scope="col">Status</th><th scope="col">Benefits</th>
+                  <th scope="col" className="num">Wallet</th><th scope="col" className="num">Employees</th><th scope="col" className="num">Claimed</th>
+                  <th scope="col" className="num">Held</th><th scope="col">Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((o) => (
+                  <tr key={o.id}>
+                    <th scope="row">{open ? <a className="row-link" href={`/organizations/${o.id}`} onClick={(e) => { e.preventDefault(); open(o.id); }}>{o.name}</a> : o.name}</th>
+                    <td>{o.email ?? "—"}</td>
+                    <td>{statusPill(o.status)}</td>
+                    <td>{o.chosen ? <span className="pill">{o.mode}</span> : <span className="muted">Not chosen</span>}</td>
+                    <td className="num">{money(o.balance)}</td>
+                    <td className="num">{int(o.employees)}</td>
+                    <td className="num">{int(o.claimed)}</td>
+                    <td className="num">{money(o.held)}</td>
+                    <td>{joined(o.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

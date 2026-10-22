@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { AppContext } from "../env";
 import { hashPassword, newSessionToken, verifyPassword } from "../crypto";
 import { requireDeviceSession, requireOwner } from "../session";
+import { consumeAccountToken, issueAccountToken, sendPasswordChanged } from "../lib/accountMail";
 
 export const auth = new Hono<AppContext>();
 
@@ -61,6 +62,8 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
       return { accountId, walletId: wallet!.id, device: dev! };
     });
     await customerLog(c, result.accountId, b.email, "customer.signed_up", { type: b.type });
+    // The verification email never holds up or undoes the sign-up.
+    await issueAccountToken(c.env, sql, { id: result.accountId, type: b.type, name: b.name, email: b.email }, "verify_email", (p) => c.executionCtx.waitUntil(p)).catch((e) => console.error("verify token", e));
     return c.json(
       {
         account_id: result.accountId,
@@ -121,6 +124,83 @@ auth.post("/logout", requireDeviceSession, async (c) => {
   // revoked_at only; session_token_hash is never reset (would reopen redemption).
   await c.get("sql")`update devices set revoked_at = coalesce(revoked_at, now()) where id = ${deviceId}`;
   return c.body(null, 204);
+});
+
+const tokenBody = z.object({ token: z.string().min(20).max(200) });
+
+// Opening the emailed verification link. Public: the link itself is the proof.
+auth.post("/verify-email", rateLimit("token-ip", RULES.tokenIp, byIp), async (c) => {
+  const parsed = tokenBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql");
+  const done = await sql.begin(async (tx) => {
+    const t = await consumeAccountToken(tx as unknown as typeof sql, parsed.data.token, "verify_email");
+    if (!t) return null;
+    // A link only verifies the address it was sent to (the account's email may have changed since).
+    const [a] = await tx<{ id: string }[]>`
+      update accounts set email_verified_at = coalesce(email_verified_at, now()), updated_at = now()
+       where id = ${t.account_id} and lower(email) = ${t.email.toLowerCase()} returning id`;
+    return a ? { accountId: a.id, email: t.email } : null;
+  });
+  if (!done) return c.json({ error: "invalid_token" }, 400);
+  await customerLog(c, done.accountId, done.email, "customer.email_verified");
+  return c.json({ verified: true });
+});
+
+// Another verification email for the signed-in owner.
+auth.post("/verify-email/resend", requireDeviceSession, requireOwner, rateLimit("verify-resend", RULES.verifyResend, (c) => c.get("auth").accountId), async (c) => {
+  const sql = c.get("sql");
+  const [a] = await sql<{ id: string; type: string; name: string; email: string | null; email_verified_at: Date | null }[]>`
+    select id, type, name, email, email_verified_at from accounts where id = ${c.get("auth").accountId}`;
+  if (!a?.email) return c.json({ error: "no_email" }, 422);
+  if (a.email_verified_at) return c.json({ already_verified: true });
+  const sent = await issueAccountToken(c.env, sql, { id: a.id, type: a.type, name: a.name, email: a.email }, "verify_email");
+  return c.json({ email: sent }, 202);
+});
+
+const resetRequestBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
+const resetConfirmBody = z.object({ token: z.string().min(20).max(200), password: z.string().min(10).max(256) });
+
+// Ask for a reset link. Always the same answer, known email or not, so the endpoint reveals nothing.
+auth.post("/password-reset", rateLimit("reset-ip", RULES.resetIp, byIp), async (c) => {
+  const parsed = resetRequestBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+  const email = parsed.data.email;
+  const sql = c.get("sql");
+  const h = await hit(sql, `reset-email:${email}`, RULES.resetEmail);
+  if (h.ok) {
+    const [a] = await sql<{ id: string; type: string; name: string; email: string; status: string; password_hash: string | null }[]>`
+      select id, type, name, email, status, password_hash from accounts where lower(email) = ${email}`;
+    if (a && a.password_hash && ["active", "pending", "declined"].includes(a.status)) {
+      await customerLog(c, a.id, email, "customer.password_reset_requested");
+      await issueAccountToken(c.env, sql, a, "reset_password", (p) => c.executionCtx.waitUntil(p));
+    }
+  }
+  return c.json({ ok: true }, 202);
+});
+
+// Choose a new password with the emailed link. Signs every device out and lifts a login lock.
+auth.post("/password-reset/confirm", rateLimit("token-ip", RULES.tokenIp, byIp), async (c) => {
+  const parsed = resetConfirmBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.flatten() }, 400);
+  const sql = c.get("sql");
+  const passwordHash = await hashPassword(parsed.data.password);
+  const done = await sql.begin(async (tx) => {
+    const t = await consumeAccountToken(tx as unknown as typeof sql, parsed.data.token, "reset_password");
+    if (!t) return null;
+    const [a] = await tx<{ id: string; name: string; email: string }[]>`
+      update accounts set password_hash = ${passwordHash}, email_verified_at = coalesce(email_verified_at, now()), updated_at = now()
+       where id = ${t.account_id} and lower(email) = ${t.email.toLowerCase()} and status in ('active', 'pending', 'declined')
+       returning id, name, email`;
+    if (!a) return null;
+    await tx`update devices set revoked_at = coalesce(revoked_at, now()) where account_id = ${a.id}`;
+    return a;
+  });
+  if (!done) return c.json({ error: "invalid_token" }, 400);
+  await reset(sql, `login:${done.email.toLowerCase()}`);
+  await customerLog(c, done.id, done.email, "customer.password_reset");
+  c.executionCtx.waitUntil(sendPasswordChanged(c.env, done).catch((e) => console.error("changed mail", e)));
+  return c.json({ ok: true });
 });
 
 export { requireOwner };

@@ -4,7 +4,10 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
-import { SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { achProvider } from "../lib/ach";
+import { easternDate } from "../lib/dailyReset";
+import { confirmSettlement, runSettlement } from "../lib/settlement";
+import { SETTLEMENT_ADMINS, SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { approvePending, rejectPending } from "../lib/refund";
 import { clientIp, reset as resetThrottle } from "../lib/throttle";
 import { adminLog, log } from "../lib/audit";
@@ -14,6 +17,7 @@ import { MAX_DOWNLOAD_BYTES, deleteUpload, downloadExt, getUpload, mimeOfPath, p
 import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
+import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { systemStats } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
@@ -157,10 +161,14 @@ admin.use("/stats", requirePage("overview"));
 admin.use("/merchants", requirePage("merchants"));
 admin.use("/merchants/*", requirePage("merchants"));
 admin.use("/terminals/*", requirePage("merchants"));
+admin.use("/organizations", requirePage("organizations"));
+admin.use("/organizations/*", requirePage("organizations"));
 admin.use("/users", requirePage("users"));
 admin.use("/users/*", requirePage("users"));
 admin.use("/wallets/*", requirePage("users"));
 admin.use("/transactions", requirePage("transactions"));
+admin.use("/settlements", requirePage("transactions"));
+admin.use("/settlements/*", requirePage("transactions"));
 admin.use("/admins", requirePage("admins"));
 admin.use("/admins/*", requirePage("admins"));
 /** Shop items: Admin and Sales may change them, everyone with the Shop page may look. */
@@ -493,6 +501,62 @@ admin.put("/merchants/:id/status", async (c) => {
   return c.json({ merchant: { id: rows[0]!.id, status: rows[0]!.status } });
 });
 
+// ---- Organizations (employers): profile, program, employees, runs and documents ------------------------
+admin.get("/organizations", async (c) => {
+  const q = nameFilter.safeParse(c.req.query());
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  return c.json({ organizations: await organizationList(c.get("sql"), q.data.q || null) });
+});
+admin.get("/organizations/:id", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const o = await organizationDetail(c.get("sql"), id.data);
+  return o ? c.json({ organization: o }) : c.json({ error: "not_found" }, 404);
+});
+admin.get("/organizations/:id/employees", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id")), q = nameFilter.safeParse(c.req.query());
+  if (!id.success || !(await organizationDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  if (!q.success) return c.json({ error: "invalid_request" }, 400);
+  return c.json({ employees: await organizationEmployees(c.get("sql"), id.data, q.data.q || null) });
+});
+admin.get("/organizations/:id/runs", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await organizationDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  return c.json({ runs: await organizationRuns(c.get("sql"), id.data) });
+});
+admin.get("/organizations/:id/documents", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success || !(await organizationDetail(c.get("sql"), id.data))) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")<{ id: string; type: string; path: string; created_at: Date }[]>`
+    select id, type, path, created_at from uploads where account_id = ${id.data} order by created_at desc, id desc`;
+  return c.json({ documents: rows.map((d) => ({ id: d.id, type: d.type, created_at: d.created_at, file: d.path.split(".").pop() })) });
+});
+admin.get("/organizations/:id/documents/:uploadId", async (c) => {
+  const id = merchantId.safeParse(c.req.param("id")), uid = merchantId.safeParse(c.req.param("uploadId"));
+  if (!id.success || !uid.success) return c.json({ error: "not_found" }, 404);
+  const [d] = await c.get("sql")<{ path: string }[]>`
+    select u.path from uploads u join accounts a on a.id = u.account_id where u.id = ${uid.data} and u.account_id = ${id.data} and a.type = 'O'`;
+  const obj = d ? await getUpload(c.env, d.path) : null;
+  if (!d || !obj) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "organization.document_downloaded", { type: "organization", id: id.data }, { upload_id: uid.data });
+  const ext = d.path.split(".").pop();
+  return new Response(await obj.arrayBuffer(), {
+    headers: { "content-type": mimeOfPath(d.path), "content-disposition": `attachment; filename="organization-document.${ext}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+  });
+});
+// Suspend or reactivate an organization (admin only): its sign-ins, API key and scheduled payments stop at once, nothing is deleted.
+admin.put("/organizations/:id/status", async (c) => {
+  const denied = adminOnly(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  const body = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'O' and status in ('active', 'suspended') returning id, status, name`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, body.data.status === "suspended" ? "organization.suspended" : "organization.reactivated", { type: "organization", id: id.data, label: rows[0]!.name });
+  return c.json({ organization: { id: rows[0]!.id, status: rows[0]!.status } });
+});
+
 // ---- One person, for support ------------------------------------------------------------------------
 const userTxQuery = z.object({
   kind: z.enum(USER_TX_KINDS as [UserTxKind, ...UserTxKind[]]).default("all"),
@@ -644,7 +708,7 @@ admin.post("/merchants/email", async (c) => {
   const missing = b.merchant_ids ? b.merchant_ids.filter((id) => !rows.some((r) => r.id === id)) : [];
   if (rows.length === 0) return c.json({ error: "no_recipients" }, 422);
 
-  const results: { id: string; name: string; email: "sent" | "failed" | "not_configured" | "no_address" }[] = [];
+  const results: { id: string; name: string; email: "sent" | "failed" | "not_configured" | "suppressed" | "no_address" }[] = [];
   for (let i = 0; i < rows.length; i += 5) {
     const batch = rows.slice(i, i + 5);
     const done = await Promise.all(batch.map(async (m) => {
@@ -656,7 +720,7 @@ admin.post("/merchants/email", async (c) => {
     results.push(...done);
   }
   const count = (k: string) => results.filter((r) => r.email === k).length;
-  return c.json({ total: results.length, sent: count("sent"), failed: count("failed"), not_configured: count("not_configured"), no_address: count("no_address"), skipped: missing, results });
+  return c.json({ total: results.length, sent: count("sent"), failed: count("failed"), not_configured: count("not_configured"), suppressed: count("suppressed"), no_address: count("no_address"), skipped: missing, results });
 });
 
 // Admin only: suspend or reactivate a person, or one of their wallets. A suspended account is refused on its
@@ -695,6 +759,55 @@ admin.post("/terminals/:id/sign-out", async (c) => {
   if (!rows.length) return c.json({ error: "not_found" }, 404);
   await adminLog(c, "terminal.signed_out", { type: "terminal", id: id.data, label: rows[0]!.name }, { merchant_id: rows[0]!.account_id });
   return c.body(null, 204);
+});
+
+// ---- Settlements: the daily payout and collection runs (lib/settlement.ts) --------------------------------------
+admin.get("/settlements", async (c) => {
+  const rows = await c.get("sql")<{ id: string; cutoff_date: string; cutoff_at: Date; status: string; merchants: number; payout_total: bigint; collection_total: bigint; provider_reference: string | null; failure_code: string | null; created_at: Date; completed_at: Date | null }[]>`
+    select id, cutoff_date::text, cutoff_at, status, merchants, payout_total, collection_total, provider_reference, failure_code, created_at, completed_at
+      from settlements order by cutoff_date desc limit 60`;
+  return c.json({ settlements: rows.map((r) => ({ ...r, payout_total: Number(r.payout_total), collection_total: Number(r.collection_total) })) });
+});
+
+admin.get("/settlements/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404);
+  const sql = c.get("sql");
+  const [run] = await sql<{ id: string; cutoff_date: string; status: string; provider_reference: string | null; failure_code: string | null }[]>`
+    select id, cutoff_date::text, status, provider_reference, failure_code from settlements where id = ${id}`;
+  if (!run) return c.json({ error: "not_found" }, 404);
+  const items = await sql<{ id: string; merchant_id: string; merchant: string; amount: bigint; status: string; status_code: string | null; payout: boolean; last4: string | null }[]>`
+    select t.id, t.from_account_id as merchant_id, a.name as merchant, t.amount, t.status, t.status_code, (t.to_bank_account_id is not null) as payout, ba.last4
+      from transactions t join accounts a on a.id = t.from_account_id left join bank_accounts ba on ba.id = coalesce(t.to_bank_account_id, t.from_bank_account_id)
+     where t.settlement_id = ${id} order by t.amount desc, t.id`;
+  return c.json({ settlement: run, items: items.map((i) => ({ id: i.id, merchant_id: i.merchant_id, merchant: i.merchant, kind: i.payout ? "payout" : "collection", amount: Number(i.amount), status: i.status, status_code: i.status_code, bank_last4: i.last4 })) });
+});
+
+const settlementAdmin = (c: any) => {
+  const a = c.get("adminAuth");
+  return a.kind === "admin" && !SETTLEMENT_ADMINS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
+};
+
+// Runs the settlement for the program day before today now (the cron does this daily). Idempotent: a day already settled does nothing.
+admin.post("/settlements/run", async (c) => {
+  const denied = settlementAdmin(c); if (denied) return denied;
+  const r = await runSettlement(c.env, c.get("sql"), easternDate(new Date()));
+  await adminLog(c, "settlement.run", r.ran ? { type: "settlement", id: r.settlement_id } : undefined, { ...r });
+  if (!r.ran && r.reason === "no_provider") return c.json({ error: "no_payment_provider", ...r }, 503);
+  return c.json(r);
+});
+
+// Asks the bank for the answer to a submitted run.
+admin.post("/settlements/:id/confirm", async (c) => {
+  const denied = settlementAdmin(c); if (denied) return denied;
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404);
+  const provider = achProvider(c.env);
+  if (!provider) return c.json({ error: "no_payment_provider" }, 503);
+  const r = await confirmSettlement(c.get("sql"), id, provider);
+  if (r.status === "missing") return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "settlement.confirmed", { type: "settlement", id }, { ...r });
+  return c.json(r);
 });
 
 const txQuery = z.object({
@@ -1061,4 +1174,5 @@ async function logPage(c: any, extra?: { accountId: string }) {
 }
 admin.get("/logs", (c) => logPage(c));
 admin.get("/users/:id/activity", (c) => { const id = uuid.safeParse(c.req.param("id")); return id.success ? logPage(c, { accountId: id.data }) : c.json({ error: "not_found" }, 404); });
+admin.get("/organizations/:id/activity", (c) => { const id = uuid.safeParse(c.req.param("id")); return id.success ? logPage(c, { accountId: id.data }) : c.json({ error: "not_found" }, 404); });
 admin.get("/merchants/:id/activity", (c) => { const id = uuid.safeParse(c.req.param("id")); return id.success ? logPage(c, { accountId: id.data }) : c.json({ error: "not_found" }, 404); });
