@@ -12,6 +12,8 @@ export type SystemStats = {
     balance: number;
     consumer_balance: number;
     merchant_balance: number;
+    /** Employers' wallets (account type O): money organizations hold to credit employees. */
+    organization_balance: number;
     /** Merchants whose balance is negative (refunds ahead of sales), as a positive amount. */
     merchant_debt: number;
     /** Bank loads awaiting clearance: informational, not spendable. */
@@ -66,6 +68,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
     select coalesce(sum(b.balance), 0)::bigint as total,
            coalesce(sum(b.balance) filter (where a.type = 'C'), 0)::bigint as consumer,
            coalesce(sum(b.balance) filter (where a.type = 'B'), 0)::bigint as merchant,
+           coalesce(sum(b.balance) filter (where a.type = 'O'), 0)::bigint as organization,
            coalesce(-sum(b.balance) filter (where a.type = 'B' and b.balance < 0), 0)::bigint as merchant_debt,
            coalesce(sum(b.balance_pending), 0)::bigint as pending,
            coalesce(sum(b.credit_spent), 0)::bigint as credit_spent,
@@ -170,6 +173,7 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       balance: Number(bal!.total),
       consumer_balance: Number(bal!.consumer),
       merchant_balance: Number(bal!.merchant),
+      organization_balance: Number(bal!.organization),
       merchant_debt: Number(bal!.merchant_debt),
       pending: Number(bal!.pending),
       credit_outstanding: Number(bal!.credit_spent),

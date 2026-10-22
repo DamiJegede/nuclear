@@ -78,6 +78,7 @@ await call("POST", "/v1/terminal/refunds", { token: T, key: "r2", body: { attemp
 
 const s = await stats();
 eq("scheme balance = all money held (u1 6800 + u2 5300 + m1 2900)", [s.scheme.balance, s.scheme.consumer_balance, s.scheme.merchant_balance], [15000, 12100, 2900]);
+eq("organizations hold no money yet, and the three parts add up", [s.scheme.organization_balance, s.scheme.consumer_balance + s.scheme.merchant_balance + s.scheme.organization_balance === s.scheme.balance], [0, true]);
 eq("no pending, credit or merchant debt yet", [s.scheme.pending, s.scheme.credit_outstanding, s.scheme.credit_limit, s.scheme.merchant_debt], [0, 0, 0, 0]);
 eq("users: consumers only, by status", [s.users.total, s.users.active, s.users.suspended, s.users.closed, s.users.new_today, s.users.new_7d, s.users.new_30d], [3, 2, 1, 0, 3, 3, 3]);
 eq("users: wallets counts consumers' open wallets only", [s.users.wallets, (await q("select count(*)::int n from wallets w join accounts a on a.id=w.account_id where a.type='C' and w.status<>'closed'"))[0].n], [3, 3]);

@@ -13,8 +13,8 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `3a7c8cd9` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `68a8e729` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `03797576` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `72c9782c` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5067028f` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `68e8b4cc` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |

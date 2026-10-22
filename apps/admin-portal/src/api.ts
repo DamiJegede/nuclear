@@ -8,6 +8,7 @@ export type Stats = {
     balance: number;
     consumer_balance: number;
     merchant_balance: number;
+    organization_balance: number;
     merchant_debt: number;
     pending: number;
     credit_outstanding: number;

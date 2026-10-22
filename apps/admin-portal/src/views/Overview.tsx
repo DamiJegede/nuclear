@@ -77,6 +77,7 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
           <p className="big">{money(stats.scheme.balance)}</p>
           <p className="sub">Consumers {money(stats.scheme.consumer_balance)}</p>
           <p className="sub">Merchants {money(stats.scheme.merchant_balance)}</p>
+          <p className="sub">Organizations {money(stats.scheme.organization_balance)}</p>
         </article>
         <article className="card" aria-label="Users">
           <h2>Users</h2>
@@ -131,6 +132,7 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
       <dl className="card facts">
         <div><dt>Consumer balances</dt><dd>{money(stats.scheme.consumer_balance)}</dd></div>
         <div><dt>Merchant balances</dt><dd>{money(stats.scheme.merchant_balance)}</dd></div>
+        <div><dt>Organization balances</dt><dd>{money(stats.scheme.organization_balance)}</dd></div>
         <div><dt>Merchants in debt</dt><dd>{money(stats.scheme.merchant_debt)}</dd></div>
         <div><dt>Loads awaiting clearance</dt><dd>{money(stats.scheme.pending)}</dd></div>
         <div><dt>Credit drawn</dt><dd>{money(stats.scheme.credit_outstanding)} of {money(stats.scheme.credit_limit)}</dd></div>
