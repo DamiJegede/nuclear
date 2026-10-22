@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { lowFundsEmail, runMissedEmail, sendMail } from "./email";
 import { easternDate } from "./dailyReset";
 import { runBenefitRun } from "./org";
+import { trackNow } from "./tracker";
 import { sendCreditEmails } from "./orgMail";
 
 /**
@@ -171,6 +172,7 @@ async function processProgram(env: Env, sql: Sql, p: Due, today: string): Promis
 
   const res = await runBenefitRun(sql, { orgId, idempotencyKey: key, source: "schedule", runDate: date, notify: "unnotified", rows: rows.map((r) => ({ employee_id: r.employee_id, amount: r.amount })) });
   if (res.kind === "ok") {
+    if (!res.replayed) await trackNow(env, { benefit_runs_n: 1, benefit_credited_v: Number(res.run.total), benefit_sent_v: Number(res.run.sent), benefit_held_v: Number(res.run.held) });   // today's running estimate
     await sendCreditEmails(env, sql, o?.name ?? "Your employer", res.notices);
     await advance();
     return "credited";

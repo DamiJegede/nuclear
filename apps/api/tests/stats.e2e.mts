@@ -11,7 +11,7 @@ const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)
 
 const tagKey = randomBytes(16);
 const TOKEN = "op-" + randomBytes(24).toString("hex");
-const env: any = {
+const env: any = { STATS_TTL_SECONDS: "0",
   HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" },
   JWT_SECRET: "test-secret-test-secret-test-secret!",
   TAG_KEY_V1: tagKey.toString("hex"),

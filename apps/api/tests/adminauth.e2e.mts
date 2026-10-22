@@ -12,7 +12,7 @@ const adm = postgres("postgres://postgres@127.0.0.1:54340/nuclear", { max: 2, on
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 
 const OP = "op-" + randomBytes(24).toString("hex");
-const env: any = {
+const env: any = { STATS_TTL_SECONDS: "0",
   HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" },
   JWT_SECRET: "test-secret-test-secret-test-secret!", ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true",
   ADMIN_ORIGINS: "https://admin.nuclear.example", MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),

@@ -24,6 +24,30 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
     }
   }, [api, onError]);
 
+  // The Refresh button asks the API to recompute; the 60-second poll only reads the cached snapshot.
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      setStats(await api.refreshStats());
+      setFailed(false);
+    } catch (e) {
+      setFailed(true);
+      onError(e);
+    } finally {
+      setLoading(false);
+      setNow(Date.now());
+    }
+  }, [api, onError]);
+
+  const [checking, setChecking] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const runCheck = useCallback(async () => {
+    setChecking(true);
+    setCheckFailed(false);
+    try { setStats(await api.runReconciliation()); } catch (e) { setCheckFailed(true); onError(e); }
+    finally { setChecking(false); setNow(Date.now()); }
+  }, [api, onError]);
+
   useEffect(() => {
     void load();
     const t = setInterval(() => void load(), REFRESH_MS);
@@ -53,9 +77,15 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
         <h1>System overview</h1>
         <div className="asof">
           <span className="muted">Updated {ago(stats.as_of, now)}{failed ? " · refresh failed" : ""}</span>
-          <button onClick={() => void load()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+          <button onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
         </div>
       </div>
+
+      {stats.estimate && (
+        <p className="muted note" role="note">
+          Exact through the end of {new Date(`${stats.estimate.snapshot_date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })} (New York time). Today's activity is an estimate and is replaced by the exact figures at midnight.
+        </p>
+      )}
 
       <div className={ok ? "banner good" : "banner bad"} role={ok ? "status" : "alert"}>
         <strong>{ok ? "Books reconcile" : "Books do not reconcile"}</strong>
@@ -69,6 +99,10 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
             Investigate before moving more money.
           </span>
         )}
+        <span className="muted note">
+          Checked {ago(stats.reconciliation_checked_at, now)}{stats.reconciliation_stale ? " · the nightly check is overdue" : ""}{checkFailed ? " · check failed" : ""}
+        </span>
+        <button type="button" className="ghost" onClick={() => void runCheck()} disabled={checking}>{checking ? "Checking…" : "Run Check"}</button>
       </div>
 
       <div className="grid">

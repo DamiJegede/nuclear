@@ -5,6 +5,9 @@ import { sweep } from "./throttle";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
+import { refreshReconciliation } from "./statsCache";
+import { catchUpSnapshots, addDays, saveReconciliation } from "./snapshots";
+import { pruneCounters } from "./tracker";
 
 /**
  * The daily job. Cloudflare fires it at 04:00 and 05:00 UTC, which brackets midnight in New York in
@@ -29,7 +32,19 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     // an answer for. Never blocks the reset; the run claims its date, so the second cron of the day does nothing new.
     const settlement = await runSettlement(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("settlement failed", err), null));
     const polled = await pollSubmittedSettlements(env, sql).catch((err) => (console.error("settlement poll failed", err), null));
-    return { ...day, swept, reminders, programs, settlement, polled };
+    // The Overview's snapshots: the nightly ledger checks (the heavy scans), and a fresh set of live numbers. Never blocks the job.
+    // The day that just ended becomes an exact snapshot (and any missed day before it), then the ledger checks run and are recorded on it.
+    const today = easternDate(new Date(scheduledTime));
+    const yesterday = addDays(today, -1);
+    const snapshots = await catchUpSnapshots(sql, yesterday).catch((err) => (console.error("snapshot failed", err), [] as string[]));
+    const reconciled = await refreshReconciliation(env, sql, 0).then((s) => s.reconciliation, (err) => (console.error("reconciliation failed", err), null));
+    if (reconciled) {
+      const ok = reconciled.balances_match_ledger && reconciled.credit_matches_ledger && reconciled.ledger_balanced;
+      await saveReconciliation(sql, yesterday, reconciled, ok).catch((err) => console.error("saving reconciliation failed", err));
+    }
+    // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
+    await pruneCounters(env, addDays(today, -3)).catch(() => null);
+    return { ...day, swept, reminders, programs, settlement, polled, snapshots, reconciled };
   } finally {
     await sql.end();
   }

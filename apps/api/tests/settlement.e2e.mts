@@ -10,7 +10,7 @@ resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const OP = "op-" + randomBytes(16).toString("hex");
-const env: any = { HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
 const live: any = { ...env, SANDBOX_FUNDING: undefined };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;

@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { RULES, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -59,6 +60,10 @@ transfers.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("au
   const transaction = txJson(out.tx, accountId);
   if (out.kind === "declined") {
     return c.json({ error: "declined", status_code: out.tx.status_code, transaction }, 422);
+  }
+  if (!out.replayed) {
+    const v = Number(out.tx.amount);
+    track(c, { sends_n: 1, sends_v: v, ...(c.get("auth").kind === "agent" ? { agents_n: 1, agents_v: v } : {}) });   // today's running estimate
   }
   return c.json({ transaction }, out.replayed ? 200 : 201);
 });

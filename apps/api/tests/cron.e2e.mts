@@ -83,7 +83,7 @@ const burst = await Promise.all(Array.from({ length: 10 }, (_, i) => send("burst
 eq("ten simultaneous sends across the rollover: all succeed, the day is reset once, and spent_today is exactly what was sent since", [burst.every((r) => r.status === 201), await spent(), await day() === today], [true, 100, true]);
 
 // ---- the heartbeat and the table
-eq("the system table holds the reset day and, after any cron run, when the cron last ran; daily_reset is gone", [(await q("select key from system order by key")).map((r) => r.key), (await q("select to_regclass('daily_reset') as t"))[0].t], [["cron_last_run", "daily_reset_day"], null]);
+eq("the system table holds the reset day and, after any cron run, when the cron last ran; daily_reset is gone", [(await q("select key from system order by key")).map((r) => r.key), (await q("select to_regclass('daily_reset') as t"))[0].t], [["cron_last_run", "daily_reset_day", "reconciliation_snapshot"], null]);   // the cron also stores the ledger-check snapshot
 
 // ---- the entry point Cloudflare calls
 const worker = (await import("../src/index.ts")).default as any;

@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -204,5 +205,6 @@ account.post("/sandbox/fundings", requireOwner, async (c) => {
     released_at: f.released_at,
   };
   if (out.kind === "failed") return c.json({ error: "declined", status_code: f.failure_code, funding }, 422);
+  if (!out.replayed) track(c, { loads_n: 1, loads_v: Number(f.amount) });   // today's running estimate
   return c.json({ funding }, out.replayed ? 200 : 201);
 });

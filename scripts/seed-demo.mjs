@@ -276,6 +276,9 @@ update accounts a set created_at = least(a.created_at, coalesce((select min(x."t
 // ---- report -------------------------------------------------------------------------------------------------
 step("done");
 console.log(Object.entries(tally).sort().map(([k, v]) => `${k}: ${v}`).join("\n"));
+// The Overview reads cached snapshots: recompute both now so the report is current.
+await call("POST", "/v1/admin/stats/refresh", { token: OP });
+await call("POST", "/v1/admin/stats/reconcile", { token: OP });
 const stats = await call("GET", "/v1/admin/stats", { token: OP });
 if (stats.status === 200) {
   const s = stats.json;

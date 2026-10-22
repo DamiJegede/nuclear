@@ -15,7 +15,7 @@ const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)
 const OP = "op-" + randomBytes(24).toString("hex");
 const JWT_SECRET = "test-secret-test-secret-test-secret!";
 const KEY = randomBytes(32).toString("base64");
-const env: any = { HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET, ADMIN_API_TOKEN: OP, MFA_ENCRYPTION_KEY: KEY, ADMIN_ORIGINS: "https://admin.nuclear.example" };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET, ADMIN_API_TOKEN: OP, MFA_ENCRYPTION_KEY: KEY, ADMIN_ORIGINS: "https://admin.nuclear.example" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (label: string, got: unknown, want: unknown) => {

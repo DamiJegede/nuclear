@@ -4,6 +4,8 @@ import type { Page, Role } from "./roles";
 
 export type Stats = {
   as_of: string;
+  /** Present when the numbers are the latest daily snapshot plus today's running estimate. */
+  estimate?: { snapshot_date: string; snapshot_taken_at: string; today: string };
   scheme: {
     balance: number;
     consumer_balance: number;
@@ -25,6 +27,10 @@ export type Stats = {
     benefits_match_ledger: boolean;
     daily_caps_match_ledger: boolean;
   };
+  /** When the ledger checks above were last computed (they run nightly or on Run Check, not per request). */
+  reconciliation_checked_at: string;
+  /** True when that is more than a day old. */
+  reconciliation_stale: boolean;
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
   payments: {
@@ -374,7 +380,12 @@ export function createApi(token: string, base: string = API_URL) {
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/enable", { code })).recovery_codes,
     newRecoveryCodes: async (code: string) =>
       (await request<{ recovery_codes: string[] }>("POST", "/v1/admin/mfa/recovery-codes", { code })).recovery_codes,
+    /** The cached snapshot (cheap). */
     stats: () => request<Stats>("GET", "/v1/admin/stats"),
+    /** Recompute the live numbers now (the API ignores it when they are only seconds old). */
+    refreshStats: () => request<Stats>("POST", "/v1/admin/stats/refresh"),
+    /** Recompute the ledger checks now (at most once a minute). */
+    runReconciliation: () => request<Stats>("POST", "/v1/admin/stats/reconcile"),
     shopItems: async () => (await request<{ items: ShopItem[] }>("GET", "/v1/admin/shop-items")).items.map(absolutePhoto),
     createShopItem: async (i: NewShopItem) => (await request<{ item: ShopItem }>("POST", "/v1/admin/shop-items", i)).item,
     updateShopItem: async (id: string, patch: Partial<NewShopItem>) => (await request<{ item: ShopItem }>("PATCH", `/v1/admin/shop-items/${encodeURIComponent(id)}`, patch)).item,

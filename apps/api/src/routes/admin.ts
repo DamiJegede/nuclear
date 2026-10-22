@@ -19,7 +19,8 @@ import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTa
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
-import { systemStats } from "../lib/stats";
+import { dropDay, probeCounters, readCounters, shardCount, track } from "../lib/tracker";
+import { readStats, refreshLive, refreshReconciliation } from "../lib/statsCache";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
   ACCESS_TOKEN_LENGTH, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
@@ -158,6 +159,7 @@ const tagsAccess = async (c: any, next: any) => {
   await next();
 };
 admin.use("/stats", requirePage("overview"));
+admin.use("/stats/*", requirePage("overview"));
 admin.use("/merchants", requirePage("merchants"));
 admin.use("/merchants/*", requirePage("merchants"));
 admin.use("/terminals/*", requirePage("merchants"));
@@ -399,7 +401,33 @@ const uuid = z.string().uuid();
 
 // ---- System snapshot --------------------------------------------------------------------------
 
-admin.get("/stats", async (c) => c.json(await systemStats(c.get("sql"))));
+// The Overview reads snapshots (lib/statsCache.ts): the live numbers refresh at most every few minutes, the ledger checks nightly or on Run Check.
+admin.get("/stats", async (c) => c.json(await readStats(c.env, c.get("sql"))));
+// Operator-only throughput probe for the counter objects (see tracker.ts): writes only to the throwaway day "loadtest".
+const probeEnv = (c: any, shards: number) => ({ ...c.env, STATS_SHARDS: String(Math.max(1, Math.min(64, shards))) });
+admin.post("/stats/loadtest", async (c) => {
+  if (c.get("adminAuth").kind !== "operator") return c.json({ error: "forbidden_role" }, 403);
+  const b = z.object({ events: z.number().int().min(1).max(1000), shards: z.number().int().min(1).max(64).default(1), width: z.number().int().min(1).max(16).default(6) }).safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  return c.json(await probeCounters(probeEnv(c, b.data.shards), b.data.events, b.data.width));
+});
+admin.get("/stats/loadtest", async (c) => {
+  if (c.get("adminAuth").kind !== "operator") return c.json({ error: "forbidden_role" }, 403);
+  const env = probeEnv(c, Number(c.req.query("shards")) || 1);
+  const r = await readCounters(env, ["loadtest"]);
+  return c.json({ probe_n: r["loadtest"]?.probe_n ?? 0, shards: shardCount(env) });
+});
+admin.delete("/stats/loadtest", async (c) => {
+  if (c.get("adminAuth").kind !== "operator") return c.json({ error: "forbidden_role" }, 403);
+  await dropDay(probeEnv(c, Number(c.req.query("shards")) || 64), "loadtest");
+  return c.body(null, 204);
+});
+admin.post("/stats/refresh", async (c) => c.json(await refreshLive(c.env, c.get("sql"))));
+admin.post("/stats/reconcile", async (c) => {
+  const out = await refreshReconciliation(c.env, c.get("sql"));
+  await adminLog(c, "stats.reconciled", undefined, { ok: out.reconciliation.balances_match_ledger && out.reconciliation.credit_matches_ledger && out.reconciliation.ledger_balanced });
+  return c.json(out);
+});
 
 // ---- Merchants, users and transactions --------------------------------------------------------
 
@@ -481,6 +509,7 @@ for (const action of ["approve", "reject"] as const) {
       return r;
     });
     if (out.kind === "error") return c.json({ error: out.error }, out.status);
+    if (action === "approve" && out.kind === "ok" && !out.replayed && out.row.status === "completed") track(c, { refunds_n: 1, refunds_v: Number(out.row.amount) });   // today's running estimate
     await adminLog(c, `refund.${action === "approve" ? "approved" : "rejected"}`, { type: "refund", id: rid.data }, { merchant_id: id.data, amount: Number(out.row.amount), status: out.row.status });
     return c.json({ refund: { id: out.row.id, status: out.row.status, status_code: out.row.status_code } }, 200);
   });

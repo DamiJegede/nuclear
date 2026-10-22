@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
@@ -236,6 +237,7 @@ org.post("/benefit-runs", async (c) => {
     const [o] = await sql<{ name: string }[]>`select name from accounts where id = ${orgId}`;
     emails = await sendCreditEmails(c.env, sql, o?.name ?? "Your employer", out.notices);
     await customerLog(c, orgId, null, "org.benefit_run", { run_id: out.run.id, rows: out.run.row_count, total: Number(out.run.total), held: Number(out.run.held), via: "csv" });
+    track(c, { benefit_runs_n: 1, benefit_credited_v: Number(out.run.total), benefit_sent_v: Number(out.run.sent), benefit_held_v: Number(out.run.held) });   // today's running estimate
   }
   return c.json({ run: runJson(out.run as RunRow), emails }, out.replayed ? 200 : 201);
 });
@@ -278,5 +280,6 @@ employeeClaims.post("/", async (c) => {
   const out = await claimCredit(c.get("sql"), { accountId, token: parsed.data.token });
   if (out.kind === "error") return c.json({ error: out.error }, out.status);
   await customerLog(c, accountId, null, "employee.claimed", { amount: Number(out.amount), organization: out.org_name });
+  track(c, { claims_n: 1, claims_v: Number(out.amount) });   // today's running estimate
   return c.json({ claimed: n(out.amount), organization: out.org_name, wallet: { id: out.wallet.id, display_name: out.wallet.display_name, type: "benefits", balance: n(out.wallet.balance) } });
 });

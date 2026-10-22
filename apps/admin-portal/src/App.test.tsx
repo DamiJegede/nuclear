@@ -11,6 +11,8 @@ const v = (count: number, volume: number) => ({ count, volume });
 
 const STATS: Stats = {
   as_of: new Date().toISOString(),
+  reconciliation_checked_at: new Date().toISOString(),
+  reconciliation_stale: false,
   scheme: { balance: 15000, consumer_balance: 12100, merchant_balance: 2900, organization_balance: 0, merchant_debt: 0, pending: 900, credit_outstanding: 400, credit_limit: 1000 },
   reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true },
   users: { total: 1234, active: 1200, suspended: 30, closed: 4, new_today: 7, new_7d: 56, new_30d: 200, wallets: 1890 },
@@ -261,12 +263,35 @@ describe("overview", () => {
   });
 
   it("refreshes on demand", async () => {
-    const stats = vi.fn().mockResolvedValue(STATS);
-    const user = await signIn(fakeApi({ stats }));
+    const refreshStats = vi.fn().mockResolvedValue({ ...STATS, scheme: { ...STATS.scheme, balance: 20000 } });
+    const user = await signIn(fakeApi({ stats: vi.fn().mockResolvedValue(STATS), refreshStats }));
     await screen.findByRole("article", { name: "Scheme balance" });
-    const before = stats.mock.calls.length;
     await user.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(stats.mock.calls.length).toBe(before + 1));
+    await waitFor(() => expect(refreshStats).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("$200.00")).toBeInTheDocument();
+  });
+
+  it("says that today's numbers are an estimate and when the exact ones are from", async () => {
+    const est: Stats = { ...STATS, estimate: { snapshot_date: "2026-10-21", snapshot_taken_at: "2026-10-22T04:01:00Z", today: "2026-10-22" } };
+    await signIn(fakeApi({ stats: vi.fn().mockResolvedValue(est) }));
+    expect(await screen.findByRole("note")).toHaveTextContent(/Exact through the end of Oct 21/);
+    expect(screen.getByRole("note")).toHaveTextContent(/Today's activity is an estimate/);
+  });
+
+  it("shows no estimate note when the numbers are computed live", async () => {
+    await signIn(fakeApi());
+    await screen.findByRole("article", { name: "Scheme balance" });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("shows when the books were last checked and runs the check on demand", async () => {
+    const runReconciliation = vi.fn().mockResolvedValue({ ...STATS, reconciliation_checked_at: new Date().toISOString() });
+    const old = { ...STATS, reconciliation_checked_at: new Date(Date.now() - 2 * 86400_000).toISOString(), reconciliation_stale: true };
+    const user = await signIn(fakeApi({ stats: vi.fn().mockResolvedValue(old), runReconciliation }));
+    expect(await screen.findByText(/the nightly check is overdue/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run Check" }));
+    await waitFor(() => expect(runReconciliation).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(/overdue/)).not.toBeInTheDocument());
   });
 
   it("offers a retry when the first load fails", async () => {
@@ -280,8 +305,8 @@ describe("overview", () => {
   });
 
   it("keeps showing the last numbers if a later refresh fails", async () => {
-    const stats = vi.fn().mockResolvedValueOnce(STATS).mockRejectedValue(new ApiError(0, "network_error"));
-    const user = await signIn(fakeApi({ stats }));
+    const stats = vi.fn().mockResolvedValue(STATS);
+    const user = await signIn(fakeApi({ stats, refreshStats: vi.fn().mockRejectedValue(new ApiError(0, "network_error")) }));
     await screen.findByRole("article", { name: "Scheme balance" });
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.getByText(/refresh failed/)).toBeInTheDocument());

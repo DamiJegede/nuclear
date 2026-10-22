@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nuclear-api",
   "account_id": "2e328fde1db62ab22f16e8f464562d3c",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
@@ -32,6 +32,9 @@
     { "binding": "UPLOADS", "bucket_name": "nuclear-uploads" }
   ],
   "send_email": [{ "name": "EMAIL" }],
+  // Today's running estimate for the admin Overview (display only; the nightly snapshot is exact). Counters live in RAM and are saved every few seconds.
+  "durable_objects": { "bindings": [{ "name": "STATS", "class_name": "StatsCounter" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["StatsCounter"] }],
   // Resizes profile photos to 256 x 256 JPEG on upload.
   "images": { "binding": "IMG" },
   "hyperdrive": [

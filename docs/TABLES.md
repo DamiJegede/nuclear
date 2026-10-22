@@ -4,7 +4,7 @@ Updated October 13, 2026. Working schema consolidation; not an applied database 
 
 ## Current decisions
 
-The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, and the admin portal adds two more, admins and admin_sessions, for twenty-one in total (migrations 0001 to 0008). Later migrations add wallet_allocations, throttles, system, shop, orders, logs, uploads, settlements, employees, benefit_runs, benefit_run_rows, benefit_programs, api_keys and account_tokens, for 35 tables in nuclear-dev today (the counts above are historical). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
+The initial plan has twelve tables: accounts, balances, wallets, devices, businesses, bank_accounts, fundings, transactions, tags, tag_models, passes, and ledger_entries. Merchant hardware and staff add three more, terminals, orbs and staff, the merchant catalogue adds two, categories and products, and orders add two more, checkouts and checkout_items, and the admin portal adds two more, admins and admin_sessions, for twenty-one in total (migrations 0001 to 0008). Later migrations add wallet_allocations, throttles, system, shop, orders, logs, uploads, settlements, employees, benefit_runs, benefit_run_rows, benefit_programs, api_keys, account_tokens and snapshots, for 36 tables in nuclear-dev today (the counts above are historical). Item refunds are carried on the refund transaction as JSON rather than in a table. Individual bank-load attempts live in fundings. A fund transaction is created only when funding is confirmed successful and released. Profile, address, subscription-plan and price tables are outside the initial compact schema.
 
 Confirmed refinements: accounts.handle after type (nullable, set or changed later only by the primary account's own session; 4-12 alphanumeric, unique index); password_hash; owner-issued five-minute wallet magic links and devices, with no member_account_id; businesses.account_id primary key; bank_accounts.last4 and provider_account_id without verified_at; separate account-wide balance plus approved credit; sends use funded balance only, merchant payments may also use approved credit; no pending-funding availability; spent_today counts successful sends/payments and resets at midnight Eastern; nullable tags.transaction_limit; inline business address; refund/adjustment types; transactions.status_code; explicit endpoint foreign keys; failed funding attempts remain in fundings.
 
@@ -79,7 +79,7 @@ Audit trail of earmark changes (migration 0011): id, wallet_id and account_id (c
 
 ## system
 
-Key/value system state (migration 0016, replacing the one-row daily_reset): `key` (primary key), `value` (text) and `updated_at`. Keys in use: `daily_reset_day` (the America/New_York date on which wallets.spent_today and products.sold_today were last reset; the first cron run or money request on a new day updates it and zeroes the counters in one transaction, so a missed cron cannot leave yesterday's counters in force) and `cron_last_run` (the scheduled time of the last daily job, a heartbeat).
+Key/value system state (migration 0016, replacing the one-row daily_reset): `key` (primary key), `value` (text) and `updated_at`. Keys in use: `stats_snapshot` and `reconciliation_snapshot` (JSON snapshots of the admin Overview, see AGENTS.md), `daily_reset_day` (the America/New_York date on which wallets.spent_today and products.sold_today were last reset; the first cron run or money request on a new day updates it and zeroes the counters in one transaction, so a missed cron cannot leave yesterday's counters in force) and `cron_last_run` (the scheduled time of the last daily job, a heartbeat).
 
 ## throttles
 
@@ -417,6 +417,21 @@ Migration 0039. One-time links for **email verification** and **password reset**
 | expires_at | When the link stops working. |
 | used_at | Set when the link is used; a used link never works again. Asking for a new link marks the older unused ones of that kind used. |
 | created_at | When it was issued. |
+
+## snapshots
+
+Migration 0040. One row per program day (America/New_York), written by the nightly job from that day's completed transactions; the admin Overview shows the latest row plus today's running estimate (Durable Object counters, see AGENTS.md), so it never scans history. Money is bigint cents, counts are bigint. Written once per date (`snapshot_date` is unique); a missed night is made up later.
+
+| Group | Columns |
+| --- | --- |
+| Identity | `id`, `snapshot_date` (the day the activity belongs to), `taken_at` (when the job ran; the gauges are as of then), `created_at` |
+| Money held (gauges) | `scheme_balance`, `consumer_balance`, `merchant_balance`, `organization_balance`, `merchant_debt`, `pending_loads`, `credit_outstanding`, `credit_limit`, `benefits_wallet_balance` (inside the balances), `employee_escrow` |
+| People (gauges) | `users_total/active/suspended/closed`, `wallets`, `merchants_total`, `merchants_active` (approved, not suspended), `merchants_transacting` (took a payment in the 30 days to the end of the day), `terminals`, `organizations_total/active`, `employees_total/claimed/unclaimed` |
+| That day | `users_new`, `merchants_new`, `organizations_new`, `employees_added`, `merchants_paid`; `<kind>_count` and `<kind>_volume` for `sends`, `taps` (pay with a tag or pass), `in_app` (customer-confirmed pay), `agents` (memo of agent-wallet sends and pays, already inside the others), `refunds`, `loads`, `purchases`, `payouts`, `collections`, `claims`; Benefits: `benefit_runs_count`, `benefit_credited`, `benefit_sent` (into Benefits wallets), `benefit_held` (for unclaimed employees), `benefit_runs_missed` |
+| Lifetime, to the end of the day | `lifetime_<kind>_count` / `_volume` for the same kinds (agents included), `lifetime_benefit_credited`, `lifetime_benefit_runs_count`. Each row is the previous day's plus the day; with no previous day it is summed from all history once |
+| Ledger checks | `reconciled` (NULL until the nightly check has run for the day) and `reconciliation` (jsonb of the checks) |
+
+The migration also adds the partial index `transactions_completed_at_idx` on `transactions (completed_at) WHERE status = 'completed'`, so the day's activity is a range read.
 
 ## api_keys
 

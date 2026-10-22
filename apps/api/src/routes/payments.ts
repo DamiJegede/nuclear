@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { RULES, rateLimit } from "../lib/throttle";
 import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
@@ -60,6 +61,10 @@ function paymentJson(
 
 function respond(c: any, out: PayOutcome, extra?: Parameters<typeof paymentJson>[1]) {
   if (out.kind === "conflict") return c.json({ error: "idempotency_mismatch" }, 409);
+  if (out.kind === "ok" && !out.replayed) {
+    const v = Number(out.row.amount), agent = c.get("auth")?.kind === "agent";
+    track(c, { [out.row.tag_id ? "taps_n" : "in_app_n"]: 1, [out.row.tag_id ? "taps_v" : "in_app_v"]: v, ...(agent ? { agents_n: 1, agents_v: v } : {}) });   // today's running estimate
+  }
   const payment = paymentJson(out.row, extra);
   if (out.kind === "declined") return c.json({ error: "declined", status_code: out.row.status_code, payment }, 422);
   return c.json({ payment }, out.replayed ? 200 : 201);

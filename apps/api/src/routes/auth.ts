@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { RULES, byIp, hit, peek, rateLimit, rateLimited, reset } from "../lib/throttle";
 import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
@@ -62,6 +63,7 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
       return { accountId, walletId: wallet!.id, device: dev! };
     });
     await customerLog(c, result.accountId, b.email, "customer.signed_up", { type: b.type });
+    track(c, { [b.type === "B" ? "merchants_new_n" : b.type === "O" ? "organizations_new_n" : "users_new_n"]: 1 });   // today's running estimate
     // The verification email never holds up or undoes the sign-up.
     await issueAccountToken(c.env, sql, { id: result.accountId, type: b.type, name: b.name, email: b.email }, "verify_email", (p) => c.executionCtx.waitUntil(p)).catch((e) => console.error("verify token", e));
     return c.json(

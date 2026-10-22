@@ -5,8 +5,10 @@ import { n } from "./money";
 
 type Vol = { count: number; volume: number };
 
-export type SystemStats = {
+export type LiveStats = {
   as_of: string;
+  /** Set when the numbers are the latest snapshot plus today's running estimate (see snapshots.ts); absent when computed live. */
+  estimate?: { snapshot_date: string; snapshot_taken_at: string; today: string };
   scheme: {
     /** Net funded balance held across every account (the value the scheme owes to holders). */
     balance: number;
@@ -21,23 +23,6 @@ export type SystemStats = {
     /** Approved payment credit currently drawn, and the total approved limit. */
     credit_outstanding: number;
     credit_limit: number;
-  };
-  reconciliation: {
-    /** Account balances equal the ledger's funded-balance postings. */
-    balances_match_ledger: boolean;
-    balance_difference: number;
-    /** Outstanding credit equals the ledger's credit-receivable postings. */
-    credit_matches_ledger: boolean;
-    credit_difference: number;
-    /** Every posting event balances: total debits equal total credits. */
-    ledger_balanced: boolean;
-    earmarks_within_balances: boolean;
-    /** Money held for employees who have not claimed (ledger bucket employee_escrow) equals the sum of employees.balance. */
-    escrow_matches_employees: boolean;
-    /** Every Benefits wallet's balance equals the funded_balance postings attributed to it. */
-    benefits_match_ledger: boolean;
-    /** Every consumer account's opening value and added-today counter on the balances row equal what the ledger and transactions say for today. */
-    daily_caps_match_ledger: boolean;
   };
   users: { total: number; active: number; suspended: number; closed: number; new_today: number; new_7d: number; new_30d: number; wallets: number };
   merchants: { total: number; active: number; transacting: number; terminals: number };
@@ -60,20 +45,41 @@ export type SystemStats = {
   };
 };
 
+
+/** The ledger checks. Each one scans the ledger or every account, so they are computed on a schedule (see statsCache.ts), never per request. */
+export type Reconciliation = {
+    /** Account balances equal the ledger's funded-balance postings. */
+    balances_match_ledger: boolean;
+    balance_difference: number;
+    /** Outstanding credit equals the ledger's credit-receivable postings. */
+    credit_matches_ledger: boolean;
+    credit_difference: number;
+    /** Every posting event balances: total debits equal total credits. */
+    ledger_balanced: boolean;
+    earmarks_within_balances: boolean;
+    /** Money held for employees who have not claimed (ledger bucket employee_escrow) equals the sum of employees.balance. */
+    escrow_matches_employees: boolean;
+    /** Every Benefits wallet's balance equals the funded_balance postings attributed to it. */
+    benefits_match_ledger: boolean;
+    /** Every consumer account's opening value and added-today counter on the balances row equal what the ledger and transactions say for today. */
+    daily_caps_match_ledger: boolean;
+  };
+
+/** What the admin Overview shows: the live numbers and the last reconciliation, each with its own time. */
+export type SystemStats = LiveStats & {
+  reconciliation: Reconciliation;
+  /** When the reconciliation was last computed. */
+  reconciliation_checked_at: string;
+  /** True when that is more than a day old (the nightly job did not run). */
+  reconciliation_stale: boolean;
+};
+
 const v = (count: number, volume: bigint | number): Vol => ({ count, volume: n(BigInt(volume)) as number });
 
-/** A point-in-time view of the whole scheme. Counts and sums over completed transactions only. */
-export async function systemStats(sql: Sql): Promise<SystemStats> {
+/** The ledger checks. Heavy (full ledger scans): callers cache the result, see statsCache.ts. */
+export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
   const [bal] = await sql<Record<string, bigint>[]>`
-    select coalesce(sum(b.balance), 0)::bigint as total,
-           coalesce(sum(b.balance) filter (where a.type = 'C'), 0)::bigint as consumer,
-           coalesce(sum(b.balance) filter (where a.type = 'B'), 0)::bigint as merchant,
-           coalesce(sum(b.balance) filter (where a.type = 'O'), 0)::bigint as organization,
-           coalesce(-sum(b.balance) filter (where a.type = 'B' and b.balance < 0), 0)::bigint as merchant_debt,
-           coalesce(sum(b.balance_pending), 0)::bigint as pending,
-           coalesce(sum(b.credit_spent), 0)::bigint as credit_spent,
-           coalesce(sum(b.credit_limit), 0)::bigint as credit_limit
-      from balances b join accounts a on a.id = b.account_id`;
+    select coalesce(sum(b.balance), 0)::bigint as total, coalesce(sum(b.credit_spent), 0)::bigint as credit_spent from balances b`;
 
   const [led] = await sql<Record<string, bigint>[]>`
     select coalesce(sum(case when bucket = 'funded_balance' and account_id is not null
@@ -110,6 +116,34 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
     select count(*)::int as n from (
       select w.account_id from wallets w join balances b on b.account_id = w.account_id
        where w.balance is not null group by w.account_id, b.balance having sum(w.balance) > b.balance) x`;
+
+  const balanceDiff = Number((bal!.total as bigint) - (led!.funded as bigint));
+  const creditDiff = Number((bal!.credit_spent as bigint) - (led!.credit as bigint));
+  return {
+    balances_match_ledger: balanceDiff === 0,
+    balance_difference: balanceDiff,
+    credit_matches_ledger: creditDiff === 0,
+    credit_difference: creditDiff,
+    ledger_balanced: Number(led!.net) === 0,
+    earmarks_within_balances: over!.n === 0,
+    escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
+    benefits_match_ledger: Number(led!.benefits_off) === 0,
+    daily_caps_match_ledger: caps!.n === 0,
+  };
+}
+
+/** The live numbers: counts and sums over completed transactions. Still scans the transactions table, so callers cache it (statsCache.ts). */
+export async function liveStats(sql: Sql): Promise<LiveStats> {
+  const [bal] = await sql<Record<string, bigint>[]>`
+    select coalesce(sum(b.balance), 0)::bigint as total,
+           coalesce(sum(b.balance) filter (where a.type = 'C'), 0)::bigint as consumer,
+           coalesce(sum(b.balance) filter (where a.type = 'B'), 0)::bigint as merchant,
+           coalesce(sum(b.balance) filter (where a.type = 'O'), 0)::bigint as organization,
+           coalesce(-sum(b.balance) filter (where a.type = 'B' and b.balance < 0), 0)::bigint as merchant_debt,
+           coalesce(sum(b.balance_pending), 0)::bigint as pending,
+           coalesce(sum(b.credit_spent), 0)::bigint as credit_spent,
+           coalesce(sum(b.credit_limit), 0)::bigint as credit_limit
+      from balances b join accounts a on a.id = b.account_id`;
 
   // Wallets of consumer accounts that are not closed (default, person and agent wallets).
   const [wal] = await sql<{ n: number }[]>`
@@ -164,9 +198,6 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
   const tapped = v(num("tap_n"), t.tap_v as bigint);
   const inApp = v(num("app_n"), t.app_v as bigint);
 
-  const balanceDiff = Number((bal!.total as bigint) - (led!.funded as bigint));
-  const creditDiff = Number((bal!.credit_spent as bigint) - (led!.credit as bigint));
-
   return {
     as_of: new Date().toISOString(),
     scheme: {
@@ -178,17 +209,6 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       pending: Number(bal!.pending),
       credit_outstanding: Number(bal!.credit_spent),
       credit_limit: Number(bal!.credit_limit),
-    },
-    reconciliation: {
-      balances_match_ledger: balanceDiff === 0,
-      balance_difference: balanceDiff,
-      credit_matches_ledger: creditDiff === 0,
-      credit_difference: creditDiff,
-      ledger_balanced: Number(led!.net) === 0,
-      earmarks_within_balances: over!.n === 0,
-      escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
-      benefits_match_ledger: Number(led!.benefits_off) === 0,
-      daily_caps_match_ledger: caps!.n === 0,
     },
     users: {
       total: acc!.users!, active: acc!.users_active!, suspended: acc!.users_suspended!,
@@ -216,4 +236,10 @@ export async function systemStats(sql: Sql): Promise<SystemStats> {
       },
     },
   };
+}
+
+/** Everything, computed now (no cache). The cache layer calls the two halves on their own schedules. */
+export async function systemStats(sql: Sql): Promise<SystemStats> {
+  const [live, rec] = await Promise.all([liveStats(sql), reconciliationStats(sql)]);
+  return { ...live, reconciliation: rec, reconciliation_checked_at: new Date().toISOString(), reconciliation_stale: false };
 }

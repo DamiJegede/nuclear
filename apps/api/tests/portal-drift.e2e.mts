@@ -14,7 +14,7 @@ psql(["-c", "drop schema public cascade; create schema public;"]);
 migrate();
 
 const TOKEN = "op-" + randomBytes(20).toString("hex");
-const env: any = { HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: TOKEN, SANDBOX_FUNDING: "true", ADMIN_ORIGINS: "http://localhost:5173", MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: TOKEN, SANDBOX_FUNDING: "true", ADMIN_ORIGINS: "http://localhost:5173", MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 const server = createServer(async (req, res) => {
   const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
@@ -33,7 +33,7 @@ const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g)
 const api = createApi(TOKEN, BASE);
 const stats = await api.stats();
 const expected = shape({
-  as_of: "", scheme: { balance: 0, consumer_balance: 0, merchant_balance: 0, merchant_debt: 0, pending: 0, credit_outstanding: 0, credit_limit: 0 },
+  as_of: "", reconciliation_checked_at: "", reconciliation_stale: false, scheme: { balance: 0, consumer_balance: 0, merchant_balance: 0, organization_balance: 0, merchant_debt: 0, pending: 0, credit_outstanding: 0, credit_limit: 0 },
   reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true },
   users: { total: 0, active: 0, suspended: 0, closed: 0, new_today: 0, new_7d: 0, new_30d: 0, wallets: 0 },
   merchants: { total: 0, active: 0, transacting: 0, terminals: 0 },

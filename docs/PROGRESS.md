@@ -13,15 +13,15 @@ Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `03797576` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `72c9782c` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `55c14f59` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `9c22180f` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5067028f` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `68e8b4cc` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 35 tables, 39 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 36 tables, 40 migrations applied | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
-Quality: 34 API test suites (about 1,457 checks, run on a throwaway local Postgres), 163 admin-portal tests, 29 merchant-portal tests, 49 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
+Quality: 35 API test suites (about 1,500 checks, run on a throwaway local Postgres), 166 admin-portal tests, 29 merchant-portal tests, 49 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
 
 ## 1. Money core
 

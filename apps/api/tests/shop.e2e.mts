@@ -25,7 +25,7 @@ const UPLOADS = {
 // A fake Cloudflare Images binding for the non-tag pictures: returns a small JPEG.
 const JPEG_OUT = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9]);
 const IMG = { input: (_s: ReadableStream) => { const ch: any = { transform: () => ch, output: async () => ({ response: () => new Response(JPEG_OUT) }) }; return ch; } };
-const env: any = { IMAGES, IMG, UPLOADS, HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
+const env: any = { STATS_TTL_SECONDS: "0", IMAGES, IMG, UPLOADS, HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };

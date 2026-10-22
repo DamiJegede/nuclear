@@ -12,7 +12,7 @@ const adm = postgres("postgres://postgres@127.0.0.1:54340/nuclear", { max: 6, on
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const vars: Record<string, string> = { ADMIN_API_TOKEN: "op-" + randomBytes(16).toString("hex"), TAG_KEY_V1: randomBytes(16).toString("hex") };   // test secrets, never real ones
 const OP = vars.ADMIN_API_TOKEN!;
-const env: any = { HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, TAG_KEY_V1: vars.TAG_KEY_V1, SANDBOX_FUNDING: "true", DAILY_VALUE_CAP_CENTS: "50000000" };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, TAG_KEY_V1: vars.TAG_KEY_V1, SANDBOX_FUNDING: "true", DAILY_VALUE_CAP_CENTS: "50000000" };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };

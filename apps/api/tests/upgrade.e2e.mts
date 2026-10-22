@@ -26,7 +26,7 @@ eq("the columns were renamed (data preserved)", (await q("select column_name fro
 let lower = "none"; try { await q("insert into admins (access_id, name, access_token_hash) values ('lower', 'x', 'h')"); } catch (e: any) { lower = e.constraint_name; }
 eq("lowercase IDs are now refused by the database", lower, "admins_access_id_check");
 
-const env: any = { HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: "op-" + randomBytes(16).toString("hex"), MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: "postgres://postgres@127.0.0.1:54340/nuclear" }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: "op-" + randomBytes(16).toString("hex"), MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 const call = async (method: string, path: string, o: { body?: unknown; token?: string } = {}) => {
   const r = await app.fetch(new Request("http://x" + path, { method, headers: { "content-type": "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}) }, body: o.body === undefined ? undefined : JSON.stringify(o.body) }), env, ctx);

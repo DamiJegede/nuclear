@@ -41,6 +41,12 @@ export interface Env {
   ORG_ORIGINS?: string;
   /** Browser origins allowed to call /v1/admin/* (comma-separated), e.g. the admin portal's URL. */
   ADMIN_ORIGINS?: string;
+  /** Today's running estimate for the admin Overview: the Durable Object namespace (class StatsCounter). Unbound = no estimate (zeros). */
+  STATS?: { idFromName(name: string): unknown; get(id: unknown): { fetch(url: string, init?: { method?: string; body?: string }): Promise<Response> } };
+  /** How many counter objects share the estimate (default 1, max 64). Reads sum all of them. */
+  STATS_SHARDS?: string;
+  /** Seconds the admin Overview's live numbers are cached (default 300). 0 = no caching: every read computes everything (tests, tiny deployments). */
+  STATS_TTL_SECONDS?: string;
   /** Program daily associated-value cap in cents (draft target $2,000). Configurable until finalized. */
   DAILY_VALUE_CAP_CENTS?: string;
   /**

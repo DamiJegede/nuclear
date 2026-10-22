@@ -1,3 +1,4 @@
+import { track } from "../lib/tracker";
 import { Hono } from "hono";
 import { downloadMime, getUpload } from "../lib/uploads";
 import { customerLog } from "../lib/audit";
@@ -71,6 +72,7 @@ shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async 
   });
   if (out.kind === "error") return c.json({ error: out.error }, out.status);
   if (out.kind === "declined") return c.json({ error: "declined", status_code: out.code, transaction_id: out.transactionId }, 422);
+  if (!out.replayed) track(c, { purchases_n: 1, purchases_v: Number(out.order.total) });   // today's running estimate
   return c.json({ order: orderJson(out.order) }, out.replayed ? 200 : 201);
 });
 
