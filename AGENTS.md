@@ -52,7 +52,7 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 | `0001_init.sql` | All 29 tables, constraints, triggers, the system account and the Nuclear Bank / Nuclear Shop wallets, the views `txn` and `account_effects`, `program_today()` and `shared_funds()` |
 | `0002_money_functions.sql` | `app_send`, `app_pay_plan`, `app_pay_checkout`, `app_pay_tap`, `app_pay_app`, `app_refund`, `app_refund_resolve`, `app_purchase` and their helpers |
 
-**Cutover** (owner-approved 2026-10-23; do it only when the owner says so, in this order): run the load test on a temporary PlanetScale branch, then drop and rebuild nuclear-dev from the two files, deploy `nuclear-api` and the admin, merchant and organization portals together, re-seed the demo data (`seed-demo`, `seed-businesses`). After the cutover the old rule applies again: never edit an applied migration, add a new numbered file (`0003_...`) and record it in this table.
+**Cutover** (owner-approved 2026-10-23; do it only when the owner says so, in this order; the load test is done, see docs/SCHEME-V2.md, `scripts/load-money.mjs`): drop and rebuild nuclear-dev from the two files, deploy `nuclear-api` and the admin, merchant and organization portals together, re-seed the demo data (`seed-demo`, `seed-businesses`). After the cutover the old rule applies again: never edit an applied migration, add a new numbered file (`0003_...`) and record it in this table.
 
 ## Approval rules
 

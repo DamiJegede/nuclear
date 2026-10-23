@@ -21,7 +21,21 @@ Targets: a payment is one database round trip and about four row writes (today: 
 | 2 Funds and benefits | Done in TypeScript (low-rate paths): `releaseFunding` (`fund`), `settle`/`settle_return`/`collect` on item-level `settlements`, benefits on per-organization escrow wallets (`allocate`, `claim`, `move`), the CSV/API engine. Funding returns (`fund_return`) have a type and an effect but no code writes them yet (the sandbox rail never returns). |
 | 3 Auth | Done. Signed 90-day tokens, `POST /v1/auth/refresh`, device row checked inside the money functions, agent key `last_used` stamped at most once a minute, signed email links, rate limits in a Durable Object. Terminals still compare their token hash in the terminal check (their own statement, not inside the money call). |
 | 4 Reconciliation | Done: R0, R1, R2 (wallet counters, daily caps), R3 per account on demand (`/v1/admin/users\|merchants\|organizations/:id/check`), Run Check, nightly. **The nightly run is a full recompute** (the same cost class as the old ledger scans); the rolling 1/30 sample is the next step when volume needs it. Product `sold_today` is not yet checked against the day's rows. |
-| 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten. **Not done:** the load test on a temporary PlanetScale branch and the cutover (drop and rebuild nuclear-dev, deploy API and portals together, re-seed). |
+| 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten; the load test is done (below). **Not done:** the cutover (drop and rebuild nuclear-dev, deploy API and portals together, re-seed). |
+
+### Load test (2026-10-23, temporary branch `loadtest-v2`, since deleted)
+
+`scripts/load-money.mjs` against a PlanetScale Postgres branch with the v2 schema: **PS-80 (1 vCPU, 8 GB) with 2 replicas**, driven from a laptop in another region through PgBouncer (port 6432; the direct port refuses more than about 50 connections with `53300`), 3,000 consumers and 30 merchants, one call per money move (`app_pay_app`, 10 percent `app_send`), 20 seconds per run. Client round trip was about 100 ms, so latencies below are mostly network; the database-side numbers are the throughputs.
+
+| Run | Connections | Throughput | p50 / p99 latency | Errors |
+| --- | --- | --- | --- | --- |
+| spread over 30 merchants, one taking 20 percent | 100 | 632 calls/s | 148 / 311 ms | none |
+| same | 300 | 622 calls/s | 454 / 1,249 ms | none |
+| same | 600 | 588 calls/s | 937 / 2,655 ms | none |
+| payments only, 30 merchants, no hot one | 200 | 585 calls/s | 315 / 1,068 ms | none |
+| **every payment to one merchant** | 200 | **208 calls/s** | 893 / 1,672 ms | none |
+
+Reading: (1) no deadlocks, no unique violations, no declines across about 60,000 calls with 100 to 600 concurrent callers. (2) **One vCPU saturates at about 600 payments per second** (more connections only add queueing); that is the figure to scale with database size. (3) **A single merchant's balance row serializes at about 200 payments per second** (about 4.8 ms of lock hold per payment, almost all of it the commit's replicated write): a merchant that takes 20 percent of 1,000 tps (200 per second) is exactly at the ceiling, so the optional `shard` column on the merchant's balance (spread its writes, sum on read) should be built before a merchant is expected above about 150 per second. The in-database function keeps the lock to that commit instead of three network round trips (about 300 ms in production, which would have capped the same merchant at about 3 payments per second). Not measured: the Worker and Hyperdrive in front (add roughly 5 to 20 ms per request), a bigger cluster, and tap payments (the same function plus a tag row lock).
 
 Differences from the plan above, all deliberate:
 
