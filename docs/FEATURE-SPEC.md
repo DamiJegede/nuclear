@@ -1,5 +1,7 @@
 # Nuclear application feature specification
 
+> **Scheme v2 (October 23, 2026).** The double-entry ledger described in this document was replaced by immutable wallet-to-wallet transactions and a reconciliation policy; wherever "ledger" appears below, read "transactions and their reconciliation". The current design is [SCHEME-V2.md](SCHEME-V2.md) and the tables are [TABLES.md](TABLES.md).
+
 Status: Working draft for product discussion.
 Date: October 11, 2026.
 

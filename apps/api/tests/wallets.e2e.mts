@@ -228,7 +228,7 @@ eq("owner login unaffected by default-wallet suspension", (await call("GET", "/v
 eq("default wallet cannot close", (await call("PATCH", `/v1/wallets/${adaDefault}`, { token: A, body: { status: "closed" } })).status, 409);
 const cl = await call("PATCH", `/v1/wallets/${kid}`, { token: A, body: { status: "closed" } });
 eq("close wallet", cl.json.wallet.status, "closed");
-eq("closed wallet revokes sessions", (await call("POST", "/v1/devices/session/extend", { token: K })).status, 401);
+eq("closed wallet revokes sessions", (await call("POST", "/v1/auth/refresh", { token: K })).status, 401);
 eq("closed is terminal", (await call("PATCH", `/v1/wallets/${kid}`, { token: A, body: { status: "active" } })).status, 409);
 eq("closed wallet link 404", (await call("POST", `/v1/wallets/${kid}/links`, { token: A })).status, 404);
 

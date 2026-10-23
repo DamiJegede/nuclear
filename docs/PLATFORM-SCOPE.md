@@ -1,5 +1,7 @@
 # Nuclear platform: application flows and build scope
 
+> **Scheme v2 (October 23, 2026).** The double-entry ledger described in this document was replaced by immutable wallet-to-wallet transactions and a reconciliation policy; wherever "ledger" appears below, read "transactions and their reconciliation". The current design is [SCHEME-V2.md](SCHEME-V2.md) and the tables are [TABLES.md](TABLES.md).
+
 Date: October 13, 2026.
 Status: Build-scope draft. Confirmed product decisions are carried forward; proposed behavior and configurable policy defaults are identified below. No new bank contract, regulatory approval, subscription, or deployment is implied.
 

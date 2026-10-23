@@ -2,12 +2,16 @@
 
 A record of what has been built, what is live, and what is still open. For rules and conventions see `../AGENTS.md`; for the data model see `TABLES.md` (this folder).
 
-Last updated 2026-10-20.
+Last updated 2026-10-23.
 
 ## What it is
 
 A closed-loop payment platform: NFC bands and cards, Apple and Google passes, customer wallets, merchant terminals (the Orb), a store, and AI-agent wallets.
 Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 18.
+
+## Scheme v2 (built 2026-10-23, not deployed)
+
+The money core, the schema and the sessions were rebuilt on a local Postgres following [SCHEME-V2.md](SCHEME-V2.md) (its Status section lists what is done and what differs). In short: `transactions` is immutable and wallet to wallet (the ledger, `checkout_items`, `wallet_allocations`, `throttles`, `account_tokens`, `api_keys`, `benefit_programs` and `orbs` tables are gone; `refunds` is new and `settlements` is one row per merchant per day); system wallets Nuclear Bank and Nuclear Shop and a per-organization escrow wallet; send, pay, refund and purchase are SQL functions (one database call); counters roll themselves; sessions are signed 90-day tokens with `POST /v1/auth/refresh`; reconciliation runs over `account_effects`. 38 API suites pass, the portal suites pass. **Still to do: the load test on a temporary PlanetScale branch, then the cutover** (drop and rebuild nuclear-dev, deploy the API and all three portals together, re-seed the demo data). Everything below under "Live today" describes the deployed v1 system until then.
 
 ## Live today (all deployed)
 
@@ -117,4 +121,4 @@ Quality: 38 API test suites (about 1,560 checks, run on a throwaway local Postgr
 - **Not built**: pass issuance, real bank linking and funding, merchant staff logins, merchant two-step verification, credit-limit approval flow, per-transaction caps and recipient allow-lists for agents.
 - **Passkeys** (discussed, not built): need a final domain decided first.
 - **Admin portal page cache**: only the merchant portal has it so far.
-- **Before launch**: rebuild into a fresh database with consolidated migrations (see the rebuild table in `TABLES.md`), and resize the database from its current 1/16 vCPU PS-5.
+- **Before launch**: the v2 cutover above (the rebuild into a fresh database with the consolidated migrations), and resize the database from its current 1/16 vCPU PS-5.

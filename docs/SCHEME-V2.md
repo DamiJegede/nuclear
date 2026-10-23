@@ -1,6 +1,6 @@
 # Scheme v2: tables, schema and reconciliation policy
 
-A proposal for the pre-launch rebuild (the dev database is rebuilt into a fresh schema before launch anyway, so none of this is a data migration). Nothing here is built. It follows the owner's decisions of 2026-10-22:
+The pre-launch rebuild (the dev database is rebuilt into a fresh schema before launch anyway, so none of this is a data migration). **Built on a local Postgres October 23, 2026** (status and the places the build differs from this plan are in "Status" below; the tables as built are in [TABLES.md](TABLES.md)); it is not deployed and nuclear-dev is untouched until the cutover. It follows the owner's decisions of 2026-10-22:
 
 - **`transactions` is the source of truth** and is **immutable**: a row is written once with a final outcome (`completed` or `declined`) and never updated, so there are no status transitions. A correction (refund, return, reversal) is a new transaction. **Every transaction is wallet to wallet.**
 - **Every account has a balance** (consumers, merchants, organizations).
@@ -11,6 +11,27 @@ A proposal for the pre-launch rebuild (the dev database is rebuilt into a fresh 
 Decisions made since (all locked): money moves are **SQL functions**; session tokens are **signed, last 90 days and are renewed by a refresh call at app launch; the `devices` table stays** (section 7); **no nullable sides**: every transaction is wallet to wallet; the system wallets are **Nuclear Bank** and **Nuclear Shop** (fixed UUIDs, wallet type `system`, no extra columns), and **every organization has its own escrow wallet** for held benefits; **orbs merge into terminals**; **`shop` and `tag_models` stay separate**; `declined` is a transaction; `refunds` and `settlements` are the workflow tables; `approved_by_account_id` becomes `account_id`; **`nuclear-dev` is dropped and rebuilt** (approved 2026-10-23).
 
 Targets: a payment is one database round trip and about four row writes (today: about 24 statements and about 11 row writes), no hot-row ceiling for big merchants, no per-request database read for auth, and a reconciliation that is incremental and never scans history.
+
+## Status (October 23, 2026)
+
+| Phase | State |
+| --- | --- |
+| 0 Schema | Done. `migrations/0001_init.sql` (tables, triggers, the `txn` and `account_effects` views, the system account and wallets) and `migrations/0002_money_functions.sql`. |
+| 1 Money core | Done. `app_send`, `app_pay_app`, `app_pay_tap` (with `app_pay_plan` and `app_pay_checkout`), `app_refund`, `app_refund_resolve` and `app_purchase`: one database call each (a send, an app payment and a refund are one statement in all). Self-rolling counters; `ensureDay`, the `programDay` middleware and the daily-reset cron are deleted. |
+| 2 Funds and benefits | Done in TypeScript (low-rate paths): `releaseFunding` (`fund`), `settle`/`settle_return`/`collect` on item-level `settlements`, benefits on per-organization escrow wallets (`allocate`, `claim`, `move`), the CSV/API engine. Funding returns (`fund_return`) have a type and an effect but no code writes them yet (the sandbox rail never returns). |
+| 3 Auth | Done. Signed 90-day tokens, `POST /v1/auth/refresh`, device row checked inside the money functions, agent key `last_used` stamped at most once a minute, signed email links, rate limits in a Durable Object. Terminals still compare their token hash in the terminal check (their own statement, not inside the money call). |
+| 4 Reconciliation | Done: R0, R1, R2 (wallet counters, daily caps), R3 per account on demand (`/v1/admin/users\|merchants\|organizations/:id/check`), Run Check, nightly. **The nightly run is a full recompute** (the same cost class as the old ledger scans); the rolling 1/30 sample is the next step when volume needs it. Product `sold_today` is not yet checked against the day's rows. |
+| 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten. **Not done:** the load test on a temporary PlanetScale branch and the cutover (drop and rebuild nuclear-dev, deploy API and portals together, re-seed). |
+
+Differences from the plan above, all deliberate:
+
+- `balances` keeps the names `ordinary_opening`, `opening_day`, `added_today` (the plan called them `opening`, `added_day`); the `CHECK (credit_spent <= credit_limit)` is enforced by the money functions, not as a table constraint (a restricted account is a reachable state).
+- `checkouts` keeps `account_id` (the merchant) instead of `merchant_wallet_id`; the merchant's wallet side is its default wallet.
+- `fund_return` runs from the account's wallet to Nuclear Bank.
+- Readers use a view, `txn`, that gives a transaction its account-level columns (and lists pending and rejected refund requests), so the activity feeds, admin lists and support pages did not need rewriting; the money paths use the new tables directly.
+- A signed token is used without a database read only for a consumer's owner session on a short list of routes (the balance, the activity, wallets, tags, and the send, payment and store-order calls). A **delegated wallet device**, a **business** and an **organization** always read the device row and the account (a primary-key read, no write), and so does every route not on the list.
+- An organization's spendable funds are `shared_funds(account)`: balance less the escrow wallet. An organization's `balances.balance` therefore includes what it holds for employees, and the Overview's organization balance does too.
+- Declined rows older than 90 days are purged nightly one week at a time (a range read on `created_at`), not by a full scan.
 
 ## 1. Table inventory (36 now, 29 target)
 
@@ -245,7 +266,7 @@ Earmarks are the one number that can only be checked as a bound (total earmarked
 
 ## 10. Plan
 
-Nothing is built yet. The work is a rewrite of the money core and the code around it, done on a local Postgres with the existing suites as the contract (they assert behavior through the API, so they keep their value; the ones that assert old table shapes are rewritten). **No deploy and no change to `nuclear-dev` until the last phase.** Portal-facing JSON keeps its shapes where practical: a declined transaction is still reported as `failed`, and a pending refund still appears in the lists as `pending` (read from `refunds`).
+The work was a rewrite of the money core and the code around it, done on a local Postgres with the existing suites as the contract (they assert behavior through the API, so they keep their value; the ones that assert old table shapes are rewritten). **No deploy and no change to `nuclear-dev` until the last phase.** Portal-facing JSON keeps its shapes where practical: a declined transaction is still reported as `failed`, and a pending refund still appears in the lists as `pending` (read from `refunds`).
 
 | Phase | Deliverable | Gate |
 | --- | --- | --- |

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fills the DEV database with demo data through the public API, so every posting, limit and ledger line
+// Fills the DEV database with demo data through the public API, so every transaction, limit and balance
 // is made by the real business logic: consumers and merchants, loads, sends (including agent wallets),
 // in-app and tapped payments, refunds (done and awaiting approval), store purchases and declines.
 // Afterwards the dashboard's books should still reconcile.
@@ -244,21 +244,27 @@ if (BACKDATE) {
   // Which rows belong to this run: accounts whose email ends in ".<run>@seed.nuclear.test". About 8% of the
   // consumers stay "new today" (and so do their transactions); loads go 15-30 days back, everything else 0-15.
   const sqlFile = `
+-- transactions are immutable; this one-off script (demo data only) lifts the trigger while it moves rows into the past
+alter table transactions disable trigger transactions_no_update;
 create temp table _mine as select id from accounts where email like '%.${RUN}@seed.nuclear.test';
 create temp table _fresh as select id from accounts where type = 'C' and id in (select id from _mine) and random() < 0.08;
 create temp table _shift as
   select x.id, x.type, case when x.type = 'fund' then now() - interval '30 days' * (0.5 + random() * 0.5)
                             else now() - interval '15 days' * power(random(), 1.7) end as ts
-    from transactions x
-   where (x.from_account_id in (select id from _mine) or x.to_account_id in (select id from _mine))
-     and not (x.from_account_id in (select id from _fresh) or x.to_account_id in (select id from _fresh));
-update transactions x set "timestamp" = s.ts, completed_at = case when x.completed_at is null then null else s.ts end
-  from _shift s where x.id = s.id and x.type <> 'refund';
-update transactions r set "timestamp" = least(now(), o."timestamp" + random() * interval '36 hours'),
-                         completed_at = case when r.completed_at is null then null else least(now(), o."timestamp" + random() * interval '36 hours') end
-  from transactions o where r.related_transaction_id = o.id and r.type = 'refund' and r.id in (select id from _shift);
-update accounts a set created_at = least(a.created_at, coalesce((select min(x."timestamp") from transactions x where x.from_account_id = a.id or x.to_account_id = a.id), a.created_at) - random() * interval '3 days')
+    from transactions x join wallets fw on fw.id = x.from_wallet_id join wallets tw on tw.id = x.to_wallet_id
+   where (fw.account_id in (select id from _mine) or tw.account_id in (select id from _mine))
+     and not (fw.account_id in (select id from _fresh) or tw.account_id in (select id from _fresh));
+update transactions x set created_at = s.ts from _shift s where x.id = s.id and x.type <> 'refund';
+update transactions r set created_at = least(now(), o.created_at + random() * interval '36 hours')
+  from transactions o where r.related_id = o.id and r.type = 'refund' and r.id in (select id from _shift);
+update refunds q set created_at = least(now(), o.created_at + random() * interval '36 hours') from transactions o where q.pay_transaction_id = o.id and q.merchant_account_id in (select id from _mine);
+update accounts a set created_at = least(a.created_at, coalesce((select min(x.created_at) from transactions x join wallets w on w.id in (x.from_wallet_id, x.to_wallet_id) where w.account_id = a.id), a.created_at) - random() * interval '3 days')
   where a.id in (select id from _mine) and a.id not in (select id from _fresh);
+-- what moved into the past no longer counts toward today: the daily counters of those accounts start the day clean
+update wallets set spent_day = spent_day - 1 where account_id in (select id from _mine) and account_id not in (select id from _fresh);
+update balances set opening_day = opening_day - 1 where account_id in (select id from _mine) and account_id not in (select id from _fresh);
+update products set sold_day = sold_day - 1 where account_id in (select id from _mine);
+alter table transactions enable trigger transactions_no_update;
 `;
   try {
     if (process.env.SEED_PSQL_URL) {                       // a local test database

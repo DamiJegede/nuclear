@@ -114,6 +114,14 @@ await q("update balances set balance = balance + 7 where account_id=$1", [u1.acc
 await q("update balances set credit_spent = credit_spent + 5 where account_id=$1", [u3.account_id]);
 const s4 = await stats();
 eq("a balance that disagrees with the ledger is flagged with the gap", [s4.reconciliation.balances_match_ledger, s4.reconciliation.balance_difference, s4.reconciliation.credit_matches_ledger, s4.reconciliation.credit_difference], [false, 7, false, 5]);
+eq("one account's full check finds the gap, and only that account's", await (async () => {
+  const bad = (await call("GET", `/v1/admin/users/${u1.account_id}/check`, { token: TOKEN })).json.check;
+  const fine = (await call("GET", `/v1/admin/users/${u2.account_id}/check`, { token: TOKEN })).json.check;
+  return [bad.balance_matches, bad.balance - bad.effects, fine.balance_matches, fine.credit_matches, (await call("GET", `/v1/admin/users/00000000-0000-7000-8000-00000000dead/check`, { token: TOKEN })).status];
+})(), [false, 7, true, true, 404]);
+await q("update wallets set spent_today = spent_today + 3 where account_id=$1 and type='default'", [u2.account_id]);
+eq("a wallet's spending counter that disagrees with today's transactions is flagged", [(await stats()).reconciliation.wallet_counters_match], [false]);
+await q("update wallets set spent_today = spent_today - 3 where account_id=$1 and type='default'", [u2.account_id]);
 await q("update balances set balance = balance - 7 where account_id=$1", [u1.account_id]);
 await q("update balances set credit_spent = credit_spent - 5 where account_id=$1", [u3.account_id]);
 await q("update balances set balance = -250 where account_id=$1", [m2.account_id]);
