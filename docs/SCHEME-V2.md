@@ -1,6 +1,6 @@
 # Scheme v2: tables, schema and reconciliation policy
 
-The pre-launch rebuild (the dev database is rebuilt into a fresh schema before launch anyway, so none of this is a data migration). **Built on a local Postgres October 23, 2026** (status and the places the build differs from this plan are in "Status" below; the tables as built are in [TABLES.md](TABLES.md)); it is not deployed and nuclear-dev is untouched until the cutover. It follows the owner's decisions of 2026-10-22:
+The pre-launch rebuild (the dev database is rebuilt into a fresh schema before launch anyway, so none of this is a data migration). **Built on a local Postgres October 23, 2026** (status and the places the build differs from this plan are in "Status" below; the tables as built are in [TABLES.md](TABLES.md)); **the cutover is done (2026-10-23): nuclear-dev was rebuilt and the API and portals deployed.** It follows the owner's decisions of 2026-10-22:
 
 - **`transactions` is the source of truth** and is **immutable**: a row is written once with a final outcome (`completed` or `declined`) and never updated, so there are no status transitions. A correction (refund, return, reversal) is a new transaction. **Every transaction is wallet to wallet.**
 - **Every account has a balance** (consumers, merchants, organizations).
@@ -21,7 +21,7 @@ Targets: a payment is one database round trip and about four row writes (today: 
 | 2 Funds and benefits | Done in TypeScript (low-rate paths): `releaseFunding` (`fund`), `settle`/`settle_return`/`collect` on item-level `settlements`, benefits on per-organization escrow wallets (`allocate`, `claim`, `move`), the CSV/API engine. Funding returns (`fund_return`) have a type and an effect but no code writes them yet (the sandbox rail never returns). |
 | 3 Auth | Done. Signed 90-day tokens, `POST /v1/auth/refresh`, device row checked inside the money functions, agent key `last_used` stamped at most once a minute, signed email links, rate limits in a Durable Object. Terminals still compare their token hash in the terminal check (their own statement, not inside the money call). |
 | 4 Reconciliation | Done: R0, R1, R2 (wallet counters, daily caps), R3 per account on demand (`/v1/admin/users\|merchants\|organizations/:id/check`), Run Check, nightly. The nightly run is **incremental conservation** (`lib/nightly.ts`, one calendar day of transactions at 00:01 New York time, with a carried drift); Run Check is the full recompute; the rolling per-account sample is the next step when volume needs it. Product `sold_today` is not yet checked against the day's rows. |
-| 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten; the load test is done (below). **Not done:** the cutover (drop and rebuild nuclear-dev, deploy API and portals together, re-seed). |
+| 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten; the load test is done (below). The cutover is done; the demo data has not been re-seeded. |
 
 ### Load test (2026-10-23, temporary branch `loadtest-v2`, since deleted)
 
