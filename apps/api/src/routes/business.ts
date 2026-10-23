@@ -33,7 +33,7 @@ business.get("/overview", async (c) => {
   const id = c.get("auth").accountId;
   const [bal, term, pend, staff, orders, prof, cats, prods, best, tx] = await Promise.all([
     sql<{ balance: bigint; balance_pending: bigint }[]>`select balance, balance_pending from balances where account_id = ${id}`,
-    sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where exists (select 1 from orbs o where o.terminal_id = t.id)))::int as paired from terminals t where t.account_id = ${id}`,
+    sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where t.orb_uid is not null))::int as paired from terminals t where t.account_id = ${id}`,
     sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from transactions where type = 'refund' and status = 'pending' and from_account_id = ${id}`,
     sql<{ n: number; writers: number }[]>`select count(*)::int as n, (count(*) filter (where role = 'write'))::int as writers from staff where account_id = ${id}`,
     sql<{ n: number }[]>`select count(*)::int as n from checkouts where account_id = ${id} and status = 'open'`,
@@ -98,7 +98,7 @@ export const profileJson = (p: ProfileRow | undefined) => p ? {
 } : null;
 
 business.get("/profile", async (c) => {
-  const [p] = await c.get("sql")<ProfileRow[]>`select legal_name, display_name, tax_id, address, city, state, post_code, country, website from businesses where account_id = ${c.get("auth").accountId}`;
+  const [p] = await c.get("sql")<ProfileRow[]>`select legal_name, display_name, tax_id, address, city, state, post_code, country, website from businesses where legal_name is not null and account_id = ${c.get("auth").accountId}`;
   return c.json({ profile: profileJson(p) });
 });
 

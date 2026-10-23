@@ -69,11 +69,11 @@ export async function merchantTerminals(sql: Sql, id: string) {
     payments: number; volume: bigint; last_payment_at: Date | null;
   }[]>`
     select t.id, t.name, t.allow_refunds, t.created_at, (t.session_token_hash is not null) as signed_in,
-           o.uid as orb_uid, o.model as orb_model, o.software as orb_software,
+           t.orb_uid, t.orb_model, t.orb_software,
            (select count(*) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed')::int as payments,
            (select coalesce(sum(x.amount), 0) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as volume,
            (select max(x.completed_at) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as last_payment_at
-      from terminals t left join orbs o on o.terminal_id = t.id
+      from terminals t
      where t.account_id = ${id}
      order by t.created_at, t.id`;
   return rows.map((r) => ({

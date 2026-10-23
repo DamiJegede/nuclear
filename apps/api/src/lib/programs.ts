@@ -53,13 +53,14 @@ export type ProgramRow = {
   org_account_id: string; mode: "fixed" | "flexible"; cadence: Cadence | null; day_of_month: number | null; weekday: number | null;
   start_date: string | null; next_run_date: string | null; warned_for: string | null; chosen_at: Date | null;
 };
-const P_COLS = `org_account_id, mode, cadence, day_of_month, weekday, start_date::text as start_date, next_run_date::text as next_run_date, warned_for::text as warned_for, chosen_at`;
+// The program lives on the organization's business row (program_* columns); these aliases keep the program's own names.
+const P_COLS = `account_id as org_account_id, program_mode as mode, program_cadence as cadence, program_day_of_month as day_of_month, program_weekday as weekday, program_start_date::text as start_date, program_next_run_date::text as next_run_date, program_warned_for::text as warned_for, program_chosen_at as chosen_at`;
 
 export async function getProgram(sql: Sql, orgId: string): Promise<ProgramRow> {
-  const [p] = await sql<ProgramRow[]>`select ${sql.unsafe(P_COLS)} from benefit_programs where org_account_id = ${orgId}`;
+  const [p] = await sql<ProgramRow[]>`select ${sql.unsafe(P_COLS)} from businesses where account_id = ${orgId}`;
   if (p) return p;
   // An organization created before programs existed (or any gap): create its row now, Flexible and not chosen.
-  const [made] = await sql<ProgramRow[]>`insert into benefit_programs (org_account_id) values (${orgId}) on conflict (org_account_id) do update set org_account_id = excluded.org_account_id returning ${sql.unsafe(P_COLS)}`;
+  const [made] = await sql<ProgramRow[]>`insert into businesses (account_id, account_type) values (${orgId}, 'O') on conflict (account_id) do update set account_id = excluded.account_id returning ${sql.unsafe(P_COLS)}`;
   return made!;
 }
 
@@ -78,19 +79,19 @@ export type ProgramInput =
 /** Chooses or changes the program. Fixed starts with the first payment date after today. Anything waiting under the old schedule is closed. */
 export async function setProgram(sql: Sql, orgId: string, input: ProgramInput, today: string): Promise<ProgramRow> {
   return sql.begin(async (tx) => {
-    await tx`insert into benefit_programs (org_account_id) values (${orgId}) on conflict (org_account_id) do nothing`;
-    await tx`select 1 from benefit_programs where org_account_id = ${orgId} for no key update`;
+    await tx`insert into businesses (account_id, account_type) values (${orgId}, 'O') on conflict (account_id) do nothing`;
+    await tx`select 1 from businesses where account_id = ${orgId} for no key update`;
     await tx`update benefit_runs set status = 'missed', failure_code = 'schedule_changed' where org_account_id = ${orgId} and source = 'schedule' and status = 'waiting_for_funds'`;
     if (input.mode === "flexible") {
-      await tx`update benefit_programs set mode = 'flexible', cadence = null, day_of_month = null, weekday = null, start_date = null, next_run_date = null, warned_for = null, chosen_at = coalesce(chosen_at, now()) where org_account_id = ${orgId}`;
+      await tx`update businesses set program_mode = 'flexible', program_cadence = null, program_day_of_month = null, program_weekday = null, program_start_date = null, program_next_run_date = null, program_warned_for = null, program_chosen_at = coalesce(program_chosen_at, now()) where account_id = ${orgId}`;
     } else {
       const day = input.cadence === "monthly" ? input.day_of_month : null;
       const wd = input.cadence === "monthly" ? null : input.weekday;
       const start = input.cadence === "biweekly" ? nextWeekday(wd!, today) : null;
       const next = nextRunAfter({ cadence: input.cadence, day_of_month: day, weekday: wd, start_date: start }, today);
-      await tx`update benefit_programs set mode = 'fixed', cadence = ${input.cadence}, day_of_month = ${day}, weekday = ${wd}, start_date = ${start}, next_run_date = ${next}, warned_for = null, chosen_at = coalesce(chosen_at, now()) where org_account_id = ${orgId}`;
+      await tx`update businesses set program_mode = 'fixed', program_cadence = ${input.cadence}, program_day_of_month = ${day}, program_weekday = ${wd}, program_start_date = ${start}, program_next_run_date = ${next}, program_warned_for = null, program_chosen_at = coalesce(program_chosen_at, now()) where account_id = ${orgId}`;
     }
-    const [p] = await tx<ProgramRow[]>`select ${tx.unsafe(P_COLS)} from benefit_programs where org_account_id = ${orgId}`;
+    const [p] = await tx<ProgramRow[]>`select ${tx.unsafe(P_COLS)} from businesses where account_id = ${orgId}`;
     return p!;
   });
 }
@@ -110,9 +111,9 @@ export async function runDuePrograms(env: Env, sql: Sql, today: string = eastern
 
   // 1. Warn ahead.
   const soon = await sql<Due[]>`
-    select ${sql.unsafe(P_COLS)} from benefit_programs
-     where mode = 'fixed' and next_run_date > ${today}::date and next_run_date <= ${addDays(today, WARN_DAYS)}::date and warned_for is distinct from next_run_date
-       and exists (select 1 from accounts a where a.id = org_account_id and a.status = 'active')`;
+    select ${sql.unsafe(P_COLS)} from businesses
+     where program_mode = 'fixed' and program_next_run_date > ${today}::date and program_next_run_date <= ${addDays(today, WARN_DAYS)}::date and program_warned_for is distinct from program_next_run_date
+       and exists (select 1 from accounts a where a.id = businesses.account_id and a.status = 'active')`;
   for (const p of soon) {
     const f = await fixedTotals(sql, p.org_account_id);
     const [o] = await sql<{ name: string; email: string | null; balance: bigint }[]>`select a.name, a.email, b.balance from accounts a join balances b on b.account_id = a.id where a.id = ${p.org_account_id}`;
@@ -120,19 +121,19 @@ export async function runDuePrograms(env: Env, sql: Sql, today: string = eastern
       await sendMail(env, { to: o.email, ...lowFundsEmail(o.name, p.next_run_date!, f.total, o.balance < 0n ? 0n : o.balance) });
       out.warned += 1;
     }
-    await sql`update benefit_programs set warned_for = next_run_date where org_account_id = ${p.org_account_id}`;
+    await sql`update businesses set program_warned_for = program_next_run_date where account_id = ${p.org_account_id}`;
   }
 
   // 2. Run what is due.
   const due = await sql<Due[]>`
-    select ${sql.unsafe(P_COLS)} from benefit_programs where mode = 'fixed' and next_run_date <= ${today}::date
-       and exists (select 1 from accounts a where a.id = org_account_id and a.status = 'active')   -- a suspended organization pays nobody
-     order by next_run_date, org_account_id limit 100`;
+    select ${sql.unsafe(P_COLS)} from businesses where program_mode = 'fixed' and program_next_run_date <= ${today}::date
+       and exists (select 1 from accounts a where a.id = businesses.account_id and a.status = 'active')   -- a suspended organization pays nobody
+     order by program_next_run_date, account_id limit 100`;
   for (const p of due) {
     const claimed = await sql`
-      update benefit_programs set last_attempt_at = now()
-       where org_account_id = ${p.org_account_id} and next_run_date = ${p.next_run_date}::date and (last_attempt_at is null or last_attempt_at < now() - interval '30 minutes')
-      returning org_account_id`;
+      update businesses set program_last_attempt_at = now()
+       where account_id = ${p.org_account_id} and program_next_run_date = ${p.next_run_date}::date and (program_last_attempt_at is null or program_last_attempt_at < now() - interval '30 minutes')
+      returning account_id`;
     if (claimed.length === 0) { out.skipped += 1; continue; }
     const r = await processProgram(env, sql, p, today);
     out[r] += 1;
@@ -146,7 +147,7 @@ async function processProgram(env: Env, sql: Sql, p: Due, today: string): Promis
   const key = `program:${date}`;
   const advance = async () => {
     const next = nextRunAfter({ cadence: p.cadence!, day_of_month: p.day_of_month, weekday: p.weekday, start_date: p.start_date }, today > date ? today : date);
-    await sql`update benefit_programs set next_run_date = ${next}::date, warned_for = null where org_account_id = ${orgId}`;
+    await sql`update businesses set program_next_run_date = ${next}::date, program_warned_for = null where account_id = ${orgId}`;
   };
   const [prior] = await sql<{ id: string; status: string; attempts: number }[]>`select id, status, attempts from benefit_runs where org_account_id = ${orgId} and idempotency_key = ${key}`;
   if (prior && prior.status !== "waiting_for_funds") { await advance(); return "skipped"; }   // already done (credited or missed)

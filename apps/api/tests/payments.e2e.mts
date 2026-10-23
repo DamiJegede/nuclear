@@ -118,62 +118,61 @@ const T1c = (await call("POST", `/v1/terminals/${t1id}/session`, { token: S })).
 eq("terminal ends its own session", [(await call("DELETE", "/v1/terminal/session", { token: T1c })).status, (await call("GET", "/v1/terminal", { token: T1c })).status], [204, 401]);
 const T1d = (await call("POST", `/v1/terminals/${t1id}/session`, { token: S })).json.session_token;
 
-// ============ orbs: register on claim (uid = MAC) ============
+// ============ orbs: paired on a terminal (uid = MAC); the Orb is columns of the terminal ============
 const MAC1 = "AA:BB:CC:00:11:01", MAC2 = "aa-bb-cc-00-11-02", MAC3 = "AABBCC001103", MAC4 = "AABBCC001104";
 const orbBody = (uid: string, software = "1.0.0", model = "Orb-1") => ({ uid, model, software });
-const orbsRows = async () => Number((await q("select count(*)::int n from orbs"))[0].n);
-eq("no Orb rows exist before the first claim", await orbsRows(), 0);
+const orbsRows = async () => Number((await q("select count(*)::int n from terminals where orb_uid is not null"))[0].n);
+eq("no Orb is paired before the first claim", await orbsRows(), 0);
 const reg = await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: orbBody(MAC1) });
-eq("unknown Orb registers itself on claim (MAC normalized)", [reg.status, reg.json.orb.uid, reg.json.orb.model, reg.json.orb.software, await orbsRows()], [200, "AABBCC001101", "Orb-1", "1.0.0", 1]);
-eq("registered Orb is owned by the claimer and paired", (await q("select account_id=$2 as mine, terminal_id=$3 as paired from orbs where uid=$1", ["AABBCC001101", shop.account_id, t1id]))[0], { mine: true, paired: true });
+eq("an Orb is paired on the terminal (MAC normalized)", [reg.status, reg.json.orb.uid, reg.json.orb.model, reg.json.orb.software, await orbsRows()], [200, "AABBCC001101", "Orb-1", "1.0.0", 1]);
+eq("its MAC, model and firmware are columns of that terminal", (await q("select orb_uid, orb_model, orb_software, orb_paired_at is not null as paired from terminals where id=$1", [t1id]))[0], { orb_uid: "AABBCC001101", orb_model: "Orb-1", orb_software: "1.0.0", paired: true });
 const o1 = reg.json.orb.id;
-eq("id stays a generated uuid, separate from the MAC", [typeof o1, o1.length, o1 !== "AABBCC001101"], ["string", 36, true]);
+eq("the Orb's id is its terminal's id", o1, t1id);
 eq("terminal shows its orb", (await call("GET", "/v1/terminal", { token: T1d })).json.terminal.orb.uid, "AABBCC001101");
 for (const bad of ["AABBCC0011", "ZZBBCC001101", "AA:BB:CC:00:11:01:02", ""]) {
   eq(`invalid MAC rejected: ${JSON.stringify(bad)}`, (await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: orbBody(bad) })).status, 400);
 }
 eq("model and software required", [(await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: { uid: MAC2 } })).status, (await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: { uid: MAC2, model: "Orb-1", software: " " } })).status], [400, 400]);
-// another account cannot take an Orb that is already owned
+// another account cannot take an Orb that is on a terminal of this account
 eq("another account's Orb cannot be claimed", (await call("PUT", `/v1/terminals/${(await call("POST", "/v1/terminals", { token: O, body: { name: "Other T" } })).json.terminal.id}/orb`, { token: O, body: orbBody(MAC1) })).json.error, "orb_assigned_to_another_account");
-eq("it is still ours, untouched", (await q("select account_id=$1 as mine, terminal_id=$2 as paired from orbs where uid='AABBCC001101'", [shop.account_id, t1id]))[0], { mine: true, paired: true });
+eq("it is still on our terminal, untouched", (await q("select orb_uid from terminals where id=$1", [t1id]))[0].orb_uid, "AABBCC001101");
 eq("other merchant cannot pair my terminal", (await call("PUT", `/v1/terminals/${t1id}/orb`, { token: O, body: orbBody(MAC2) })).status, 404);
 // re-claiming records the firmware the terminal read
 const reUp = await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: orbBody("AA:BB:CC:00:11:01", "1.2.0") });
-eq("re-pairing updates firmware, no duplicate row", [reUp.json.orb.software, reUp.json.orb.id === o1, await orbsRows()], ["1.2.0", true, 1]);
-// terminal claims by itself; a terminal holds one Orb
+eq("re-pairing updates firmware, still one Orb", [reUp.json.orb.software, reUp.json.orb.id === o1, await orbsRows()], ["1.2.0", true, 1]);
+// terminal claims by itself; a terminal holds one Orb, the replaced one is gone
 const second = await call("PUT", "/v1/terminal/orb", { token: T1d, body: orbBody(MAC2, "1.0.1") });
 eq("terminal claims a second Orb itself, replacing the first", [second.status, second.json.orb.uid], [200, "AABBCC001102"]);
-eq("previous Orb unpaired but kept by the account", (await q("select terminal_id is null as unpaired, account_id = $1 as mine from orbs where uid='AABBCC001101'", [shop.account_id]))[0], { unpaired: true, mine: true });
+eq("the replaced Orb is gone from the system (its MAC is free)", (await q("select count(*)::int n from terminals where orb_uid='AABBCC001101'"))[0].n, 0);
 const t2 = await call("POST", "/v1/terminals", { token: S, body: { name: "Bar" } });
 const t2id = t2.json.terminal.id, T2 = t2.json.session_token;
 await call("PUT", `/v1/terminals/${t2id}/orb`, { token: S, body: orbBody(MAC2) });
 eq("orb moved: left old terminal, on new", [(await call("GET", `/v1/terminals/${t1id}`, { token: S })).json.terminal.orb, (await call("GET", `/v1/terminals/${t2id}`, { token: S })).json.terminal.orb.uid], [null, "AABBCC001102"]);
 eq("terminal reports new firmware", (await call("PATCH", "/v1/terminal/orb", { token: T2, body: { software: "2.0.0" } })).json.orb.software, "2.0.0");
 eq("no orb paired => 404", (await call("PATCH", "/v1/terminal/orb", { token: T1d, body: { software: "9" } })).status, 404);
-eq("owner lists orbs with uid", (await call("GET", "/v1/orbs", { token: S })).json.orbs.map((o: any) => [o.uid, o.terminal_id === t2id ? "T2" : o.terminal_id]), [["AABBCC001101", null], ["AABBCC001102", "T2"]]);
-eq("terminal unpairs own orb", [(await call("DELETE", "/v1/terminal/orb", { token: T2 })).status, (await call("GET", "/v1/terminal", { token: T2 })).json.terminal.orb], [204, null]);
+eq("owner lists the Orbs that are paired", (await call("GET", "/v1/orbs", { token: S })).json.orbs.map((o: any) => [o.uid, o.terminal_id === t2id ? "T2" : o.terminal_id]), [["AABBCC001102", "T2"]]);
+eq("terminal frees its own orb: MAC, model and firmware are removed from it", [(await call("DELETE", "/v1/terminal/orb", { token: T2 })).status, (await call("GET", "/v1/terminal", { token: T2 })).json.terminal.orb, (await q("select orb_uid, orb_model, orb_software, orb_paired_at from terminals where id=$1", [t2id]))[0]], [204, null, { orb_uid: null, orb_model: null, orb_software: null, orb_paired_at: null }]);
 await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: orbBody(MAC1) });
-eq("owner unpairs", (await call("DELETE", `/v1/terminals/${t1id}/orb`, { token: S })).status, 204);
+eq("owner frees it too", (await call("DELETE", `/v1/terminals/${t1id}/orb`, { token: S })).status, 204);
 // release: the Orb can then be claimed by someone else
+await call("PUT", `/v1/terminals/${t2id}/orb`, { token: S, body: orbBody(MAC2) });
 const o2id = (await call("GET", "/v1/orbs", { token: S })).json.orbs.find((o: any) => o.uid === "AABBCC001102").id;
 eq("release is owner-only and scoped", [(await call("POST", `/v1/orbs/${o2id}/release`, { token: O })).status, (await call("POST", `/v1/orbs/${o2id}/release`, { token: S })).status], [404, 204]);
 const otherTid = (await call("GET", "/v1/terminals", { token: O })).json.terminals[0].id;
-eq("a released Orb can be claimed by another account", [(await call("PUT", `/v1/terminals/${otherTid}/orb`, { token: O, body: orbBody(MAC2) })).status, (await q("select account_id=$1 as theirs from orbs where uid='AABBCC001102'", [other.account_id]))[0].theirs], [200, true]);
-// concurrent first claims of one new MAC: exactly one account wins, one row
+eq("a released Orb can be claimed by another account", [(await call("PUT", `/v1/terminals/${otherTid}/orb`, { token: O, body: orbBody(MAC2) })).status, (await q("select orb_uid from terminals where id=$1", [otherTid]))[0].orb_uid], [200, "AABBCC001102"]);
+// concurrent first claims of one new MAC: exactly one account wins, one Orb
 const raceTerm = (await call("POST", "/v1/terminals", { token: S, body: { name: "Race S" } })).json.terminal.id;
 const raceTermO = (await call("POST", "/v1/terminals", { token: O, body: { name: "Race O" } })).json.terminal.id;
 const orbRace = await Promise.all([
   call("PUT", `/v1/terminals/${raceTerm}/orb`, { token: S, body: orbBody(MAC3) }),
   call("PUT", `/v1/terminals/${raceTermO}/orb`, { token: O, body: orbBody(MAC3) }),
 ]);
-eq("racing first claims of one MAC: exactly one wins, one row", [orbRace.filter((r) => r.status === 200).length, orbRace.filter((r) => r.status === 409).length, (await q("select count(*)::int n from orbs where uid='AABBCC001103'"))[0].n], [1, 1, 1]);
-let dup = "none"; try { await q("insert into orbs(uid,model,software) values('AABBCC001104','m','s'),('AABBCC001104','m','s')"); } catch (e: any) { dup = e.constraint_name ?? e.code; }
-eq("db: Orb UID is unique", dup, "orbs_uid_key");
-let badUid = "none"; try { await q("insert into orbs(uid,model,software) values('aa:bb','m','s')"); } catch (e: any) { badUid = e.constraint_name ?? e.code; }
-eq("db: Orb UID must be 12 uppercase hex", badUid, "orbs_uid_format");
+eq("racing first claims of one MAC: exactly one wins, one Orb", [orbRace.filter((r) => r.status === 200).length, orbRace.filter((r) => r.status === 409).length, (await q("select count(*)::int n from terminals where orb_uid='AABBCC001103'"))[0].n], [1, 1, 1]);
+const tryq = async (sql: string, args: unknown[] = []) => { try { await q(sql, args); return "none"; } catch (e: any) { return e.constraint_name ?? e.code; } };
+eq("db: an Orb MAC is on one terminal at most", await tryq("update terminals set orb_uid='AABBCC001104', orb_model='m', orb_software='s', orb_paired_at=now() where id in ($1,$2)", [t1id, t2id]), "terminals_orb_uid_key");
+eq("db: Orb MAC must be 12 uppercase hex", await tryq("update terminals set orb_uid='aa:bb', orb_model='m', orb_software='s', orb_paired_at=now() where id=$1", [t1id]), "terminals_orb_uid_format");
+eq("db: the Orb columns are all set or all empty", await tryq("update terminals set orb_uid='AABBCC0011FE' where id=$1", [t1id]), "terminals_orb_all_or_none");
 await call("PUT", `/v1/terminals/${t1id}/orb`, { token: S, body: orbBody(MAC4) }); // leave T1 with an Orb
-let dupT = "none"; try { await q("insert into orbs(uid,model,software,account_id,terminal_id) values('AABBCC0011FF','m','s',$1,$2)", [shop.account_id, t1id]); } catch (e: any) { dupT = e.constraint_name ?? e.code; }
-eq("db: one orb per terminal", dupT, "orbs_terminal_id_key");
 
 // ============ funding + tags ============
 await fund(A, 10000, "fa");

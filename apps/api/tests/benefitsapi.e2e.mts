@@ -38,12 +38,12 @@ eq("key: none yet; only an organization manages it", [(await call("GET", "/v1/or
 const k1 = await call("POST", "/v1/org/api-key", { token: acme.session_token });
 const T1 = k1.json.token as string;
 eq("key: generated with a one-time token and a hint", [k1.status, /^nk_org_[A-Za-z0-9_-]{43}$/.test(T1), k1.json.key.hint === T1.slice(-4)], [201, true, true]);
-eq("key: afterwards only the hint and dates are visible, never the token; only a hash is stored", [Object.keys((await call("GET", "/v1/org/api-key", { token: acme.session_token })).json.key).sort(), (await q("select count(*)::int n from api_keys where key_hash = $1", [T1]))[0].n, (await q("select length(key_hash)::int l from api_keys"))[0].l], [["created_at", "hint", "last_used_at", "name"], 0, 64]);
+eq("key: afterwards only the hint and dates are visible, never the token; only a hash is stored", [Object.keys((await call("GET", "/v1/org/api-key", { token: acme.session_token })).json.key).sort(), (await q("select count(*)::int n from businesses where api_key_hash = $1", [T1]))[0].n, (await q("select length(api_key_hash)::int l from businesses where api_key_hash is not null"))[0].l], [["created_at", "hint", "last_used_at", "name"], 0, 64]);
 const post = (token: string | undefined, path: string, body: unknown, key?: string) => call("POST", `/v1/benefits-api${path}`, { token, body, key });
 eq("auth: no key, a wrong key, a session token and an agent-style key are all 401", [(await post(undefined, "/employees", {})).status, (await post("nk_org_" + "x".repeat(43), "/employees", {})).status, (await post(acme.session_token, "/employees", {})).status, (await post("nk_agent_" + "x".repeat(43), "/employees", {})).status], [401, 401, 401, 401]);
 const k2 = await call("POST", "/v1/org/api-key", { token: acme.session_token });
 const T2 = k2.json.token as string;
-eq("key: generating a new key kills the old one at once; one live key", [(await post(T1, "/employees", { employees: [] })).status, (await post(T2, "/employees", { employees: [] })).status, (await q("select count(*)::int n from api_keys where revoked_at is null"))[0].n], [401, 400, 1]);
+eq("key: generating a new key kills the old one at once; one live key", [(await post(T1, "/employees", { employees: [] })).status, (await post(T2, "/employees", { employees: [] })).status, (await q("select count(*)::int n from businesses where api_key_hash is not null"))[0].n], [401, 400, 1]);
 const KEY = T2;
 
 // ---- create / update employees (arrays)
@@ -102,7 +102,7 @@ eq("remove: doing it twice is fine; removed employees vanish from the portal lis
 eq("remove: crediting or saving a removed employee brings them back", [(await post(KEY, "/employees", { employees: [E("A1")] })).json.employees[0].result, (await q("select status from employees where employee_id='A1'"))[0].status], ["reactivated", "active"]);
 
 // ---- guards
-const before = (await q("select last_used_at from api_keys where revoked_at is null"))[0].last_used_at;
+const before = (await q("select api_key_last_used_at as last_used_at from businesses where api_key_hash is not null"))[0].last_used_at;
 eq("guards: using the key stamps its last use", [before !== null, (await call("GET", "/v1/org/api-key", { token: acme.session_token })).json.key.last_used_at !== null], [true, true]);
 eq("guards: a key is rate limited per minute", await (async () => { let last = 0; for (let n = 0; n < 125; n++) last = (await post(KEY, "/employees", { employees: [] })).status; return last; })(), 429);
 memoryLimiter.windows.clear();

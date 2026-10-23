@@ -51,7 +51,7 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
       const accountId = acct!.id;
       await tx`insert into balances (account_id) values (${accountId})`;
       // An organization starts with a Benefits program row: Flexible, not chosen yet (the portal asks right after sign-up).
-      if (b.type === "O") await tx`insert into benefit_programs (org_account_id) values (${accountId})`;
+      if (b.type === "O") await tx`insert into businesses (account_id, account_type) values (${accountId}, 'O')`;
       const [wallet] = await tx<{ id: string }[]>`
         insert into wallets (account_id, display_name, type)
         values (${accountId}, ${b.name}, 'default') returning id`;

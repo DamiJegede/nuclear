@@ -13,7 +13,7 @@ export async function organizationList(sql: Sql, q: string | null) {
     mode: string | null; chosen: boolean | null; employees: number; claimed: number; held: bigint; runs: number;
   }[]>`
     select a.id, coalesce(b.display_name, a.name) as name, a.email, a.status, a.created_at, (a.email_verified_at is not null) as email_verified,
-           coalesce(bal.balance, 0) as balance, p.mode, (p.chosen_at is not null) as chosen,
+           coalesce(bal.balance, 0) as balance, b.program_mode as mode, (b.program_chosen_at is not null) as chosen,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active')::int as employees,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active' and e.employee_account_id is not null)::int as claimed,
            (select coalesce(sum(e.balance), 0) from employees e where e.org_account_id = a.id and e.employee_account_id is null) as held,
@@ -21,7 +21,6 @@ export async function organizationList(sql: Sql, q: string | null) {
       from accounts a
       left join businesses b on b.account_id = a.id
       left join balances bal on bal.account_id = a.id
-      left join benefit_programs p on p.org_account_id = a.id
      where a.type = 'O'
        ${q ? sql`and (coalesce(b.display_name, a.name) ilike ${like(q)} or a.name ilike ${like(q)} or a.email ilike ${like(q)})` : sql``}
      order by a.created_at desc, a.id desc
@@ -39,11 +38,10 @@ export async function organizationDetail(sql: Sql, id: string) {
   }[]>`
     select a.id, a.name, a.handle, a.email, a.email_verified_at, a.phone, a.status, a.created_at, a.photo, a.bio, bal.balance,
            b.legal_name, b.display_name, b.address, b.city, b.state, b.post_code, b.country, b.website,
-           p.mode, p.chosen_at, p.cadence, p.day_of_month, p.weekday, p.next_run_date::text
+           b.program_mode as mode, b.program_chosen_at as chosen_at, b.program_cadence as cadence, b.program_day_of_month as day_of_month, b.program_weekday as weekday, b.program_next_run_date::text as next_run_date
       from accounts a
       left join businesses b on b.account_id = a.id
       left join balances bal on bal.account_id = a.id
-      left join benefit_programs p on p.org_account_id = a.id
      where a.id = ${id} and a.type = 'O'`;
   if (!o) return null;
   const [e] = await sql<{ total: number; claimed: number; unclaimed: number; removed: number; held: bigint; fixed_total: bigint }[]>`
@@ -58,7 +56,7 @@ export async function organizationDetail(sql: Sql, id: string) {
     select count(*)::int as runs, coalesce(sum(total) filter (where status = 'credited'), 0) as credited, max(created_at) filter (where status = 'credited') as last_run_at
       from benefit_runs where org_account_id = ${id}`;
   const [k] = await sql<{ key_hint: string; created_at: Date; last_used_at: Date | null }[]>`
-    select key_hint, created_at, last_used_at from api_keys where account_id = ${id} and revoked_at is null`;
+    select api_key_hint as key_hint, api_key_created_at as created_at, api_key_last_used_at as last_used_at from businesses where account_id = ${id} and api_key_hash is not null`;
   const [d] = await sql<{ n: number }[]>`select count(*)::int as n from uploads where account_id = ${id}`;
   return {
     id: o.id, name: o.display_name ?? o.name, legal_name: o.legal_name, handle: o.handle, status: o.status,

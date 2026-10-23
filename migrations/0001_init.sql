@@ -284,23 +284,6 @@ CREATE TABLE public.admins (
 );
 
 --
--- Name: api_keys; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.api_keys (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    account_id uuid NOT NULL,
-    name text DEFAULT 'Default'::text NOT NULL,
-    key_hash text NOT NULL,
-    key_hint text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    CONSTRAINT api_keys_key_hint_check CHECK ((length(key_hint) = 4)),
-    CONSTRAINT api_keys_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 60)))
-);
-
---
 -- Name: balances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -337,33 +320,6 @@ CREATE TABLE public.bank_accounts (
     CONSTRAINT bank_account_encrypted CHECK ((account_number ~ '^(v1\.[A-Za-z0-9_-]{20,}|SANDBOX)$'::text)),
     CONSTRAINT bank_accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text]))),
     CONSTRAINT bank_routing_format CHECK ((routing_number ~ '^([0-9]{9}|SANDBOX)$'::text))
-);
-
---
--- Name: benefit_programs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.benefit_programs (
-    org_account_id uuid NOT NULL,
-    mode text DEFAULT 'flexible'::text NOT NULL,
-    cadence text,
-    day_of_month smallint,
-    weekday smallint,
-    start_date date,
-    next_run_date date,
-    warned_for date,
-    last_attempt_at timestamp with time zone,
-    chosen_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT benefit_programs_cadence_check CHECK ((cadence = ANY (ARRAY['monthly'::text, 'weekly'::text, 'biweekly'::text]))),
-    CONSTRAINT benefit_programs_check CHECK (((mode = 'flexible'::text) OR ((cadence IS NOT NULL) AND (next_run_date IS NOT NULL)))),
-    CONSTRAINT benefit_programs_check1 CHECK (((cadence IS DISTINCT FROM 'monthly'::text) OR (day_of_month IS NOT NULL))),
-    CONSTRAINT benefit_programs_check2 CHECK (((cadence IS NULL) OR (cadence = 'monthly'::text) OR (weekday IS NOT NULL))),
-    CONSTRAINT benefit_programs_check3 CHECK (((cadence IS DISTINCT FROM 'biweekly'::text) OR (start_date IS NOT NULL))),
-    CONSTRAINT benefit_programs_day_of_month_check CHECK (((day_of_month >= 1) AND (day_of_month <= 28))),
-    CONSTRAINT benefit_programs_mode_check CHECK ((mode = ANY (ARRAY['fixed'::text, 'flexible'::text]))),
-    CONSTRAINT benefit_programs_weekday_check CHECK (((weekday >= 0) AND (weekday <= 6)))
 );
 
 --
@@ -418,8 +374,8 @@ CREATE TABLE public.benefit_runs (
 CREATE TABLE public.businesses (
     account_id uuid NOT NULL,
     account_type character(1) DEFAULT 'B'::bpchar NOT NULL,
-    legal_name text NOT NULL,
-    display_name text NOT NULL,
+    legal_name text,
+    display_name text,
     tax_id text,
     bank_account_id uuid,
     address text,
@@ -431,6 +387,30 @@ CREATE TABLE public.businesses (
     latitude double precision,
     longitude double precision,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    program_mode text DEFAULT 'flexible'::text NOT NULL,
+    program_cadence text,
+    program_day_of_month smallint,
+    program_weekday smallint,
+    program_start_date date,
+    program_next_run_date date,
+    program_warned_for date,
+    program_last_attempt_at timestamp with time zone,
+    program_chosen_at timestamp with time zone,
+    api_key_hash text,
+    api_key_hint text,
+    api_key_created_at timestamp with time zone,
+    api_key_last_used_at timestamp with time zone,
+    CONSTRAINT businesses_names_together CHECK (((legal_name IS NULL) = (display_name IS NULL))),
+    CONSTRAINT businesses_program_mode_check CHECK ((program_mode = ANY (ARRAY['fixed'::text, 'flexible'::text]))),
+    CONSTRAINT businesses_program_cadence_check CHECK ((program_cadence = ANY (ARRAY['monthly'::text, 'weekly'::text, 'biweekly'::text]))),
+    CONSTRAINT businesses_program_day_check CHECK (((program_day_of_month >= 1) AND (program_day_of_month <= 28))),
+    CONSTRAINT businesses_program_weekday_check CHECK (((program_weekday >= 0) AND (program_weekday <= 6))),
+    CONSTRAINT businesses_program_fixed_check CHECK (((program_mode = 'flexible'::text) OR ((program_cadence IS NOT NULL) AND (program_next_run_date IS NOT NULL)))),
+    CONSTRAINT businesses_program_monthly_check CHECK (((program_cadence IS DISTINCT FROM 'monthly'::text) OR (program_day_of_month IS NOT NULL))),
+    CONSTRAINT businesses_program_weekly_check CHECK (((program_cadence IS NULL) OR (program_cadence = 'monthly'::text) OR (program_weekday IS NOT NULL))),
+    CONSTRAINT businesses_program_biweekly_check CHECK (((program_cadence IS DISTINCT FROM 'biweekly'::text) OR (program_start_date IS NOT NULL))),
+    CONSTRAINT businesses_api_key_check CHECK (((api_key_hash IS NULL) = (api_key_hint IS NULL))),
+    CONSTRAINT businesses_api_key_hint_check CHECK (((api_key_hint IS NULL) OR (length(api_key_hint) = 4))),
     CONSTRAINT businesses_account_type_check CHECK ((account_type = ANY (ARRAY['B'::bpchar, 'O'::bpchar])))
 );
 
@@ -618,23 +598,6 @@ CREATE TABLE public.logs (
     CONSTRAINT logs_action_check CHECK (((length(action) >= 1) AND (length(action) <= 80))),
     CONSTRAINT logs_actor_type_check CHECK ((actor_type = ANY (ARRAY['admin'::text, 'operator'::text, 'customer'::text, 'agent'::text, 'system'::text]))),
     CONSTRAINT logs_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
-);
-
---
--- Name: orbs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.orbs (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    uid text NOT NULL,
-    model text NOT NULL,
-    software text NOT NULL,
-    account_id uuid,
-    terminal_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT orbs_check CHECK (((terminal_id IS NULL) OR (account_id IS NOT NULL))),
-    CONSTRAINT orbs_uid_format CHECK ((uid ~ '^[0-9A-F]{12}$'::text))
 );
 
 --
@@ -951,6 +914,12 @@ CREATE TABLE public.terminals (
     allow_refunds boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    orb_uid text,
+    orb_model text,
+    orb_software text,
+    orb_paired_at timestamp with time zone,
+    CONSTRAINT terminals_orb_all_or_none CHECK ((((orb_uid IS NULL) = (orb_model IS NULL)) AND ((orb_uid IS NULL) = (orb_software IS NULL)) AND ((orb_uid IS NULL) = (orb_paired_at IS NULL)))),
+    CONSTRAINT terminals_orb_uid_format CHECK (((orb_uid IS NULL) OR (orb_uid ~ '^[0-9A-F]{12}$'::text))),
     CONSTRAINT terminals_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 80)))
 );
 
@@ -1102,20 +1071,6 @@ ALTER TABLE ONLY public.admins
     ADD CONSTRAINT admins_pkey PRIMARY KEY (id);
 
 --
--- Name: api_keys api_keys_key_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.api_keys
-    ADD CONSTRAINT api_keys_key_hash_key UNIQUE (key_hash);
-
---
--- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.api_keys
-    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
-
---
 -- Name: balances balances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1142,13 +1097,6 @@ ALTER TABLE ONLY public.bank_accounts
 
 ALTER TABLE ONLY public.bank_accounts
     ADD CONSTRAINT bank_accounts_provider_account_id_key UNIQUE (provider_account_id);
-
---
--- Name: benefit_programs benefit_programs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.benefit_programs
-    ADD CONSTRAINT benefit_programs_pkey PRIMARY KEY (org_account_id);
 
 --
 -- Name: benefit_run_rows benefit_run_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -1282,20 +1230,6 @@ ALTER TABLE ONLY public.ledger_entries
 
 ALTER TABLE ONLY public.logs
     ADD CONSTRAINT logs_pkey PRIMARY KEY (id);
-
---
--- Name: orbs orbs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.orbs
-    ADD CONSTRAINT orbs_pkey PRIMARY KEY (id);
-
---
--- Name: orbs orbs_uid_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.orbs
-    ADD CONSTRAINT orbs_uid_key UNIQUE (uid);
 
 --
 -- Name: orders orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -1490,28 +1424,10 @@ CREATE INDEX admin_sessions_admin_idx ON public.admin_sessions USING btree (admi
 CREATE INDEX admin_sessions_expires_idx ON public.admin_sessions USING btree (expires_at);
 
 --
--- Name: api_keys_account_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX api_keys_account_idx ON public.api_keys USING btree (account_id, created_at DESC);
-
---
--- Name: api_keys_one_active_per_account; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX api_keys_one_active_per_account ON public.api_keys USING btree (account_id) WHERE (revoked_at IS NULL);
-
---
 -- Name: bank_accounts_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX bank_accounts_account_id_idx ON public.bank_accounts USING btree (account_id);
-
---
--- Name: benefit_programs_due_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX benefit_programs_due_idx ON public.benefit_programs USING btree (next_run_date) WHERE (mode = 'fixed'::text);
 
 --
 -- Name: benefit_run_rows_employee_idx; Type: INDEX; Schema: public; Owner: -
@@ -1686,18 +1602,6 @@ CREATE INDEX logs_created_idx ON public.logs USING btree (created_at DESC, id DE
 --
 
 CREATE INDEX logs_target_idx ON public.logs USING btree (target_id, created_at DESC) WHERE (target_id IS NOT NULL);
-
---
--- Name: orbs_account_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX orbs_account_id_idx ON public.orbs USING btree (account_id) WHERE (account_id IS NOT NULL);
-
---
--- Name: orbs_terminal_id_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX orbs_terminal_id_key ON public.orbs USING btree (terminal_id) WHERE (terminal_id IS NOT NULL);
 
 --
 -- Name: orders_account_idx; Type: INDEX; Schema: public; Owner: -
@@ -1910,12 +1814,6 @@ CREATE TRIGGER balances_updated_at BEFORE UPDATE ON public.balances FOR EACH ROW
 CREATE TRIGGER bank_accounts_updated_at BEFORE UPDATE ON public.bank_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 --
--- Name: benefit_programs benefit_programs_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER benefit_programs_updated_at BEFORE UPDATE ON public.benefit_programs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
 -- Name: benefit_runs benefit_runs_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1998,18 +1896,6 @@ CREATE TRIGGER logs_no_truncate BEFORE TRUNCATE ON public.logs FOR EACH STATEMEN
 --
 
 CREATE TRIGGER logs_no_update BEFORE DELETE OR UPDATE ON public.logs FOR EACH ROW EXECUTE FUNCTION public.logs_immutable();
-
---
--- Name: orbs orbs_business_only; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER orbs_business_only BEFORE INSERT OR UPDATE OF account_id ON public.orbs FOR EACH ROW EXECUTE FUNCTION public.require_business_account();
-
---
--- Name: orbs orbs_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER orbs_updated_at BEFORE UPDATE ON public.orbs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 --
 -- Name: orders orders_updated_at; Type: TRIGGER; Schema: public; Owner: -
@@ -2134,13 +2020,6 @@ ALTER TABLE ONLY public.admins
     ADD CONSTRAINT admins_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.admins(id) ON DELETE RESTRICT;
 
 --
--- Name: api_keys api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.api_keys
-    ADD CONSTRAINT api_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
 -- Name: balances balances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2153,13 +2032,6 @@ ALTER TABLE ONLY public.balances
 
 ALTER TABLE ONLY public.bank_accounts
     ADD CONSTRAINT bank_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: benefit_programs benefit_programs_org_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.benefit_programs
-    ADD CONSTRAINT benefit_programs_org_account_id_fkey FOREIGN KEY (org_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
 
 --
 -- Name: benefit_run_rows benefit_run_rows_employee_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -2314,20 +2186,6 @@ ALTER TABLE ONLY public.ledger_entries
 
 ALTER TABLE ONLY public.ledger_entries
     ADD CONSTRAINT ledger_entries_wallet_id_fkey FOREIGN KEY (wallet_id) REFERENCES public.wallets(id) ON DELETE RESTRICT;
-
---
--- Name: orbs orbs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.orbs
-    ADD CONSTRAINT orbs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: orbs orbs_terminal_id_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.orbs
-    ADD CONSTRAINT orbs_terminal_id_account_id_fkey FOREIGN KEY (terminal_id, account_id) REFERENCES public.terminals(id, account_id) ON DELETE RESTRICT;
 
 --
 -- Name: orders orders_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -2546,3 +2404,10 @@ ALTER TABLE ONLY public.wallets
 
 -- Seed: the program day the daily counters were last reset (removed when the daily reset machinery goes away).
 INSERT INTO system (key, value) VALUES ('daily_reset_day', ((now() AT TIME ZONE 'America/New_York')::date)::text);
+
+-- Organization (type O) settings live on the business row: the Benefits program (Fixed or Flexible, created with the organization) and its one live Benefits API key.
+CREATE UNIQUE INDEX businesses_api_key_hash_key ON public.businesses USING btree (api_key_hash) WHERE (api_key_hash IS NOT NULL);
+CREATE INDEX businesses_program_due_idx ON public.businesses USING btree (program_next_run_date) WHERE (program_mode = 'fixed'::text);
+
+-- A terminal holds at most one Orb, and an Orb (its MAC address) is on at most one terminal: freeing it clears these columns.
+CREATE UNIQUE INDEX terminals_orb_uid_key ON public.terminals USING btree (orb_uid) WHERE (orb_uid IS NOT NULL);

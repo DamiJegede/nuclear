@@ -31,7 +31,7 @@ const bankroll = async (accountId: string, cents: number) => q(`do $$ declare ba
   update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 const tokenOf = (to: string) => decodeURIComponent(mails.filter((m) => m.to === to).at(-1)!.text.match(/claim\?token=([^\s]+)/)![1]);
 const sql = connect(env);
-const release = () => q("update benefit_programs set last_attempt_at = null");
+const release = () => q("update businesses set program_last_attempt_at = null");
 
 // ===== 1. an organization signs up and sets itself up
 const org = await sign("Northwind Foods", "hr@northwind.test", "O");

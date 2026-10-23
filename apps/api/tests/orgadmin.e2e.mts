@@ -90,7 +90,7 @@ eq("its sign-in session stops", (await call("GET", "/v1/account", { token: AT })
 eq("and its API key", (await call("GET", "/v1/benefits-api/balance", { token: key.token })).status, 401);
 eq("a suspended organization pays no scheduled benefits", await (async () => {
   const sql = connect(env);
-  await q("update benefit_programs set next_run_date = '2026-10-01' where org_account_id = $1", [acme.account_id]);
+  await q("update businesses set program_next_run_date = '2026-10-01' where account_id = $1", [acme.account_id]);
   await runDuePrograms(env, sql, "2026-10-05");
   await sql.end();
   return (await q("select count(*)::int n from benefit_runs where org_account_id=$1 and source='schedule'", [acme.account_id]))[0].n;

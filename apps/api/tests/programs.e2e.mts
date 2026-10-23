@@ -40,7 +40,7 @@ eq("biweekly: every 14 days from the first payment date, never off the anchor", 
 const acme = await sign("Acme", "hr@acme.test", "O");
 const cus = await sign("Cus", "cus@x.test");
 const prog = async () => (await call("GET", "/v1/org/program", { token: acme.session_token })).json.program;
-eq("signup: an organization gets its program row at once: Flexible and not chosen yet", [(await q("select mode, chosen_at is null as unchosen from benefit_programs where org_account_id=$1", [acme.account_id]))[0], (await q("select count(*)::int n from benefit_programs where org_account_id=$1", [cus.account_id]))[0].n], [{ mode: "flexible", unchosen: true }, 0]);
+eq("signup: an organization gets its program row at once: Flexible and not chosen yet", [(await q("select program_mode as mode, program_chosen_at is null as unchosen from businesses where account_id=$1", [acme.account_id]))[0], (await q("select count(*)::int n from businesses where account_id=$1", [cus.account_id]))[0].n], [{ mode: "flexible", unchosen: true }, 0]);
 eq("program: starts Flexible, not chosen; only organizations read it", [(await prog()).mode, (await prog()).chosen, (await call("GET", "/v1/org/program", { token: cus.session_token })).status], ["flexible", false, 403]);
 const today = new Date().toISOString().slice(0, 10);
 eq("program: choosing Flexible marks it chosen and schedules nothing", [(await call("PUT", "/v1/org/program", { token: acme.session_token, body: { mode: "flexible" } })).json.program.chosen, (await prog()).next_run_date], [true, null]);
@@ -74,7 +74,7 @@ eq("fixed: 0 through the API clears it", (await capi("POST", "/employees/get", {
 // ---- the scheduler
 const cusToken = (await sign("Cus Bulk", "cusbulk@x.test")).session_token;
 const sql = connect(env);
-const release = () => q("update benefit_programs set last_attempt_at = null");
+const release = () => q("update businesses set program_last_attempt_at = null");
 const runDay = async (d: string) => { await release(); return runDuePrograms(env, sql, d); };
 await call("PUT", "/v1/org/program", { token: acme.session_token, body: { mode: "fixed", cadence: "monthly", day_of_month: 15 } });
 const due = (await prog()).next_run_date as string;
@@ -86,7 +86,7 @@ eq("scheduler: on the date it credits every employee with a fixed benefit as one
 eq("scheduler: money moved once; employees hold their credit in escrow; the books reconcile", [await balanceOf(), (await q("select employee_id, balance::int b from employees where fixed_benefit is not null order by employee_id")).map((r: any) => [r.employee_id, r.b]), (await reconciled()).ledger_balanced, (await reconciled()).escrow_matches_employees], [1_000_000 - 7500, [["E1", 5000], ["E2", 2500]], true, true]);
 eq("scheduler: unclaimed employees were emailed a claim link on the first credit", [mails.filter((m) => /claim\?token/.test(m.text)).map((m) => m.to).sort()], [["eve@x.test", "sam@x.test"]]);
 const next = (await prog()).next_run_date as string;
-eq("scheduler: the program moves on to its next date (a month later)", [next > due, next.endsWith("-15"), (await q("select warned_for from benefit_programs where org_account_id=$1", [acme.account_id]))[0].warned_for], [true, true, null]);
+eq("scheduler: the program moves on to its next date (a month later)", [next > due, next.endsWith("-15"), (await q("select program_warned_for as warned_for from businesses where account_id=$1", [acme.account_id]))[0].warned_for], [true, true, null]);
 eq("scheduler: running it again, even twice at once, credits nothing more", [await runDay(due), (await release().then(() => Promise.all([runDuePrograms(env, sql, due), runDuePrograms(env, sql, due)]))).map((x) => x.credited), await balanceOf()], [{ warned: 0, credited: 0, waiting: 0, missed: 0, skipped: 0 }, [0, 0], 1_000_000 - 7500]);
 
 // next cycle: the already-told unclaimed employees get the money held but no new email and their old link still works
@@ -166,7 +166,7 @@ await q("update employees set balance = 0 where id = $1", [bE4]);
 
 // ---- switching modes
 eq("switching: Flexible stops the schedule and keeps the fixed amounts; Fixed again picks a new date", [(await call("PUT", "/v1/org/program", { token: acme.session_token, body: { mode: "flexible" } })).json.program.next_run_date, (await q("select count(*)::int n from employees where org_account_id=$1 and fixed_benefit is not null", [acme.account_id]))[0].n > 0, (await runDay(addDays(next3, 40))).credited], [null, true, 0]);
-eq("switching: changing the schedule closes anything still waiting under the old one", await (async () => { await q("update benefit_programs set last_attempt_at = null where org_account_id = $1", [missOrg.account_id]); await q("insert into benefit_runs (org_account_id, source, run_date, status, idempotency_key, row_count, total, failure_code) values ($1,'schedule',current_date,'waiting_for_funds','program:x',1,100,'insufficient_balance')", [missOrg.account_id]); await call("PUT", "/v1/org/program", { token: missOrg.session_token, body: { mode: "fixed", cadence: "weekly", weekday: 1 } }); return (await q("select status, failure_code from benefit_runs where idempotency_key='program:x'"))[0]; })(), { status: "missed", failure_code: "schedule_changed" });
+eq("switching: changing the schedule closes anything still waiting under the old one", await (async () => { await q("update businesses set program_last_attempt_at = null where account_id = $1", [missOrg.account_id]); await q("insert into benefit_runs (org_account_id, source, run_date, status, idempotency_key, row_count, total, failure_code) values ($1,'schedule',current_date,'waiting_for_funds','program:x',1,100,'insufficient_balance')", [missOrg.account_id]); await call("PUT", "/v1/org/program", { token: missOrg.session_token, body: { mode: "fixed", cadence: "weekly", weekday: 1 } }); return (await q("select status, failure_code from benefit_runs where idempotency_key='program:x'"))[0]; })(), { status: "missed", failure_code: "schedule_changed" });
 eq("flexible: a Flexible organization is never touched by the scheduler, and one-off credits still work in Fixed mode", [(await runDay("2099-01-01")).credited, (await capi("POST", "/credits", { credits: [{ employee_id: "E1", amount: 1000 }] }).then(() => 0)) === 0], [0, true]);
 await sql.end();
 console.log(`\n${pass} passed, ${fail} failed`);

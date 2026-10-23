@@ -64,7 +64,7 @@ org.get("/overview", async (c) => {
 
 // ---- Organization profile: legal name, tax ID, address and website, kept in the same table as a business profile ----
 org.get("/profile", async (c) => {
-  const [p] = await c.get("sql")<ProfileRow[]>`select legal_name, display_name, tax_id, address, city, state, post_code, country, website from businesses where account_id = ${c.get("auth").accountId}`;
+  const [p] = await c.get("sql")<ProfileRow[]>`select legal_name, display_name, tax_id, address, city, state, post_code, country, website from businesses where legal_name is not null and account_id = ${c.get("auth").accountId}`;
   return c.json({ profile: profileJson(p) });
 });
 

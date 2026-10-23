@@ -55,11 +55,10 @@ const claimBody = z.object({
 type Claim = z.infer<typeof claimBody>;
 
 /**
- * Claim and pair an Orb to a terminal. An Orb the system has never seen registers itself here (the
- * terminal read its UID, model and firmware over BLE); an unassigned one is claimed by this account;
- * one owned by a different account cannot be paired. Pairing moves the Orb off any previous terminal
- * of the account, and a terminal holds one Orb, so its previous Orb is unpaired (and stays owned).
- * The reported firmware version is recorded.
+ * Pair an Orb with a terminal. The Orb is not a table of its own: its MAC address, model and firmware are columns of the terminal it is paired
+ * with, so it belongs to that terminal's account. Pairing writes them on this terminal (replacing any Orb it had) and, if the same MAC was on
+ * another terminal of the account, moves it off that one. A MAC on another account's terminal cannot be paired (409). The reported firmware is
+ * recorded. The Orb's `id` in the API is its terminal's id.
  */
 export async function pairOrb(
   sql: Sql,
@@ -68,41 +67,39 @@ export async function pairOrb(
   c: Claim,
 ): Promise<{ error: string; status: 404 | 409 } | { orb: OrbRow }> {
   type R = { error: string; status: 404 | 409 } | { orb: OrbRow };
-  const result = (await sql.begin(async (tx): Promise<R> => {
-    const [t] = await tx<{ id: string }[]>`
-      select id from terminals where id = ${terminalId} and account_id = ${accountId} for no key update`;
-    if (!t) return { error: "terminal_not_found", status: 404 };
-
-    // Register on first sight; a concurrent first claim of the same UID loses the insert race.
-    await tx`
-      insert into orbs (uid, model, software) values (${c.uid}, ${c.model}, ${c.software})
-      on conflict (uid) do nothing`;
-    const [o] = await tx<OrbRow[]>`
-      select id, uid, model, software, account_id, terminal_id from orbs where uid = ${c.uid} for no key update`;
-    if (!o) return { error: "orb_not_found", status: 404 };
-    if (o.account_id !== null && o.account_id !== accountId) {
-      return { error: "orb_assigned_to_another_account", status: 409 };
-    }
-
-    await tx`update orbs set terminal_id = null where terminal_id = ${terminalId} and id <> ${o.id}`;
-    const [paired] = await tx<OrbRow[]>`
-      update orbs set account_id = ${accountId}, terminal_id = ${terminalId}, software = ${c.software}
-       where id = ${o.id} returning id, uid, model, software, account_id, terminal_id`;
-    return { orb: paired! };
-  })) as R;
-  return result;
+  try {
+    return (await sql.begin(async (tx): Promise<R> => {
+      const [t] = await tx<{ id: string }[]>`select id from terminals where id = ${terminalId} and account_id = ${accountId} for no key update`;
+      if (!t) return { error: "terminal_not_found", status: 404 };
+      const [held] = await tx<{ id: string; account_id: string }[]>`select id, account_id from terminals where orb_uid = ${c.uid} for no key update`;
+      if (held && held.account_id !== accountId) return { error: "orb_assigned_to_another_account", status: 409 };
+      if (held && held.id !== terminalId) {
+        await tx`update terminals set orb_uid = null, orb_model = null, orb_software = null, orb_paired_at = null where id = ${held.id}`;
+      }
+      await tx`
+        update terminals set orb_uid = ${c.uid}, orb_model = ${c.model}, orb_software = ${c.software},
+                             orb_paired_at = case when orb_uid = ${c.uid} then orb_paired_at else now() end
+         where id = ${terminalId}`;
+      return { orb: { id: terminalId, uid: c.uid, model: c.model, software: c.software, account_id: accountId, terminal_id: terminalId } };
+    })) as R;
+  } catch (err) {
+    // Two first claims of one MAC at once: the unique index lets exactly one in.
+    if ((err as { code?: string }).code === "23505") return { error: "orb_assigned_to_another_account", status: 409 };
+    throw err;
+  }
 }
 
+/** Frees the terminal's Orb: its MAC address, model and firmware are removed from the terminal, so any account can pair that MAC next. */
 async function unpairOrb(sql: Sql, accountId: string, terminalId: string): Promise<boolean> {
   const rows = await sql`
-    update orbs set terminal_id = null
-     where terminal_id = ${terminalId} and account_id = ${accountId} returning id`;
+    update terminals set orb_uid = null, orb_model = null, orb_software = null, orb_paired_at = null
+     where id = ${terminalId} and account_id = ${accountId} and orb_uid is not null returning id`;
   return rows.length > 0;
 }
 
 async function orbFor(sql: Sql, terminalId: string): Promise<OrbRow | null> {
   const [o] = await sql<OrbRow[]>`
-    select id, uid, model, software, account_id, terminal_id from orbs where terminal_id = ${terminalId}`;
+    select id, orb_uid as uid, orb_model as model, orb_software as software, account_id, id as terminal_id from terminals where id = ${terminalId} and orb_uid is not null`;
   return o ?? null;
 }
 
@@ -141,15 +138,14 @@ terminals.post("/", async (c) => {
 
 terminals.get("/", async (c) => {
   const { accountId } = c.get("auth");
-  const rows = await c.get("sql")<(TerminalRow & { orb_id: string | null; orb_uid: string | null; orb_model: string | null; orb_software: string | null })[]>`
-    select t.id, t.account_id, t.name, t.allow_refunds, t.created_at, t.updated_at,
-           o.id as orb_id, o.uid as orb_uid, o.model as orb_model, o.software as orb_software
-      from terminals t left join orbs o on o.terminal_id = t.id
+  const rows = await c.get("sql")<(TerminalRow & { orb_uid: string | null; orb_model: string | null; orb_software: string | null })[]>`
+    select t.id, t.account_id, t.name, t.allow_refunds, t.created_at, t.updated_at, t.orb_uid, t.orb_model, t.orb_software
+      from terminals t
      where t.account_id = ${accountId}
      order by t.created_at, t.id`;
   return c.json({
     terminals: rows.map((r) =>
-      terminalJson(r, r.orb_id ? { id: r.orb_id, uid: r.orb_uid!, model: r.orb_model!, software: r.orb_software!, account_id: accountId, terminal_id: r.id } : null),
+      terminalJson(r, r.orb_uid ? { id: r.id, uid: r.orb_uid, model: r.orb_model!, software: r.orb_software!, account_id: accountId, terminal_id: r.id } : null),
     ),
   });
 });
@@ -252,9 +248,9 @@ terminalSelf.patch("/orb", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const { accountId, terminalId } = c.get("terminal");
   const [o] = await c.get("sql")<OrbRow[]>`
-    update orbs set software = ${body.data.software}
-     where terminal_id = ${terminalId} and account_id = ${accountId}
-    returning id, uid, model, software, account_id, terminal_id`;
+    update terminals set orb_software = ${body.data.software}
+     where id = ${terminalId} and account_id = ${accountId} and orb_uid is not null
+    returning id, orb_uid as uid, orb_model as model, orb_software as software, account_id, id as terminal_id`;
   if (!o) return c.json({ error: "no_orb_paired" }, 404);
   return c.json({ orb: orbJson(o) });
 });
@@ -400,25 +396,22 @@ terminalSelf.post("/products/:id/restock", async (c) => {
   return c.json({ product: productJson(result.product) });
 });
 
-// ---- Orb inventory for the owning merchant: /v1/orbs ----------------------------------------
+// ---- The merchant's Orbs: /v1/orbs (an Orb is the hardware paired with one of its terminals, so this lists terminals that have one) ----------
 
 export const orbs = new Hono<AppContext>();
 orbs.use("*", requireSession, requireOwner);
 orbs.get("/", async (c) => {
   const rows = await c.get("sql")<OrbRow[]>`
-    select id, uid, model, software, account_id, terminal_id from orbs
-     where account_id = ${c.get("auth").accountId} order by created_at, id`;
+    select id, orb_uid as uid, orb_model as model, orb_software as software, account_id, id as terminal_id from terminals
+     where account_id = ${c.get("auth").accountId} and orb_uid is not null order by orb_paired_at, id`;
   return c.json({ orbs: rows.map((o) => ({ ...orbJson(o), terminal_id: o.terminal_id })) });
 });
 
-// Release an Orb (sold, returned, replaced): it leaves this account and its terminal, and can then
-// be claimed by whoever next pairs it.
+// Free an Orb (sold, returned, replaced): its MAC address, model and firmware are removed from the terminal and any account can pair it next.
+// The id is the terminal's id.
 orbs.post("/:id/release", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const rows = await c.get("sql")`
-    update orbs set account_id = null, terminal_id = null
-     where id = ${id.data} and account_id = ${c.get("auth").accountId} returning id`;
-  if (rows.length === 0) return c.json({ error: "not_found" }, 404);
+  if (!(await unpairOrb(c.get("sql"), c.get("auth").accountId, id.data))) return c.json({ error: "not_found" }, 404);
   return c.body(null, 204);
 });
