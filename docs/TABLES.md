@@ -329,7 +329,7 @@ The source of truth for money: every movement, and every declined attempt. **Imm
 | status_code | The reason when declined (insufficient_balance, spend_limit_exceeded, wallet_balance_exceeded, exceeds_refundable, ...); NULL exactly when completed (CHECK). |
 | from_wallet_id, to_wallet_id | Not null, foreign keys to wallets.id, different unless the type is `move`. |
 | amount | Positive bigint: the full amount the receiving side is credited. |
-| credit_amount | Part of the amount covered by approved credit (pay), repaid credit (fund) or restored credit (refund); 0 otherwise. Never more than amount. |
+| credit_amount | Part of the amount covered by approved credit (pay), repaid credit (fund), restored credit (refund) or credit drawn again (fund_return); 0 otherwise. Never more than amount. |
 | related_id | The transaction this one corrects: refund to its pay, fund_return to its fund, settle_return to its settle, adjustment to any. |
 | tag_id, pass_id | The credential of a tap payment (pay only; at most one). |
 | terminal_id | The terminal of a pay or refund; a trigger requires it to belong to the merchant. |
@@ -347,7 +347,7 @@ The source of truth for money: every movement, and every declined attempt. **Imm
 | Type | From wallet | To wallet |
 | --- | --- | --- |
 | fund | Nuclear Bank | account balance `+ (amount - credit_amount)`, `credit_spent - credit_amount` |
-| fund_return | the account's wallet: balance `- amount` (may go below zero: a debt that blocks activity) | Nuclear Bank |
+| fund_return | the account's wallet: balance `- (amount - credit_amount)`, `credit_spent + credit_amount` (it mirrors the fund it reverses; may go below zero or leave credit above the limit: an explicit debt that blocks outgoing activity) | Nuclear Bank |
 | send | balance `- amount` | balance `+ amount` |
 | pay | balance `- (amount - credit_amount)`, `credit_spent + credit_amount` | merchant balance `+ amount` |
 | refund | merchant balance `- amount` (may go below zero) | balance `+ (amount - credit_amount)`, `credit_spent - credit_amount` |

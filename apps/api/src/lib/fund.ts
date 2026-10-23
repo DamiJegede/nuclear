@@ -17,9 +17,10 @@ export type FundingRow = {
   transaction_id: string | null;
   created_at: Date;
   released_at: Date | null;
+  returned_at?: Date | null;
 };
 
-const F_COLS = `id, account_id, amount, status, failure_code, transaction_id, created_at, released_at`;
+const F_COLS = `id, account_id, amount, status, failure_code, transaction_id, created_at, released_at, returned_at`;
 
 /**
  * Release a load into the account (the step a real bank adapter reuses once the bank confirms): credit principal is repaid first, only the
@@ -106,3 +107,40 @@ export async function sandboxFund(
 }
 
 export { SYSTEM_ACCOUNT };
+
+export type ReturnOutcome =
+  | { kind: "ok"; funding: FundingRow; transactionId: string; replayed: boolean }
+  | { kind: "error"; status: 404 | 409; error: string };
+
+/**
+ * The bank returned a load that was already released (docs/BALANCE-POLICY.md, item 4). The original `fund` transaction stays; a `fund_return` goes from the
+ * account's default wallet to Nuclear Bank and reverses its allocation: the funded-balance part is taken back and the credit principal the load repaid is
+ * drawn again. That can leave the balance below zero or credit above the limit: the debt is explicit and the account's outgoing activity is blocked, never
+ * clamped away. The funding is marked `returned` with the bank's code. Idempotent per funding. A real bank adapter calls this when the return arrives;
+ * the sandbox rail has an admin route for it.
+ */
+export async function returnFunding(sql: Sql, i: { fundingId: string; code: string }): Promise<ReturnOutcome> {
+  return sql.begin(async (tx): Promise<ReturnOutcome> => {
+    const [f] = await tx<(FundingRow & { transaction_id: string | null })[]>`select ${tx.unsafe(F_COLS)} from fundings where id = ${i.fundingId} for no key update`;
+    if (!f) return { kind: "error", status: 404, error: "funding_not_found" };
+    const idem = `fund_return:${f.id}`;
+    if (f.status === "returned") {
+      const [done] = await tx<{ id: string }[]>`select id from transactions where idem = ${idem}`;
+      return { kind: "ok", funding: f, transactionId: done!.id, replayed: true };
+    }
+    if (f.status !== "completed" || !f.transaction_id) return { kind: "error", status: 409, error: "funding_not_released" };
+    const [orig] = await tx<{ id: string; credit_amount: bigint; to_wallet_id: string }[]>`select id, credit_amount, to_wallet_id from transactions where id = ${f.transaction_id}`;
+    // Lock order as everywhere: the account's balances row, then the wallet.
+    await tx`select 1 from balances where account_id = ${f.account_id} for no key update`;
+    const credit = orig!.credit_amount;
+    const [t] = await insertTx(tx, {
+      type: "fund_return", from: orig!.to_wallet_id, to: BANK_WALLET, amount: f.amount, credit, related: orig!.id, funding: f.id,
+      account: SYSTEM_ACCOUNT, idem, meta: { code: i.code },
+    });
+    await tx`update balances set balance = balance - ${(f.amount - credit).toString()}, credit_spent = credit_spent + ${credit.toString()} where account_id = ${f.account_id}`;
+    const [done] = await tx<FundingRow[]>`
+      update fundings set status = 'returned', returned_at = now(), failure_code = ${i.code}
+       where id = ${f.id} returning ${tx.unsafe(F_COLS)}`;
+    return { kind: "ok", funding: done!, transactionId: t!.id, replayed: false };
+  }) as Promise<ReturnOutcome>;
+}

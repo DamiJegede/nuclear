@@ -8,6 +8,7 @@ import { BusinessApproval } from "./BusinessApproval";
 import { EmailMerchants } from "./EmailMerchants";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
+import { useList } from "./useList";
 import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
 
 export type MerchantTab = "details" | "terminals" | "staff" | "transactions" | "products" | "activity";
@@ -155,14 +156,6 @@ function Details({ m }: { m: MerchantDetailData }) {
 }
 
 /** Loads a list for a tab with loading and retry, shared by the small tabs. */
-function useList<T>(load: () => Promise<T>, onError: (e: unknown) => void) {
-  const [data, setData] = useState<T | null>(null);
-  const [failed, setFailed] = useState(false);
-  const run = useCallback(async () => { try { setData(await load()); setFailed(false); } catch (e) { setFailed(true); onError(e); } }, [load, onError]);
-  useEffect(() => { void run(); }, [run]);
-  return { data, failed, retry: () => void run() };
-}
-
 function Terminals({ api, id, canAct, onError }: { api: Api; id: string; canAct: boolean; onError: (e: unknown) => void }) {
   const { data, failed, retry } = useList<MerchantTerminal[]>(useCallback(() => api.merchantTerminals(id), [api, id]), onError);
   const [confirm, setConfirm] = useState<MerchantTerminal | null>(null);

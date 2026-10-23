@@ -253,6 +253,19 @@ export class ApiError extends Error {
   }
 }
 
+/** One settlement day: every merchant's payout or collection for that program day (the id is the date). */
+export type SettlementRun = {
+  id: string; cutoff_date: string; status: "submitted" | "completed" | "failed"; merchants: number; payout_total: number; collection_total: number;
+  provider_reference: string | null; created_at: string; completed_at: string | null;
+};
+export type SettlementItem = {
+  id: string; merchant_id: string; merchant: string; kind: "payout" | "collection"; amount: number; status: "submitted" | "settled" | "returned" | "failed";
+  status_code: string | null; bank_last4: string | null;
+};
+export type SettlementRunResult =
+  | { ran: false; reason: "no_provider" | "already_done" }
+  | { ran: true; cutoff_date: string; created: number; payouts: number; collections: number; payout_total: number; collection_total: number; status: string };
+
 export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefined) ?? "https://nuclear-api.a-space.workers.dev";
 
 async function send<T>(base: string, token: string | null, method: string, path: string, body?: unknown): Promise<T> {
@@ -366,6 +379,13 @@ export function createApi(token: string, base: string = API_URL) {
     setUserStatus: (id: string, status: "active" | "suspended") => request<{ user: { id: string; status: string } }>("PUT", `/v1/admin/users/${encodeURIComponent(id)}/status`, { status }),
     setWalletStatus: (walletId: string, status: "active" | "suspended") => request<{ wallet: { id: string; status: string } }>("PUT", `/v1/admin/wallets/${encodeURIComponent(walletId)}/status`, { status }),
     signOutTerminal: (id: string) => request<null>("POST", `/v1/admin/terminals/${encodeURIComponent(id)}/sign-out`),
+    /** Settlement (Transactions page roles read; Admin runs and confirms). */
+    settlements: async () => (await request<{ settlements: SettlementRun[] }>("GET", "/v1/admin/settlements")).settlements,
+    settlement: async (date: string) => request<{ settlement: { id: string; cutoff_date: string; status: string; provider_reference: string | null }; items: SettlementItem[] }>("GET", `/v1/admin/settlements/${encodeURIComponent(date)}`),
+    runSettlement: () => request<SettlementRunResult>("POST", "/v1/admin/settlements/run"),
+    confirmSettlement: (date: string) => request<{ status: string; settled: number; returned: number }>("POST", `/v1/admin/settlements/${encodeURIComponent(date)}/confirm`),
+    /** Admin: the bank returned a load that was already released (writes a fund_return; the person may end up in debt). */
+    returnFunding: (id: string, code: string) => request<{ funding: { id: string; status: string }; transaction_id: string }>("POST", `/v1/admin/fundings/${encodeURIComponent(id)}/return`, { code }),
     admins: async () => (await request<{ admins: AdminRow[] }>("GET", "/v1/admin/admins")).admins,
     /** The server generates the Access ID and Access Token and returns them once. */
     createAdmin: (name: string, role: Role) =>

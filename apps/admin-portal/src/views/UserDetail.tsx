@@ -5,6 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
+import { useList } from "./useList";
 import { PERIODS, StatusCell, TxRowPair, periodRange, type Period } from "./Transactions";
 
 export type UserTab = "details" | "wallets" | "transactions" | "tags" | "devices" | "funding" | "orders" | "activity";
@@ -141,7 +142,7 @@ export function UserDetail({
           {tab === "transactions" && <UserTransactions api={api} id={id} openUser={openUser} openMerchant={openMerchant} onError={onError} />}
           {tab === "tags" && <Tags api={api} id={id} onError={onError} />}
           {tab === "devices" && <Devices api={api} id={id} onError={onError} />}
-          {tab === "funding" && <Funding api={api} id={id} onError={onError} />}
+          {tab === "funding" && <Funding api={api} id={id} canAdmin={canAdmin} onError={onError} />}
           {tab === "orders" && <Orders api={api} id={id} onError={onError} />}
           {tab === "activity" && <ActivityLog load={(cursor) => api.userActivity(id, cursor)} onError={onError} />}
         </>
@@ -167,14 +168,6 @@ function Details({ u }: { u: UserDetailData }) {
       </dl>
     </div>
   );
-}
-
-function useList<T>(load: () => Promise<T>, onError: (e: unknown) => void) {
-  const [data, setData] = useState<T | null>(null);
-  const [failed, setFailed] = useState(false);
-  const run = useCallback(async () => { try { setData(await load()); setFailed(false); } catch (e) { setFailed(true); onError(e); } }, [load, onError]);
-  useEffect(() => { void run(); }, [run]);
-  return { data, failed, retry: () => void run() };
 }
 
 function Wallets({ api, id, canAct, canAdmin, onChanged, onError }: { api: Api; id: string; canAct: boolean; canAdmin: boolean; onChanged: () => void; onError: (e: unknown) => void }) {
@@ -299,8 +292,19 @@ function Devices({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
   );
 }
 
-function Funding({ api, id, onError }: { api: Api; id: string; onError: (e: unknown) => void }) {
+function Funding({ api, id, canAdmin, onError }: { api: Api; id: string; canAdmin: boolean; onError: (e: unknown) => void }) {
   const { data, failed, retry } = useList<UserFunding>(useCallback(() => api.userFunding(id), [api, id]), onError);
+  const [ret, setRet] = useState<{ id: string; amount: number } | null>(null);
+  const [code, setCode] = useState("bank_return");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function markReturned() {
+    if (!ret) return;
+    setBusy(true); setError(null);
+    try { await api.returnFunding(ret.id, code.trim()); setRet(null); retry(); }
+    catch (e) { setError("Couldn't record the return. Check the code (lowercase letters, digits and underscores) and try again."); onError(e); }
+    finally { setBusy(false); }
+  }
   return (
     <div>
       <div className="card flush">
@@ -309,7 +313,7 @@ function Funding({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
           : data.fundings.length === 0 ? <p className="muted pad">No loads yet.</p>
           : (
             <table>
-              <thead><tr><th scope="col">Started</th><th scope="col" className="num">Amount</th><th scope="col">Bank</th><th scope="col">Released</th><th scope="col" className="status-col">Status</th></tr></thead>
+              <thead><tr><th scope="col">Started</th><th scope="col" className="num">Amount</th><th scope="col">Bank</th><th scope="col">Released</th><th scope="col" className="status-col">Status</th>{canAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}</tr></thead>
               <tbody>
                 {data.fundings.map((f) => (
                   <tr key={f.id} className={f.status === "failed" ? "fail-row" : undefined}>
@@ -318,12 +322,21 @@ function Funding({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
                     <td>{f.last4 ? `•••• ${f.last4}` : "—"}</td>
                     <td className="when">{f.released_at ? when(f.released_at) : "—"}{f.returned_at && <span className="muted note">returned {when(f.returned_at)}</span>}</td>
                     <td className="status-col"><StatusCell status={f.status} code={f.failure_code} showCode /></td>
+                    {canAdmin && <td className="actions">{f.status === "completed" && <button type="button" className="ghost" onClick={() => { setError(null); setCode("bank_return"); setRet({ id: f.id, amount: f.amount }); }}>Mark Returned</button>}</td>}
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
       </div>
+      {ret && (
+        <Modal title="Mark Load Returned" onClose={() => setRet(null)} locked={busy}>
+          <p>The bank returned this {money(ret.amount)} load. The money is taken back from the person's balance, which can leave them in debt; their payments and sends stay blocked until it is repaid.</p>
+          <label>Bank return code<input value={code} onChange={(e) => setCode(e.target.value)} maxLength={60} /></label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="modal-actions"><button type="button" disabled={busy || code.trim().length < 2} onClick={() => void markReturned()}>{busy ? "Recording…" : "Confirm Return"}</button><button type="button" className="ghost" disabled={busy} onClick={() => setRet(null)}>Cancel</button></div>
+        </Modal>
+      )}
       {data && data.banks.length > 0 && (
         <p className="muted bank-line">Linked banks: {data.banks.map((b) => `•••• ${b.last4} (${b.status})`).join(", ")}</p>
       )}

@@ -18,7 +18,7 @@ Targets: a payment is one database round trip and about four row writes (today: 
 | --- | --- |
 | 0 Schema | Done. `migrations/0001_init.sql` (tables, triggers, the `txn` and `account_effects` views, the system account and wallets) and `migrations/0002_money_functions.sql`. |
 | 1 Money core | Done. `app_send`, `app_pay_app`, `app_pay_tap` (with `app_pay_plan` and `app_pay_checkout`), `app_refund`, `app_refund_resolve` and `app_purchase`: one database call each (a send, an app payment and a refund are one statement in all). Self-rolling counters; `ensureDay`, the `programDay` middleware and the daily-reset cron are deleted. |
-| 2 Funds and benefits | Done in TypeScript (low-rate paths): `releaseFunding` (`fund`), `settle`/`settle_return`/`collect` on item-level `settlements`, benefits on per-organization escrow wallets (`allocate`, `claim`, `move`), the CSV/API engine. Funding returns (`fund_return`) have a type and an effect but no code writes them yet (the sandbox rail never returns). |
+| 2 Funds and benefits | Done in TypeScript (low-rate paths): `releaseFunding` (`fund`), `settle`/`settle_return`/`collect` on item-level `settlements`, benefits on per-organization escrow wallets (`allocate`, `claim`, `move`), the CSV/API engine. Funding returns: `returnFunding` (`lib/fund.ts`) writes the `fund_return` (migration 0003); the sandbox rail has no returns of its own, so an admin route (`POST /v1/admin/fundings/:id/return`) simulates one. |
 | 3 Auth | Done. Signed 90-day tokens, `POST /v1/auth/refresh`, device row checked inside the money functions, agent key `last_used` stamped at most once a minute, signed email links, rate limits in a Durable Object. Terminals still compare their token hash in the terminal check (their own statement, not inside the money call). |
 | 4 Reconciliation | Done: R0, R1, R2 (wallet counters, daily caps), R3 per account on demand (`/v1/admin/users\|merchants\|organizations/:id/check`), Run Check, nightly. The nightly run is **incremental conservation** (`lib/nightly.ts`, one calendar day of transactions at 00:01 New York time, with a carried drift); Run Check is the full recompute; the rolling per-account sample is the next step when volume needs it. Product `sold_today` is not yet checked against the day's rows. |
 | 5 Orbs, docs, cutover | Orbs merged into terminals and the docs rewritten; the load test is done (below). The cutover is done; the demo data has not been re-seeded. |
@@ -137,7 +137,7 @@ Balances are per account (shared funds); a system wallet side has no balance upd
 | Type | From wallet | To wallet |
 | --- | --- | --- |
 | `fund` | Nuclear Bank | `to` account balance `+ (amount - credit_amount)`, `credit_spent - credit_amount` |
-| `fund_return` | | `to` account balance `- amount` (may go below zero: debt, blocks activity) |
+| `fund_return` | account balance `- (amount - credit_amount)`, `credit_spent + credit_amount` | Nuclear Bank |
 | `send` | `from` balance `- amount` | `to` balance `+ amount` |
 | `pay` | `from` balance `- (amount - credit_amount)`, `credit_spent + credit_amount` | merchant balance `+ amount` |
 | `refund` | merchant balance `- amount` (may go below zero) | `to` balance `+ (amount - credit_amount)`, `credit_spent - credit_amount` |

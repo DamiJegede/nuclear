@@ -895,10 +895,10 @@ describe("merchants, users and transactions", () => {
   const M = { id: "m1", name: "Cafe Nero", handle: "nero", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 12500, terminals: 2, payments: 40, volume: 98000 };
   const U = { id: "u1", name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-02T00:00:00Z", balance: 9200, wallets: 2, agents: 1 };
 
-  it("centres the navigation: Overview, Merchants, Users, Tags, Admins, Transactions; the name (Security) and Sign Out stay on the right", async () => {
+  it("centres the navigation: Overview, Merchants, Users, Tags, Admins, Transactions, Settlements; the name (Security) and Sign Out stay on the right", async () => {
     await signIn(fakeApi());
     await screen.findByRole("article", { name: "Scheme balance" });
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Merchants", "Users", "Tags", "Admins", "Transactions"]);
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Merchants", "Users", "Tags", "Admins", "Transactions", "Settlements"]);
     expect(screen.queryByRole("link", { name: "Security" })).toBeNull();
   });
 
@@ -1050,9 +1050,9 @@ describe("page titles", () => {
 describe("roles", () => {
   const as = (role: SignedIn["role"], pages: Page[]): SignedIn => ({ ...SIGNED, admin: { ...SIGNED.admin, role }, role, pages, landing: pages[0]! });
   const ROLES_TABLE: [SignedIn["role"], Page[], string, string[]][] = [
-    ["accounting", ["overview", "transactions"], "/", ["Overview", "Transactions"]],
+    ["accounting", ["overview", "transactions"], "/", ["Overview", "Transactions", "Settlements"]],
     ["sales", ["users", "merchants", "tags"], "/users", ["Merchants", "Users", "Tags"]],
-    ["support", ["users", "transactions"], "/users", ["Users", "Transactions"]],
+    ["support", ["users", "transactions"], "/users", ["Users", "Transactions", "Settlements"]],
     ["tags", ["tags"], "/tags", ["Tags"]],
     ["merchants", ["merchants"], "/merchants", ["Merchants"]],
   ];
@@ -1636,6 +1636,20 @@ describe("user support page", () => {
     expect(screen.getByText(/Linked banks: •••• 4321 \(active\)/)).toBeInTheDocument();
     await user.click(tab("Orders"));
     expect(await screen.findByRole("row", { name: /NEO Band/ })).toHaveTextContent("London, LDN, GB");
+  });
+
+  it("Funding: an Admin can mark a released load returned (with a confirm that says what happens); a failed load has no such button", async () => {
+    const returnFunding = vi.fn().mockResolvedValue({ funding: { id: "f1", status: "returned" }, transaction_id: "t1" });
+    const user = await open(api({ returnFunding }));
+    await user.click(tab("Funding"));
+    const done = await screen.findByRole("row", { name: /\$1,000\.00/ });
+    expect(within(screen.getByRole("row", { name: /\$50\.00/ })).queryByRole("button", { name: "Mark Returned" })).toBeNull();
+    await user.click(within(done).getByRole("button", { name: "Mark Returned" }));
+    const d = within(screen.getByRole("dialog", { name: "Mark Load Returned" }));
+    expect(d.getByText(/can leave them in debt/)).toBeInTheDocument();
+    expect(returnFunding).not.toHaveBeenCalled();
+    await user.click(d.getByRole("button", { name: "Confirm Return" }));
+    await waitFor(() => expect(returnFunding).toHaveBeenCalledWith("f1", "bank_return"));
   });
 
   it("Sign Out Everywhere asks first, then signs them out; Unlock Login only shows while locked", async () => {

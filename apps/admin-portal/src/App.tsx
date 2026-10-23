@@ -18,6 +18,7 @@ import { Transactions } from "./views/Transactions";
 import { Overview } from "./views/Overview";
 import { Shop } from "./views/Shop";
 import { AuditLog } from "./views/AuditLog";
+import { Settlements } from "./views/Settlements";
 
 const KEY = "nuclear.admin.session";
 
@@ -30,11 +31,11 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "merchants" | "merchant" | "organizations" | "organization" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "shop" | "audit" | "security";
+type View = "overview" | "merchants" | "merchant" | "organizations" | "organization" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "settlements" | "shop" | "audit" | "security";
 type Route = { view: View; id?: string; tab?: MerchantTab | UserTab | OrganizationTab };
 
 // Each page has its own address, so the browser's back and forward buttons move between pages.
-const PATHS: Record<Exclude<View, "tag" | "merchant" | "organization" | "user">, string> = { overview: "/", merchants: "/merchants", organizations: "/organizations", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", shop: "/shop", audit: "/audit", security: "/security" };
+const PATHS: Record<Exclude<View, "tag" | "merchant" | "organization" | "user">, string> = { overview: "/", merchants: "/merchants", organizations: "/organizations", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", settlements: "/settlements", shop: "/shop", audit: "/audit", security: "/security" };
 const pathOf = (r: Route): string =>
   r.view === "tag" ? `/tags/${r.id}`
   : r.view === "merchant" ? `/merchants/${r.id}`
@@ -97,7 +98,7 @@ export function App({
 
   // Tab title per page. Sign-in, enrollment and the tag page set their own (undefined = leave it).
   const TITLES: Record<Exclude<View, "tag" | "merchant" | "organization" | "user" | "shop" | "audit">, string> = {
-    overview: "Overview", merchants: "Merchants", organizations: "Organizations", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", security: "Security",
+    overview: "Overview", merchants: "Merchants", organizations: "Organizations", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", settlements: "Settlements", security: "Security",
   };
   usePageTitle(token && me?.mfa_enabled && view !== "tag" && view !== "merchant" && view !== "organization" && view !== "user" && view !== "shop" && view !== "audit" ? TITLES[view] : undefined);
 
@@ -129,7 +130,7 @@ export function App({
   // Each role sees only its own pages. Anything else in the address bar goes to the role's landing page.
   useEffect(() => {
     if (!me || !me.mfa_enabled) return;
-    const ok = view === "security" || me.pages.includes(view === "tag" ? "tags" : view === "merchant" ? "merchants" : view === "organization" ? "organizations" : view === "user" ? "users" : (view as Page));
+    const ok = view === "security" || me.pages.includes(view === "tag" ? "tags" : view === "merchant" ? "merchants" : view === "organization" ? "organizations" : view === "user" ? "users" : view === "settlements" ? "transactions" : (view as Page));
     if (!ok) setView(me.landing, true);
   }, [me, view, setView]);
 
@@ -179,7 +180,7 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["merchants", "Merchants"], ["organizations", "Organizations"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["audit", "Logs"]] as const).filter(([v]) => me.pages.includes(v)).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["organizations", "Organizations"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["settlements", "Settlements"], ["audit", "Logs"]] as const).filter(([v]) => (v === "settlements" ? me.pages.includes("transactions") : me.pages.includes(v as never))).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") || (v === "merchants" && view === "merchant") || (v === "organizations" && view === "organization") || (v === "users" && view === "user") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
           ))}
@@ -213,6 +214,7 @@ export function App({
         )}
         {view === "shop" && me.pages.includes("shop") && <Shop api={api} onError={onError} canWrite={me.role === "admin" || me.role === "sales"} />}
         {view === "audit" && me.pages.includes("audit") && <AuditLog api={api} onError={onError} />}
+        {view === "settlements" && me.pages.includes("transactions") && <Settlements api={api} canAdmin={me.role === "admin"} openMerchant={me.pages.includes("merchants") ? (id) => setView("merchant", false, id, "details") : undefined} onError={onError} />}
         {view === "transactions" && me.pages.includes("transactions") && <Transactions api={api} onError={onError} openUser={me.pages.includes("users") ? (id) => setView("user", false, id, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (id) => setView("merchant", false, id, "details") : undefined} />}
       </main>
     </div>

@@ -5,6 +5,7 @@ import { usePageTitle } from "../title";
 import { ActivityLog } from "./AuditLog";
 import { usePaged } from "../usePaged";
 import { Avatar } from "./Avatar";
+import { useList } from "./useList";
 import { Modal } from "./Modal";
 
 export type OrganizationTab = "details" | "employees" | "runs" | "documents" | "activity";
@@ -156,14 +157,6 @@ function Details({ o }: { o: OrganizationDetailData }) {
 }
 
 /** Loads a list for a tab with loading and retry. */
-function useList<T>(load: () => Promise<T>, onError: (e: unknown) => void) {
-  const [data, setData] = useState<T | null>(null);
-  const [failed, setFailed] = useState(false);
-  const run = useCallback(async () => { try { setData(await load()); setFailed(false); } catch (e) { setFailed(true); onError(e); } }, [load, onError]);
-  useEffect(() => { void run(); }, [run]);
-  return { data, failed, retry: () => void run() };
-}
-
 function Employees({ api, id, onError }: { api: Api; id: string; onError: (e: unknown) => void }) {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");

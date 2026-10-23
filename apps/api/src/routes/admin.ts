@@ -24,6 +24,7 @@ import { decodeTimeCursor, pageLimit } from "../lib/paging";
 import { dropDay, probeCounters, readCounters, shardCount, track } from "../lib/tracker";
 import { readStats, refreshLive, refreshReconciliation } from "../lib/statsCache";
 import { accountCheck, reconciliationOk } from "../lib/stats";
+import { returnFunding } from "../lib/fund";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
   ACCESS_TOKEN_LENGTH, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
@@ -837,6 +838,20 @@ const settlementAdmin = (c: any) => {
   const a = c.get("adminAuth");
   return a.kind === "admin" && !SETTLEMENT_ADMINS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
 };
+
+// The bank returned a load that was already released (the sandbox rail has no returns of its own, so this is how one is simulated; a real bank adapter calls
+// the same function when the return arrives). Admin only, logged. Writes a `fund_return` transaction and may leave the person in debt (their outgoing activity is blocked).
+admin.post("/fundings/:id/return", async (c) => {
+  const denied = settlementAdmin(c); if (denied) return denied;
+  const id = z.string().uuid().safeParse(c.req.param("id"));
+  const body = z.object({ code: z.string().trim().min(2).max(60).regex(/^[a-z0-9_]+$/).default("bank_return") }).safeParse(await c.req.json().catch(() => ({})));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const r = await returnFunding(c.get("sql"), { fundingId: id.data, code: body.data.code });
+  if (r.kind === "error") return c.json({ error: r.error }, r.status);
+  if (!r.replayed) await adminLog(c, "funding.returned", { type: "funding", id: id.data }, { code: body.data.code, amount: Number(r.funding.amount), account_id: r.funding.account_id });
+  return c.json({ funding: { id: r.funding.id, status: r.funding.status, failure_code: r.funding.failure_code, returned_at: (r.funding as any).returned_at ?? null }, transaction_id: r.transactionId }, r.replayed ? 200 : 201);
+});
 
 // Runs the settlement for the program day before today now (the cron does this daily). Idempotent: a day already settled does nothing.
 admin.post("/settlements/run", async (c) => {
