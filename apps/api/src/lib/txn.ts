@@ -61,27 +61,7 @@ export const insertTx = (tx: Tx, t: NewTx) => tx<{ id: string; created_at: Date 
           ${t.reference ?? null}, ${t.idem}, ${tx.json((t.meta ?? {}) as never)})
   returning id, created_at`;
 
-/** The row a reader would get for a transaction just written. */
-export const rowOf = (
-  t: NewTx,
-  w: { id: string; created_at: Date },
-  sides: { fromAccount: string | null; toAccount: string | null; fromWallet: string | null; toWallet: string | null },
-): TxRow => ({
-  id: w.id,
-  type: t.type,
-  status: t.declined ? "failed" : "completed",
-  status_code: t.declined ?? null,
-  amount: t.amount,
-  from_account_id: sides.fromAccount,
-  to_account_id: sides.toAccount,
-  from_wallet_id: sides.fromWallet,
-  to_wallet_id: sides.toWallet,
-  timestamp: w.created_at,
-  completed_at: t.declined ? null : w.created_at,
-});
-
-/** The program-day rule for a wallet's spending counter, as SQL fragments: a row from an earlier day counts as zero. */
-export const spentToday = `(case when spent_day = program_today() then spent_today else 0 end)`;
+/** The program-day rule for a product's sold counter as an SQL fragment: a row from an earlier day counts as zero. */
 export const soldToday = `(case when sold_day = program_today() then sold_today else 0 end)`;
 
 export const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === "23505";
@@ -90,4 +70,28 @@ export const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code 
 export async function findByIdem(q: Q, idem: string): Promise<TxRow | undefined> {
   const [r] = await q<TxRow[]>`select ${q.unsafe(TX_COLS)} from txn where idempotency_key = ${idem}`;
   return r;
+}
+
+/** A transaction row as an SQL money function returns it (json: amounts are numbers, times are ISO strings). */
+export function txRowFromJson(j: Record<string, unknown>): TxRow {
+  return {
+    id: j.id as string, type: j.type as string, status: j.status as string, status_code: (j.status_code as string | null) ?? null,
+    amount: BigInt(j.amount as number), from_account_id: (j.from_account_id as string | null) ?? null, to_account_id: (j.to_account_id as string | null) ?? null,
+    from_wallet_id: (j.from_wallet_id as string | null) ?? null, to_wallet_id: (j.to_wallet_id as string | null) ?? null,
+    timestamp: new Date(j.timestamp as string), completed_at: j.completed_at ? new Date(j.completed_at as string) : null,
+  };
+}
+
+/**
+ * Calls one of the money functions (migrations/0002) as a single statement, which is its own transaction. A repeated key that two calls
+ * race to write with different lock orders raises a unique violation; the call is then made again and replays the winner.
+ */
+export async function callMoney<T>(q: Q, fn: "app_send" | "app_pay_app" | "app_pay_tap" | "app_refund" | "app_refund_resolve" | "app_purchase", arg: Record<string, unknown>): Promise<T> {
+  const once = async () => (await q.unsafe(`select public.${fn}($1::text::jsonb) as r`, [JSON.stringify(arg)] as never))[0]!.r as T;
+  try {
+    return await once();
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    return once();
+  }
 }

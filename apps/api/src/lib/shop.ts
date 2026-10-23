@@ -1,10 +1,7 @@
 import type { Sql } from "../db";
-import { earmarkedTotalQuery, spendableFrom } from "./walletFunds";
 import { n } from "./money";
 import { apiUrl, imageUrl } from "./images";
-import { insertTx, spentToday, type NewTx } from "./txn";
-import { SHOP_WALLET } from "./system";
-import { uuidv7 } from "./ids";
+import { callMoney } from "./txn";
 
 export const MAX_PER_ORDER = 20;
 
@@ -92,111 +89,23 @@ export type PurchaseOutcome =
  * updated and an `orders` row is written (type 'tag' or 'shop'). A tag is attached to a tag order at shipping.
  */
 export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutcome> {
-  const [wallet] = i.walletId
-    ? await sql<{ id: string; type: string }[]>`select id, type from wallets where id = ${i.walletId} and account_id = ${i.accountId}`
-    : await sql<{ id: string; type: string }[]>`select id, type from wallets where account_id = ${i.accountId} and type = 'default'`;
-  if (!wallet) return { kind: "error", status: 404, error: "wallet_not_found" };
-
-  class StockRace extends Error {}
-  const idem = `purchase:${i.accountId}:${i.idempotencyKey}`;
-  try {
-  return await (sql.begin(async (tx): Promise<PurchaseOutcome> => {
-    type Replay = OrderRow & { tx_status: string; tx_code: string | null; tx_id: string; oid: string | null };
-    const fromReplay = (prev: Replay | undefined): PurchaseOutcome | null => {
-      if (!prev) return null;
-      if (prev.tx_status === "declined") return { kind: "declined", transactionId: prev.tx_id, code: prev.tx_code ?? "declined", replayed: true };
-      const sameProduct = prev.type === i.kind && (i.kind === "tag" ? prev.model_id === i.productId : prev.shop_id === i.productId);
-      if (!prev.oid || !sameProduct || prev.quantity !== i.quantity) return { kind: "error", status: 409, error: "idempotency_mismatch" };
-      return { kind: "ok", order: { ...prev, id: prev.oid }, replayed: true };
-    };
-
-    // One round trip for the reads, run in this order on the server: the buyer's balance row and wallet are locked first, then the earlier
-    // attempt for this key (so a concurrent retry waits and replays) and the product. The product is read WITHOUT a lock: its stock is
-    // claimed by one conditional update right before commit, so a popular item is locked for milliseconds, not for the whole purchase.
-    type TagRow = { type: string; name: string; currency: string; price: bigint; quantity: number; sold: number; status: string };
-    type ItemRow2 = { name: string; currency: string; price: bigint; stock: number | null; status: string; kind: string; file: string | null };
-    const [[b], [w], [a], [em], [prev0], productRows] = await Promise.all([
-      tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
-        select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`,
-      tx<{ status: string; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
-        select status, daily_limit, ${tx.unsafe(spentToday)} as spent_today, balance from wallets where id = ${wallet.id} for no key update`,
-      tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
-      earmarkedTotalQuery(tx, i.accountId),
-      tx<Replay[]>`
-        select t.id as tx_id, t.status as tx_status, t.status_code as tx_code, o.id as oid,
-               ${tx.unsafe(ORDER_COLS.split(", ").filter((c) => c !== "id").map((c) => "o." + c).join(", "))}
-          from transactions t left join orders o on o.transaction_id = t.id
-         where t.type = 'purchase' and t.idem = ${idem}`,
-      i.kind === "tag"
-        ? tx<TagRow[]>`select type, name, currency, price, quantity, sold, status from tag_models where id = ${i.productId}`
-        : tx<ItemRow2[]>`select name, currency, price, stock, status, kind, file from shop where id = ${i.productId}`,
-    ]);
-    const earlier = fromReplay(prev0);
-    if (earlier) return earlier;
-
-    let name: string, price: bigint, currency: string, modelType: string | null = null, digital = false;
-    if (i.kind === "tag") {
-      if (!i.shipping) return { kind: "error", status: 422, error: "shipping_required" };
-      const m = (productRows as TagRow[])[0];
-      if (!m || m.status !== "available" || m.price <= 0n) return { kind: "error", status: 404, error: "model_not_found" };
-      if (m.quantity - m.sold < i.quantity) return { kind: "error", status: 409, error: m.quantity - m.sold <= 0 ? "sold_out" : "not_enough_stock" };
-      ({ name, price, currency } = m); modelType = m.type;
-    } else {
-      const m = (productRows as ItemRow2[])[0];
-      if (!m || m.status !== "available" || m.price <= 0n) return { kind: "error", status: 404, error: "item_not_found" };
-      digital = m.kind === "digital";
-      if (digital && !m.file) return { kind: "error", status: 404, error: "item_not_found" };
-      if (digital && i.quantity !== 1) return { kind: "error", status: 422, error: "digital_quantity_one" };
-      if (!digital && !i.shipping) return { kind: "error", status: 422, error: "shipping_required" };
-      if (m.stock !== null && m.stock < i.quantity) return { kind: "error", status: 409, error: m.stock <= 0 ? "sold_out" : "not_enough_stock" };
-      ({ name, price, currency } = m);
-    }
-
-    const total = price * BigInt(i.quantity);
-    const amt = total.toString();
-    const funds = spendableFrom(b ? b.balance : 0n, w ? w.balance : null, em!.total);
-    let code: string | null = null;
-    if (!a || a.status !== "active" || !w || w.status !== "active") code = "buyer_unavailable";
-    else if (!b || b.balance < 0n || b.credit_spent > b.credit_limit) code = "account_restricted";
-    else if (funds.funds < total) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, never credit
-    else if (w.daily_limit !== null && w.spent_today + total > w.daily_limit) code = "spend_limit_exceeded";
-    const txId = uuidv7();
-    const t: NewTx = { id: txId, type: "purchase", declined: code, from: wallet.id, to: SHOP_WALLET, amount: total, account: i.accountId, idem, meta: { kind: i.kind, product_id: i.productId, quantity: i.quantity } };
-    if (code) {
-      await insertTx(tx, t);
-      return { kind: "declined", transactionId: txId, code, replayed: false };
-    }
-
-    // Every write in one round trip. The stock claim is conditional: if another buyer took the last units meanwhile it changes no
-    // row, the whole purchase rolls back (nothing is recorded) and the buyer is told it sold out. The money goes to the Nuclear Shop
-    // system wallet, whose balance row is never touched.
-    const [, , claimed, , [order]] = await Promise.all([
-      tx`update balances set balance = balance - ${amt} where account_id = ${i.accountId}`,
-      tx`update wallets set spent_today = case when spent_day = program_today() then spent_today + ${amt} else ${amt} end, spent_day = program_today(),
-                balance = case when balance is not null then balance - ${amt} else balance end where id = ${wallet.id}`,
-      i.kind === "tag"
-        ? tx<{ id: string }[]>`update tag_models set sold = sold + ${i.quantity} where id = ${i.productId} and quantity - sold >= ${i.quantity} returning id`
-        : tx<{ id: string }[]>`update shop set sold = sold + ${i.quantity}, stock = case when stock is null then null else stock - ${i.quantity} end
-                                where id = ${i.productId} and (stock is null or stock >= ${i.quantity}) returning id`,
-      insertTx(tx, t),
-      tx<OrderRow[]>`
-        insert into orders (type, account_id, wallet_id, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, delivery, transaction_id)
-        values (${i.kind}, ${i.accountId}, ${wallet.id}, ${i.kind === "tag" ? i.productId : null}, ${i.kind === "shop" ? i.productId : null},
-                ${name}, ${modelType}, ${i.quantity}, ${price.toString()}, ${amt}, ${currency},
-                ${digital ? null : JSON.stringify(i.shipping)}::text::jsonb, ${digital ? "download" : "ship"}, ${txId})
-        returning ${tx.unsafe(ORDER_COLS)}`,
-    ]);
-    if (claimed.length === 0) throw new StockRace();
-    return { kind: "ok", order: order!, replayed: false };
-  }) as Promise<PurchaseOutcome>);
-  } catch (err) {
-    if (!(err instanceof StockRace)) throw err;
-    // Lost the race for the last units: nothing was recorded. Say whether it is sold out or just short.
-    const left = i.kind === "tag"
-      ? (await sql<{ left: number }[]>`select quantity - sold as left from tag_models where id = ${i.productId}`)[0]?.left ?? 0
-      : (await sql<{ left: number | null }[]>`select stock as left from shop where id = ${i.productId}`)[0]?.left ?? 0;
-    return { kind: "error", status: 409, error: (left ?? 0) <= 0 ? "sold_out" : "not_enough_stock" };
-  }
+  type Answer =
+    | { kind: "ok"; order: Record<string, unknown>; replayed: boolean }
+    | { kind: "declined"; transaction_id: string; code: string; replayed: boolean }
+    | { kind: "error"; status: 404 | 409 | 422; error: string };
+  const a = await callMoney<Answer>(sql, "app_purchase", {
+    account: i.accountId, wallet: i.walletId, kind: i.kind, product_id: i.productId, quantity: i.quantity, shipping: i.shipping, key: i.idempotencyKey,
+  });
+  if (a.kind === "error") return a;
+  if (a.kind === "declined") return { kind: "declined", transactionId: a.transaction_id, code: a.code, replayed: a.replayed };
+  const o = a.order;
+  const order: OrderRow = {
+    id: o.id as string, type: o.type as "tag" | "shop", model_id: (o.model_id as string | null) ?? null, shop_id: (o.shop_id as string | null) ?? null,
+    name: o.name as string, model_type: (o.model_type as string | null) ?? null, quantity: o.quantity as number, unit_price: BigInt(o.unit_price as number),
+    total: BigInt(o.total as number), currency: o.currency as string, shipping: (o.shipping as Shipping | null) ?? null, delivery: o.delivery as "ship" | "download",
+    status: o.status as string, transaction_id: o.transaction_id as string, created_at: new Date(o.created_at as string),
+  };
+  return { kind: "ok", order, replayed: a.replayed };
 }
 
 export async function listOrders(sql: Sql, accountId: string) {

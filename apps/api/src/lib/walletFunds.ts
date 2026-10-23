@@ -21,16 +21,7 @@ export async function spendable(tx: Tx, accountId: string, accountBalance: bigin
   return { earmarked: false as const, funds: pos(accountBalance - (await earmarkedTotal(tx, accountId))) };
 }
 
-/**
- * The same rule as `spendable`, from an earmarked total that was already read (the callers read it in the same pipelined batch as the
- * balances lock, so the money paths cost one round trip instead of two).
- */
-export function spendableFrom(accountBalance: bigint, walletBalance: bigint | null, earmarked: bigint) {
-  if (walletBalance !== null) return { earmarked: true as const, funds: walletBalance };
-  return { earmarked: false as const, funds: pos(accountBalance - earmarked) };
-}
-
-/** The earmarked-total query, to send alongside other reads (see `spendableFrom`). */
+/** The earmarked-total query, to send alongside other reads in a batch. */
 export const earmarkedTotalQuery = (tx: Tx, accountId: string) => tx<{ total: bigint }[]>`
   select coalesce(sum(balance), 0)::bigint as total from wallets where account_id = ${accountId} and balance is not null`;
 

@@ -1,8 +1,7 @@
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 import { n } from "./money";
-import { commitStock, reserveStock, type CartLine, type StockLine } from "./catalog";
-import { findPay, payCore, type PayInput, type PayOutcome } from "./pay";
+import type { CartLine } from "./catalog";
 
 type Q = Sql | TransactionSql<{ bigint: bigint }>;
 type Tx = TransactionSql<{ bigint: bigint }>;
@@ -175,81 +174,3 @@ export const checkoutJson = (c: CheckoutRow, items: ItemRow[]) => ({
   created_at: c.created_at,
   items: items.map(itemJson),
 });
-
-export type PayCheckoutInput = Omit<PayInput, "checkoutId" | "amount" | "forceDecline" | "reference" | "items"> & {
-  /** Pay this existing checkout... */
-  checkoutId: string | null;
-  /** ...or pay in one step: a cart with items is written as an already paid checkout; an amount alone has no checkout at all. */
-  create: { lines: CartLine[]; total: bigint; reference: string | null } | null;
-  /** If set, a recorded attempt of a different amount is a conflict. */
-  expectAmount?: bigint;
-};
-
-const stockLines = (items: { product_id: string | null; quantity: number }[]): StockLine[] =>
-  items.filter((x) => x.product_id !== null).map((x) => ({ productId: x.product_id!, quantity: x.quantity }));
-
-/**
- * Settle a checkout with a payment, inside the caller's DB transaction. Idempotent per attempt key:
- * a recorded attempt returns its result without creating or touching anything.
- *
- * Locks, in order: the checkout, its products (stable order), then the payment's balance/wallet
- * rows (see payCore). Stock is taken here, at payment, only when the payment completes.
- */
-export async function payCheckout(tx: Tx, i: PayCheckoutInput): Promise<PayOutcome> {
-  // Replay first, so a retry never creates a second checkout.
-  const prev = await findPay(tx, i.merchantAccountId, i.idempotencyKey);
-  if (prev) {
-    if (i.expectAmount !== undefined && i.expectAmount !== prev.amount) return { kind: "conflict" };
-    return payCore(tx, { ...i, checkoutId: prev.checkout_id, amount: prev.amount, reference: prev.reference });
-  }
-
-  let checkout: CheckoutRow | null = null;
-  let amount: bigint;
-  let reference: string | null;
-  let decline: string | null = null;
-  let created = false;
-  let snapshot: ItemSnapshot[] = [];
-
-  if (i.checkoutId) {
-    const [c] = await tx<CheckoutRow[]>`
-      select ${tx.unsafe(CO_COLS)} from checkouts where id = ${i.checkoutId} and account_id = ${i.merchantAccountId} for no key update`;
-    if (!c) throw new Error("checkout missing");
-    checkout = c;
-    amount = c.total;
-    reference = c.reference;
-    snapshot = c.items;
-    if (c.status === "expired") decline = "checkout_expired";
-    else if (c.status !== "open") decline = c.status === "paid" ? "checkout_paid" : "checkout_not_open";
-  } else {
-    amount = i.create!.total;
-    reference = i.create!.reference;
-    if (i.create!.lines.length > 0) {
-      checkout = await insertCheckout(tx, {
-        merchantId: i.merchantAccountId, terminalId: i.terminalId, reference, total: amount,
-        lines: i.create!.lines, expiresInSeconds: null, status: "paid",
-      });
-      created = true;
-      snapshot = checkout.items;
-    }
-  }
-
-  const lines = stockLines(snapshot.map((x) => ({ product_id: x.product_id, quantity: x.quantity })));
-  if (!decline) decline = await reserveStock(tx, i.merchantAccountId, lines);
-
-  const out = await payCore(tx, {
-    ...i,
-    checkoutId: checkout?.id ?? null,
-    amount,
-    reference,
-    items: snapshot,
-    forceDecline: decline,
-  });
-
-  if (out.kind === "ok" && !out.replayed) {
-    await Promise.all([commitStock(tx, lines), ...(checkout && !created ? [tx`update checkouts set status = 'paid' where id = ${checkout.id}`] : [])]);
-  } else if (out.kind === "declined" && !out.replayed && created) {
-    // A one-step checkout that failed to settle is dead; the POS starts a new one.
-    await tx`update checkouts set status = 'canceled' where id = ${checkout!.id}`;
-  }
-  return out;
-}
