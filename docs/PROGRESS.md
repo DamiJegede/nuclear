@@ -17,12 +17,12 @@ The money core, the schema and the sessions were rebuilt on a local Postgres fol
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `f5b269e4` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `636fd50b` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `c5235d42` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `e37192bc` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `6c98b572` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (2 migrations) | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (3 migrations) | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
 Quality: 38 API test suites (about 1,560 checks, run on a throwaway local Postgres), 167 admin-portal tests, 30 merchant-portal tests, 52 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.

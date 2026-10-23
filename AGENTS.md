@@ -37,7 +37,7 @@ Cloudflare tooling note: `wrangler pages ...` now delegates to the unified Worke
 | Branch | main (this is the dev database; migrations are applied directly to it) |
 | Hyperdrive | config `6e47c72ff9934571ab4d21c0f2c40621`, binding `HYPERDRIVE`, caching disabled |
 | Cloudflare account | `2e328fde1db62ab22f16e8f464562d3c` (pinned in wrangler.jsonc) |
-| Worker | `nuclear-api`, deployed at https://nuclear-api.a-space.workers.dev (version `f5b269e4`, 2026-10-23, scheme v2; crons `1 4`/`1 5 * * *`). `SANDBOX_FUNDING=true`, so anyone who can reach it can mint test balance: dev only |
+| Worker | `nuclear-api`, deployed at https://nuclear-api.a-space.workers.dev (version `c5235d42`, 2026-10-23, scheme v2; crons `1 4`/`1 5 * * *`). `SANDBOX_FUNDING=true`, so anyone who can reach it can mint test balance: dev only |
 
 Always run `pscale` with `--format json`; put `--org nuclear` on resource subcommands. Load the
 `planetscale-pscale-cli-automation` skill before driving the CLI. Postgres branches apply DDL
@@ -45,7 +45,7 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 
 ### Migration status (v2; keep current; there is no migrations table)
 
-**Scheme v2 is live on nuclear-dev (cutover done 2026-10-23).** The database was dropped and rebuilt from the two files below (tables owned by the migration role, with `grant all` to the Hyperdrive role `pscale_api_8n7an9phvlfq` and default privileges for future tables), and `nuclear-api` (version `f5b269e4`, crons `1 4`/`1 5 * * *`), `nuclear-admin` (`636fd50b`), `nuclear-merchant` (`6c98b572`) and `nuclear-organization` (`5abfec46`) were deployed together. The old v1 migrations are archived in `migrations-v1/`. The demo data and the admins were lost in the rebuild: one admin was created with `add-admin` (credentials saved to a file, not in the repo); `seed-demo` and `seed-businesses` have not been re-run. The v2 files:
+**Scheme v2 is live on nuclear-dev (cutover done 2026-10-23).** The database was dropped and rebuilt from the two files below (tables owned by the migration role, with `grant all` to the Hyperdrive role `pscale_api_8n7an9phvlfq` and default privileges for future tables), and `nuclear-api` (version `c5235d42`, crons `1 4`/`1 5 * * *`), `nuclear-admin` (`e37192bc`), `nuclear-merchant` (`6c98b572`) and `nuclear-organization` (`5abfec46`) were deployed together. The old v1 migrations are archived in `migrations-v1/`. The demo data and the admins were lost in the rebuild: one admin was created with `add-admin` (credentials saved to a file, not in the repo); `seed-demo` and `seed-businesses` have not been re-run. The v2 files:
 
 | File | Content |
 | --- | --- |
