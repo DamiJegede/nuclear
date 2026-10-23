@@ -35,6 +35,8 @@ export interface Env {
   MFA_ENCRYPTION_KEY?: string;
   /** AES-256 key (base64, 32 bytes) encrypting bank routing and account numbers at rest. Losing it makes every stored number unrecoverable: keep a copy in the password manager. Without it, saving a payout bank returns 503. */
   BANK_ENCRYPTION_KEY?: string;
+  /** Root of the Orb device keys (64 hex chars = 32 bytes, docs/ORB.md §8a). Losing it strands every provisioned Orb; leaking it lets anyone authorize binds. Without it `POST /v1/terminal/orb/bind` returns 503. */
+  ORB_ROOT_KEY_V1?: string;
   /** Browser origins allowed to call the business API from a browser (the merchant portal), comma-separated. */
   MERCHANT_ORIGINS?: string;
   /** Browser origins allowed to call the customer API from the organization portal, comma-separated. */

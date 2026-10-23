@@ -149,6 +149,28 @@ Logical services: device information, battery, authenticated control and events;
 
 Every operational command/event needs a message ID; financial operations also need checkout/attempt correlation and session generation. Reject stale-session results and mismatched attempt IDs. Fragment and reassemble bounded messages, with length limits, ordering, timeout and duplicate handling. Define the exact GATT UUIDs, encoding, frame IDs, ACK/retry rules and compatibility negotiation jointly in Rust and Swift before hardware integration.
 
+## 8a. Secure channel (Orb to terminal)
+
+Implemented in `apps/orb-firmware/src/secure.rs`, `apps/merchant-terminal/Sources/NuclearTerminalKit/OrbSecure.swift` and `POST /v1/terminal/orb/bind` (`apps/api/src/lib/orbKeys.ts`); vectors in `docs/orb-protocol-vectors.md`, asserted by all three.
+
+**Threat model.** A nearby attacker can see and replay BLE traffic, impersonate a terminal to an unbound Orb, impersonate an Orb to a terminal, and record a legitimate handshake. BLE bonding and RSSI are not relied on. Out of scope: a stolen terminal (its tokens are revocable), physical extraction of an Orb's flash (the key sits in secure storage or the eFuse HMAC peripheral; one Orb's key never exposes another's).
+
+**Keys.** One primitive family: `PRF(key, label, parts...) = HMAC-SHA256(key, label || 0x00 || parts...)`. The API alone holds `ORB_ROOT_KEY_V1` (Worker secret). `K_orb = PRF(root, "nuclear-orb-device-v1", uid)` is derived per Orb and written to it at the factory (`scripts/orb-provision.mjs`); `K_orb` is the HMAC key itself, so an ESP32 eFuse HMAC peripheral can hold it without the firmware ever reading it. A binding has `binding_id` (16 random bytes, issued by the API) and `K_bind = PRF(K_orb, "bind-key-v1", uid, binding_id)`, known to the Orb (stored with the binding), the API (derivable) and the one terminal that was authorized. The terminal never sees `K_orb`.
+
+**Messages.** `Hello` carries a fresh 16-byte `nonce_o` per connection; `HandshakeResult` carries a 32-byte `proof` (zeros when rejected). `Handshake.nonce`/`proof` carry the values below.
+
+**Bind** (unbound Orb, proximity gate still applies):
+1. The terminal reads `uid` and `nonce_o` from `Hello` and calls `POST /v1/terminal/orb/bind {uid, nonce}` with its terminal session. The API refuses an Orb held by another account (409), rate-limits (20 an hour per terminal), logs `orb.bind_authorized` (never the key) and answers `{binding_id, proof, bind_key}` with `proof = PRF(K_orb, "bind-auth-v1", uid, binding_id, nonce_o)`.
+2. The terminal sends `Handshake{Bind, nonce = binding_id, proof}`. The Orb checks the proof in constant time against its own `K_orb`, `uid` and the `nonce_o` it just sent, derives `K_bind`, saves the binding, and answers `HandshakeResult{accepted, proof = PRF(K_bind, "orb-proof-v1", nonce_o, binding_id)}`.
+3. The terminal checks that proof against `bind_key`, proving the Orb is genuine and holds the binding, then stores `bind_key` (Keychain, this terminal only).
+An authorization is useless for another Orb (uid), another connection (nonce) or another binding id, so a recorded bind cannot be replayed. A bound Orb refuses Bind; rebinding needs the physical reset card.
+
+**Resume** (bound Orb after any disconnect): the terminal sends `Handshake{Resume, nonce = nonce_t, proof = PRF(K_bind, "term-proof-v1", nonce_o, nonce_t)}`; the Orb answers with `PRF(K_bind, "orb-resume-v1", nonce_o, nonce_t)`. Both nonces are fresh per connection, so neither side's proof can be replayed. No API call is needed to reconnect.
+
+**Frames.** After an accepted handshake with session generation `g`, each direction has its own key `PRF(K_bind, "session-t2o-v1" | "session-o2t-v1", nonce_o, binding_id, g)`. A sealed frame is `counter u64 BE || ChaCha20-Poly1305(ciphertext) || tag(16)`; nonce = 4 zero bytes then the counter; AAD = `01 || g`. Counters start at 1 and must strictly increase; a frame with an old counter is a replay, a failed tag never advances the counter, and a direction cannot be reflected back (separate keys). The plaintext is the existing protocol message (header + body); fragmentation applies to sealed frames. Heartbeats are sealed, so only an authenticated peer extends liveness.
+
+**Operations.** Rotating `ORB_ROOT_KEY_V1` strands every provisioned Orb (a new version label per Orb batch is the plan: add `ORB_ROOT_KEY_V2` and a version byte in the factory record). Losing it is unrecoverable: keep a copy in the password manager. Not built: the link layer that seals and opens frames around `Controller` and the board-side key storage; wiring `Authorizer` into `Action::VerifyHandshake`; the terminal app's binding store.
+
 ## 9. Battery and power
 
 Telemetry: percentage (with validity/unknown indication), millivolts, charging, external_power_present, low and critical. No battery NTC is planned; the existing optional temperature field should remain unknown unless an actual sensor is supplied. A PCM is protection, not a fuel gauge. Recommend a gauge for useful percentage reporting; voltage-only estimates need calibration and fluctuate with load. External-power presence must be detectable even when the battery is fully charged.
@@ -200,7 +222,8 @@ Plan signed BLE-relayed firmware upgrades with rollback and USB recovery if hard
 
 ## 12. API fit
 
-- `PUT /v1/terminal/orb`: existing claim/pair using stable UID, model and software; not yet a secure hardware handshake.
+- `POST /v1/terminal/orb/bind`: authorizes a bind for one Orb and one connection nonce (§8a).
+- `PUT /v1/terminal/orb`: claim/pair using stable UID, model and software (ownership); the secure handshake is §8a.
 - `PATCH /v1/terminal/orb`: report installed software.
 - `DELETE /v1/terminal/orb`: backend unpair; not automatically a local factory reset.
 - `POST /v1/terminal/checkouts`: create sale.

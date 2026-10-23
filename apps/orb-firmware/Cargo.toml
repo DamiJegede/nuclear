@@ -10,6 +10,10 @@ name = "orb_firmware"
 path = "src/lib.rs"
 
 [dependencies]
+# The secure channel (docs/ORB.md section 8a): HMAC-SHA256 for the handshake and key derivation, ChaCha20-Poly1305 for the frames. All no_std, no allocation.
+hmac = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+chacha20poly1305 = { version = "0.10", default-features = false }
 
 [profile.release]
 opt-level = "z"

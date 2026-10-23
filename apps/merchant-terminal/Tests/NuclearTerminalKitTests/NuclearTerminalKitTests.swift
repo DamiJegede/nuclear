@@ -183,8 +183,8 @@ final class NuclearTerminalKitTests: XCTestCase {
             .beginRead(purpose: .lookup, attempt: a, timeoutSeconds: 0), .cancel(attempt: a), .paymentStatus(attempt: a, outcome: .completed),
             .getStatus, .configure(volume: 70, muted: true), .setLightMode(.emergency, durationSeconds: 600),
             .eventAck(of: 0xBEEF),
-            .hello(uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocolVersion: 1, capabilities: 3),
-            .handshakeResult(accepted: false, reason: .proximityNotMet), .commandAck(of: 77, accepted: true, reason: .ok),
+            .hello(uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocolVersion: 1, capabilities: 3, nonce: [UInt8](repeating: 5, count: 16)),
+            .handshakeResult(accepted: false, reason: .proximityNotMet, proof: [UInt8](repeating: 0, count: 32)), .commandAck(of: 77, accepted: true, reason: .ok),
             .stateChanged(.awaitingPayment), .tapCaptured(purpose: .payment, attempt: a, url: "https://tag.example/v1/0123456789abcdef"),
             .battery(.init(percent: 83, millivolts: 3987, charging: true, externalPower: true, low: false, critical: false, temperatureC: 24)),
             .battery(.init(percent: nil, millivolts: 3300, charging: false, externalPower: false, low: true, critical: true, temperatureC: nil)),
@@ -233,5 +233,37 @@ final class NuclearTerminalKitTests: XCTestCase {
         var r = OrbV1.Reassembler()
         _ = try r.push(fr[0], now: 0)
         XCTAssertThrowsError(try r.push(fr[1], now: 5))                               // dropped after the timeout, so a middle fragment is a stray
+    }
+}
+
+final class OrbSecureTests: XCTestCase {
+    private func h(_ s: String) -> [UInt8] { stride(from: 0, to: s.count, by: 2).map { UInt8(s[s.index(s.startIndex, offsetBy: $0)..<s.index(s.startIndex, offsetBy: $0 + 2)], radix: 16)! } }
+    // The same vectors as docs/orb-protocol-vectors.md and apps/orb-firmware/src/secure.rs.
+    private let kBind = "a8a92973061b638c991773194f0394ab01e31539a1084f210c547b98eed2481c"
+    private let nonceO = "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf", bindingId = "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf", nonceT = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+
+    func testProofVectors() {
+        XCTAssertEqual(OrbSecure.expectedOrbProofForBind(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId)), h("c7b0b6a1de815de945b3f725d8d2e771a23613bb62c2d5aa794041577f0ae51c"))
+        XCTAssertEqual(OrbSecure.terminalProof(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("09eba972372eae5b7ff71cc3ce57a1810e3a7adbf19eac6e1f8816d84df1c133"))
+        XCTAssertEqual(OrbSecure.expectedOrbProofForResume(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("08c18bd008a8c08702b541b55fcc31a300c4b709cb75517f0444ec656dee1996"))
+        XCTAssertTrue(OrbSecure.constantTimeEqual([1, 2], [1, 2]))
+        XCTAssertFalse(OrbSecure.constantTimeEqual([1, 2], [1, 3]))
+    }
+
+    func testFrameVectorsAndRefusals() throws {
+        var t = OrbSecure.Channel(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId), generation: 7)
+        let plain = h("020001000200000001")
+        XCTAssertEqual(try t.seal(plain), h("0000000000000001813a2cdb4d220e3b3dd85404c3a1129f93567f699d9e13ef33"))
+        // The Orb-to-terminal frame from the vectors opens on the terminal side, once.
+        let orbFrame = h("000000000000000250d915f95d0fab7c521fa70636a2759dcaeef0baee52e92d77")
+        XCTAssertEqual(try t.open(orbFrame), plain)
+        XCTAssertThrowsError(try t.open(orbFrame)) { XCTAssertEqual($0 as? OrbSecure.ChannelError, .replay) }
+        var other = OrbSecure.Channel(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId), generation: 8)
+        XCTAssertThrowsError(try other.open(orbFrame)) { XCTAssertEqual($0 as? OrbSecure.ChannelError, .auth) }
+        var bad = orbFrame; bad[10] ^= 1
+        var again = OrbSecure.Channel(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId), generation: 7)
+        XCTAssertThrowsError(try again.open(bad)) { XCTAssertEqual($0 as? OrbSecure.ChannelError, .auth) }
+        XCTAssertEqual(try again.open(orbFrame), plain)     // a failed frame did not burn the counter
+        XCTAssertThrowsError(try again.open([1, 2, 3])) { XCTAssertEqual($0 as? OrbSecure.ChannelError, .length) }
     }
 }

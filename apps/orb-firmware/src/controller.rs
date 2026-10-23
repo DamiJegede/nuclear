@@ -68,7 +68,7 @@ impl Eq for UrlBuf {}
 /// A message for the terminal. The link layer assigns the message id and the current session generation and encodes it.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Outgoing {
-    HandshakeResult { accepted: bool, reason: Reason },
+    HandshakeResult { accepted: bool, reason: Reason, proof: [u8; 32] },
     CommandAck { of: u16, accepted: bool, reason: Reason },
     StateChanged(OrbState),
     TapCaptured { purpose: Purpose, attempt: AttemptId, url: UrlBuf },
@@ -174,7 +174,7 @@ pub enum Input<'a> {
     /// A decoded message from the connected peer.
     Message { header: Header, message: Message<'a> },
     /// The board's answer to [`Action::VerifyHandshake`].
-    HandshakeVerdict { accepted: bool },
+    HandshakeVerdict { accepted: bool, orb_proof: [u8; 32] },
     /// The NDEF message read from a tag while the reader was running.
     TagRead(&'a [u8]),
     /// The reader failed to read a tag.
@@ -385,7 +385,7 @@ impl Controller {
             Input::BleDisconnected => self.ble_disconnected(&mut a),
             Input::ProximityMet(ok) => self.proximity_ok = ok,
             Input::Message { header, message } => self.message(header, message, &mut a),
-            Input::HandshakeVerdict { accepted } => self.verdict(accepted, &mut a),
+            Input::HandshakeVerdict { accepted, orb_proof } => self.verdict(accepted, orb_proof, &mut a),
             Input::TagRead(ndef) => self.tag_read(ndef, &mut a),
             Input::TagReadFailed(reason) => {
                 if let (Phase::AwaitingTap, Some(op)) = (self.phase, self.op) {
@@ -557,7 +557,7 @@ impl Controller {
             return; // a session or a check is already in progress
         }
         let fail = |a: &mut Actions, reason: Reason, sound: bool| {
-            a.push(Action::Send(Outgoing::HandshakeResult { accepted: false, reason }));
+            a.push(Action::Send(Outgoing::HandshakeResult { accepted: false, reason, proof: [0; 32] }));
             if sound {
                 a.push(Action::Audio(AudioClip::PairingFailed));
             }
@@ -581,13 +581,13 @@ impl Controller {
         a.push(Action::VerifyHandshake { kind, nonce, proof });
     }
 
-    fn verdict(&mut self, accepted: bool, a: &mut Actions) {
+    fn verdict(&mut self, accepted: bool, orb_proof: [u8; 32], a: &mut Actions) {
         let pending = match self.pending_handshake.take() {
             Some(p) => p,
             None => return,
         };
         if !accepted {
-            a.push(Action::Send(Outgoing::HandshakeResult { accepted: false, reason: Reason::Unauthorized }));
+            a.push(Action::Send(Outgoing::HandshakeResult { accepted: false, reason: Reason::Unauthorized, proof: [0; 32] }));
             if pending.kind == HandshakeKind::Bind {
                 a.push(Action::Audio(AudioClip::PairingFailed));
             }
@@ -602,7 +602,7 @@ impl Controller {
         self.just_connected_report = true;
         self.acks.clear();
         self.stop_recovery(a);                                    // a connected terminal stops recovery polling at once
-        a.push(Action::Send(Outgoing::HandshakeResult { accepted: true, reason: Reason::Ok }));
+        a.push(Action::Send(Outgoing::HandshakeResult { accepted: true, reason: Reason::Ok, proof: orb_proof }));
         if pending.kind == HandshakeKind::Bind {
             self.has_binding = true;
             a.push(Action::SaveBinding);
@@ -922,7 +922,7 @@ mod tests {
         c.handle(Input::ProximityMet(true), t);
         let a = c.handle(Input::Message { header: hdr(1, 0), message: Message::Handshake { kind, protocol: PROTOCOL_VERSION, nonce: [0; 16], proof: [0; 32] } }, t);
         assert!(a.contains(|x| matches!(x, Action::VerifyHandshake { .. })));
-        c.handle(Input::HandshakeVerdict { accepted: true }, t);
+        c.handle(Input::HandshakeVerdict { accepted: true, orb_proof: [0; 32] }, t);
         c.session_generation().expect("session")
     }
 
@@ -974,7 +974,7 @@ mod tests {
         c.handle(Input::BleConnected, 10);
         c.handle(Input::ProximityMet(true), 11);
         c.handle(Input::Message { header: hdr(1, 0), message: Message::Handshake { kind: HandshakeKind::Bind, protocol: PROTOCOL_VERSION, nonce: [0; 16], proof: [0; 32] } }, 20);
-        let a = c.handle(Input::HandshakeVerdict { accepted: true }, 30);
+        let a = c.handle(Input::HandshakeVerdict { accepted: true, orb_proof: [0; 32] }, 30);
         assert!(a.contains(|x| *x == Action::SaveBinding));
         assert!(a.contains(|x| *x == Action::Audio(AudioClip::PairingSuccessful)));
         assert_eq!(c.phase(), Phase::ConnectedIdle);
@@ -986,7 +986,7 @@ mod tests {
         let (mut c, _) = boot(true, false);
         c.handle(Input::BleConnected, 10);
         c.handle(Input::Message { header: hdr(1, 0), message: Message::Handshake { kind: HandshakeKind::Resume, protocol: PROTOCOL_VERSION, nonce: [0; 16], proof: [0; 32] } }, 20);
-        let a = c.handle(Input::HandshakeVerdict { accepted: false }, 30);
+        let a = c.handle(Input::HandshakeVerdict { accepted: false, orb_proof: [0; 32] }, 30);
         assert!(a.contains(|x| *x == Action::DisconnectPeer));
         assert!(c.session_generation().is_none());
     }
@@ -1261,7 +1261,7 @@ mod tests {
         let (mut c, _) = boot(true, true);
         c.handle(Input::BleConnected, 10);
         c.handle(Input::Message { header: hdr(1, 0), message: Message::Handshake { kind: HandshakeKind::Resume, protocol: PROTOCOL_VERSION, nonce: [0; 16], proof: [0; 32] } }, 20);
-        let a = c.handle(Input::HandshakeVerdict { accepted: true }, 30);
+        let a = c.handle(Input::HandshakeVerdict { accepted: true, orb_proof: [0; 32] }, 30);
         assert!(a.contains(|x| *x == Action::NfcStop));
         let mut buf = [0u8; 64];
         let n = reset_card(&mut buf);
@@ -1455,6 +1455,6 @@ mod tests {
         assert!(Outgoing::StateChanged(OrbState::Completed).reliable());
         assert!(Outgoing::Error { reason: Reason::Timeout, attempt: A1 }.reliable());
         assert!(!Outgoing::CommandAck { of: 1, accepted: true, reason: Reason::Ok }.reliable());
-        assert!(!Outgoing::HandshakeResult { accepted: true, reason: Reason::Ok }.reliable());
+        assert!(!Outgoing::HandshakeResult { accepted: true, reason: Reason::Ok, proof: [0; 32] }.reliable());
     }
 }

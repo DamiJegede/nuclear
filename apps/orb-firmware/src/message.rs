@@ -86,8 +86,8 @@ pub enum Message<'a> {
     /// Acknowledges an Orb event (state changed, tap captured, error) by its message id so the Orb stops resending it.
     EventAck { of: u16 },
     // ---- Orb -> terminal
-    Hello { uid: [u8; 6], model: &'a str, firmware: &'a str, protocol: u8, capabilities: u16 },
-    HandshakeResult { accepted: bool, reason: Reason },
+    Hello { uid: [u8; 6], model: &'a str, firmware: &'a str, protocol: u8, capabilities: u16, nonce: [u8; 16] },
+    HandshakeResult { accepted: bool, reason: Reason, proof: [u8; 32] },
     CommandAck { of: u16, accepted: bool, reason: Reason },
     StateChanged { state: OrbState },
     TapCaptured { purpose: Purpose, attempt: AttemptId, url: &'a str },
@@ -266,16 +266,18 @@ impl<'a> Message<'a> {
                 w.u16(*duration_s)?;
             }
             Message::EventAck { of } => w.u16(*of)?,
-            Message::Hello { uid, model, firmware, protocol, capabilities } => {
+            Message::Hello { uid, model, firmware, protocol, capabilities, nonce } => {
                 w.put(uid)?;
+                w.put(nonce)?;
                 w.u8(*protocol)?;
                 w.u16(*capabilities)?;
                 w.str8(model)?;
                 w.str8(firmware)?;
             }
-            Message::HandshakeResult { accepted, reason } => {
+            Message::HandshakeResult { accepted, reason, proof } => {
                 w.u8(*accepted as u8)?;
                 w.u8(*reason as u8)?;
+                w.put(proof)?;
             }
             Message::CommandAck { of, accepted, reason } => {
                 w.u16(*of)?;
@@ -344,13 +346,14 @@ impl<'a> Message<'a> {
             OP_EVENT_ACK => Message::EventAck { of: r.u16()? },
             OP_HELLO => {
                 let uid = r.arr()?;
+                let nonce = r.arr()?;
                 let protocol = r.u8()?;
                 let capabilities = r.u16()?;
-                Message::Hello { uid, protocol, capabilities, model: r.str8()?, firmware: r.str8()? }
+                Message::Hello { uid, protocol, capabilities, nonce, model: r.str8()?, firmware: r.str8()? }
             }
             OP_HANDSHAKE_RESULT => {
                 let accepted = r.u8()? != 0;
-                Message::HandshakeResult { accepted, reason: reason(&mut r)? }
+                Message::HandshakeResult { accepted, reason: reason(&mut r)?, proof: r.arr()? }
             }
             OP_COMMAND_ACK => {
                 let of = r.u16()?;
@@ -416,8 +419,8 @@ mod tests {
         round(Message::Configure { volume: 70, muted: true });
         round(Message::SetLightMode { mode: LightMode::Emergency, duration_s: 600 });
         round(Message::EventAck { of: 0xBEEF });
-        round(Message::Hello { uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocol: 1, capabilities: 0b11 });
-        round(Message::HandshakeResult { accepted: false, reason: Reason::ProximityNotMet });
+        round(Message::Hello { uid: [1, 2, 3, 4, 5, 6], model: "Orb 1", firmware: "0.1.0", protocol: 1, capabilities: 0b11, nonce: [5; 16] });
+        round(Message::HandshakeResult { accepted: false, reason: Reason::ProximityNotMet, proof: [0; 32] });
         round(Message::CommandAck { of: 77, accepted: true, reason: Reason::Ok });
         round(Message::StateChanged { state: OrbState::AwaitingPayment });
         round(Message::TapCaptured { purpose: Purpose::Payment, attempt: ATTEMPT, url: "https://tag.example/v1/0123456789abcdef0123456789abcdef" });

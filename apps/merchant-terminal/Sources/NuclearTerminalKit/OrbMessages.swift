@@ -53,8 +53,8 @@ public enum OrbV1 {
         case setLightMode(LightMode, durationSeconds: UInt16)
         case eventAck(of: UInt16)                   // confirms an Orb event (StateChanged, TapCaptured, Error) so the Orb stops resending it
         // Orb -> terminal
-        case hello(uid: [UInt8], model: String, firmware: String, protocolVersion: UInt8, capabilities: UInt16)
-        case handshakeResult(accepted: Bool, reason: Reason)
+        case hello(uid: [UInt8], model: String, firmware: String, protocolVersion: UInt8, capabilities: UInt16, nonce: [UInt8])
+        case handshakeResult(accepted: Bool, reason: Reason, proof: [UInt8])
         case commandAck(of: UInt16, accepted: Bool, reason: Reason)
         case stateChanged(State)
         case tapCaptured(purpose: Purpose, attempt: AttemptID, url: String)
@@ -104,8 +104,8 @@ public enum OrbV1 {
         case .configure(let v, let mu): b += [v, mu ? 1 : 0]
         case .setLightMode(let mode, let d): b.append(mode.rawValue); u16(d)
         case .eventAck(let of): u16(of)
-        case .hello(let uid, let model, let fw, let p, let cap): try fixed(uid, 6); b.append(p); u16(cap); try str8(model); try str8(fw)
-        case .handshakeResult(let ok, let r): b += [ok ? 1 : 0, r.rawValue]
+        case .hello(let uid, let model, let fw, let p, let cap, let nonce): try fixed(uid, 6); try fixed(nonce, 16); b.append(p); u16(cap); try str8(model); try str8(fw)
+        case .handshakeResult(let ok, let r, let proof): b += [ok ? 1 : 0, r.rawValue]; try fixed(proof, 32)
         case .commandAck(let of, let ok, let r): u16(of); b += [ok ? 1 : 0, r.rawValue]
         case .stateChanged(let s): b.append(s.rawValue)
         case .tapCaptured(let p, let a, let url): b.append(p.rawValue); try fixed(a, 16); b += Array(url.utf8)
@@ -157,9 +157,9 @@ public enum OrbV1 {
             m = .setLightMode(mode, durationSeconds: try u16())
         case 0x0A: m = .eventAck(of: try u16())
         case 0x81:
-            let uid = try take(6), p = try u8(), cap = try u16()
-            m = .hello(uid: uid, model: try str8(), firmware: try str8(), protocolVersion: p, capabilities: cap)
-        case 0x82: m = .handshakeResult(accepted: try u8() != 0, reason: try reason())
+            let uid = try take(6), nonce = try take(16), p = try u8(), cap = try u16()
+            m = .hello(uid: uid, model: try str8(), firmware: try str8(), protocolVersion: p, capabilities: cap, nonce: nonce)
+        case 0x82: m = .handshakeResult(accepted: try u8() != 0, reason: try reason(), proof: try take(32))
         case 0x83: m = .commandAck(of: try u16(), accepted: try u8() != 0, reason: try reason())
         case 0x84:
             guard let s = State(rawValue: try u8()) else { throw CodecError.badBody }

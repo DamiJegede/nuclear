@@ -17,6 +17,7 @@ pub mod message;
 pub mod ndef;
 pub mod outbox;
 pub mod protocol;
+pub mod secure;
 pub mod proximity;
 pub mod session;
 pub mod storage;
