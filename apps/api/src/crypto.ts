@@ -155,3 +155,26 @@ export function newAgentKey(): { key: string; hash: string; hint: string } {
   const key = AGENT_KEY_PREFIX + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return { key, hash: hashToken(key), hint: key.slice(-4) };
 }
+
+// Emailed account links (verify email, reset password): signed and expiring, no table. A reset link carries a fingerprint of the password hash it
+// was issued against, so it works once: using it changes the hash and every other outstanding link dies with it.
+const ACCOUNT_LINK_AUD = "nuclear:account-link";
+export type AccountLinkKind = "verify_email" | "reset_password";
+export type AccountLinkClaims = { sub: string; kind: AccountLinkKind; email: string; pwf?: string };
+
+export const passwordFingerprint = (hash: string | null) => createHash("sha256").update(hash ?? "").digest("hex").slice(0, 16);
+
+export async function signAccountLink(secret: string, c: { accountId: string; kind: AccountLinkKind; email: string; pwf?: string }, ttlSeconds: number): Promise<string> {
+  const iat = Math.floor(Date.now() / 1000);
+  return sign({ iss: LINK_ISS, aud: ACCOUNT_LINK_AUD, sub: c.accountId, kind: c.kind, email: c.email, ...(c.pwf ? { pwf: c.pwf } : {}), iat, exp: iat + ttlSeconds }, secret, "HS256");
+}
+
+export async function verifyAccountLink(secret: string, token: string, kind: AccountLinkKind): Promise<AccountLinkClaims | null> {
+  try {
+    const p = (await verify(token, secret, "HS256")) as Record<string, unknown>;
+    if (p.iss !== LINK_ISS || p.aud !== ACCOUNT_LINK_AUD || p.kind !== kind || typeof p.sub !== "string" || typeof p.email !== "string") return null;
+    return { sub: p.sub, kind, email: p.email, ...(typeof p.pwf === "string" ? { pwf: p.pwf } : {}) };
+  } catch {
+    return null;
+  }
+}

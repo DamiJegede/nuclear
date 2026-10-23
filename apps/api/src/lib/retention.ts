@@ -1,15 +1,14 @@
 import type { Sql } from "../db";
 
 /**
- * The nightly purge: finished sessions and used or expired one-time links, so these tables stop growing without bound.
+ * The nightly purge: finished sessions, so these tables stop growing without bound.
  * Each table is deleted in small batches (a night's work is capped), oldest first, so one run never holds a long lock.
  *
  *   devices           revoked, expired, or never redeemed (a magic link not opened) more than 30 days / a day ago
  *   admin_sessions    expired or revoked more than 30 days ago
- *   account_tokens    used or expired more than 7 days ago
  *
  * Audit logs are not purged (decided 2026-10-22: leave them for now; note GET /v1/account reads a declined business's reason from them).
- * Deleting a device only drops the session record (wallet_allocations.device_id becomes NULL); nothing about money is touched.
+ * Deleting a device only drops the session record; nothing about money is touched.
  */
 const BATCH = 5_000;
 const MAX_BATCHES = 20;
@@ -32,8 +31,5 @@ export async function purge(sql: Sql) {
   const adminSessions =
     (await batched(async () => (await sql`delete from admin_sessions where id in (select id from admin_sessions where expires_at < now() - interval '30 days' limit ${BATCH}) returning id`).length)) +
     (await batched(async () => (await sql`delete from admin_sessions where id in (select id from admin_sessions where revoked_at < now() - interval '30 days' limit ${BATCH}) returning id`).length));
-  const accountTokens =
-    (await batched(async () => (await sql`delete from account_tokens where id in (select id from account_tokens where expires_at < now() - interval '7 days' limit ${BATCH}) returning id`).length)) +
-    (await batched(async () => (await sql`delete from account_tokens where id in (select id from account_tokens where used_at < now() - interval '7 days' limit ${BATCH}) returning id`).length));
-  return { devices, admin_sessions: adminSessions, account_tokens: accountTokens };
+  return { devices, admin_sessions: adminSessions };
 }

@@ -38,14 +38,10 @@ const r = await purge(sql);
 eq("old revoked, old expired and old unopened sessions are purged; the rest stay", [r.devices, before - (await q("select count(*)::int n from devices"))[0].n], [3, 3]);
 eq("the signup session and a recently revoked one are still there", (await call("GET", "/v1/account", { token: ada.session_token })).status, 200);   // signup session = devs[0]
 
-// ---- one-time links and admin sessions
-await q(`insert into account_tokens (account_id, kind, email, token_hash, expires_at, used_at) values
-  ($1,'verify_email','a@x','h1', ${old(10)}, null), ($1,'reset_password','a@x','h2', now() + interval '1 hour', ${old(9)}),
-  ($1,'reset_password','a@x','h3', now() + interval '1 hour', null), ($1,'verify_email','a@x','h4', ${old(2)}, null)`, [ada.account_id]);
+// ---- admin sessions
 const made = (await call("POST", "/v1/admin/admins", { token: OP, body: { name: "Old Admin" } })).json;
 await q(`insert into admin_sessions (admin_id, token_hash, expires_at, revoked_at) values ($1,'s1', ${old(40)}, null), ($1,'s2', now() + interval '1 hour', ${old(40)}), ($1,'s3', now() + interval '1 hour', null), ($1,'s4', ${old(3)}, null)`, [made.admin.id]);
 const r2 = await purge(sql);
-eq("links used or expired over a week ago go; a live or fresh one stays", [r2.account_tokens, (await q("select token_hash from account_tokens where token_hash in ('h1','h2','h3','h4') order by 1")).map((x: any) => x.token_hash)], [2, ["h3", "h4"]]);
 eq("admin sessions expired or revoked over 30 days ago go; the rest stay", [r2.admin_sessions, (await q("select token_hash from admin_sessions order by 1")).map((x: any) => x.token_hash)], [2, ["s3", "s4"]]);
 
 // ---- a snapshot is final
@@ -58,9 +54,9 @@ await saveReconciliation(sql, day, { ledger_balanced: false }, false);
 eq("and never rewritten (a second write changes nothing)", [(await q("select reconciled from snapshots"))[0].reconciled, (await tryq("update snapshots set reconciled = false")).includes("written once")], [true, true]);
 
 // ---- the nightly job runs the purge
-await q(`insert into account_tokens (account_id, kind, email, token_hash, expires_at) values ($1,'verify_email','a@x','h9', ${old(20)})`, [ada.account_id]);
+await q(`insert into admin_sessions (admin_id, token_hash, expires_at) values ($1,'s9', ${old(45)})`, [made.admin.id]);
 const job: any = await dailyJobs(Date.parse("2026-11-03T05:00:00Z"), env);
-eq("the daily job purges and reports it", [job.purged.account_tokens, (await q("select count(*)::int n from account_tokens where token_hash = 'h9'"))[0].n], [1, 0]);
+eq("the daily job purges and reports it", [job.purged.admin_sessions, (await q("select count(*)::int n from admin_sessions where token_hash = 's9'"))[0].n], [1, 0]);
 eq("audit logs are not purged", [job.purged.logs, (await q("select count(*)::int n from logs"))[0].n > 0], [undefined, true]);
 
 console.log(`\n${pass} passed, ${fail} failed`);

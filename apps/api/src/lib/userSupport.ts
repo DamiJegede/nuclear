@@ -2,12 +2,12 @@ import type { Sql } from "../db";
 import { imageUrl } from "./images";
 import { PROGRAM_TZ } from "./ledger";
 import { n } from "./money";
-import { peek, RULES } from "./throttle";
+import { peek, RULES, type Limiter } from "./throttle";
 import { party, type DayRange } from "./adminLists";
 
 /** Read-only views of one consumer for the support team. Everything comes from existing tables. */
 
-export async function userDetail(sql: Sql, id: string) {
+export async function userDetail(sql: Sql, id: string, limiter?: Limiter) {
   const [u] = await sql<{
     id: string; name: string; handle: string | null; email: string | null; phone: string | null; status: string; tier: string | null;
     created_at: Date; photo: string | null; bio: string | null;
@@ -42,7 +42,7 @@ export async function userDetail(sql: Sql, id: string) {
            (select count(*) from tags t join wallets w on w.id = t.wallet_id where w.account_id = ${id})::int as tags,
            (select count(*) from devices where account_id = ${id} and revoked_at is null and session_expires_at > now())::int as devices,
            (select count(*) from orders where account_id = ${id})::int as orders`;
-  const lock = u.email ? await peek(sql, `login:${u.email.toLowerCase()}`, RULES.loginFailures) : { blocked: false, retryAfter: 0 };
+  const lock = u.email && limiter ? await peek(limiter, `login:${u.email.toLowerCase()}`, RULES.loginFailures) : { blocked: false, retryAfter: 0 };
 
   return {
     id: u.id, name: u.name, handle: u.handle, email: u.email, phone: u.phone, status: u.status, tier: u.tier, photo: imageUrl(u.photo), bio: u.bio, created_at: u.created_at,

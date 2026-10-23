@@ -44,7 +44,7 @@ export const requireOrgKey: MiddlewareHandler<AppContext> = async (c, next) => {
        and exists (select 1 from accounts a where a.id = k.account_id and a.type = 'O' and a.status = 'active')
     returning k.id, k.account_id`;
   if (!k) return c.json({ error: "unauthorized" }, 401);
-  const rl = await hit(sql, `orgapi:${k.id}`, RULES.orgApi);
+  const rl = await hit(c.get("limiter"), `orgapi:${k.id}`, RULES.orgApi);
   if (!rl.ok) return rateLimited(c, rl.retryAfter);
   c.set("orgKey", { accountId: k.account_id, keyId: k.id });
   await next();

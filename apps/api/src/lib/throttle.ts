@@ -1,6 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import type { Sql } from "../db";
-import type { AppContext } from "../env";
+import type { AppContext, Env } from "../env";
 
 /** `limit` hits per `windowSec` seconds; the window starts at the first hit. */
 export type Rule = { limit: number; windowSec: number };
@@ -25,34 +24,95 @@ export const RULES = {
   agentMoney: { limit: 30, windowSec: 60 },             // sends and payments by an agent key
 } satisfies Record<string, Rule>;
 
-type Counted = { ok: boolean; count: number; retryAfter: number };
+export type Counted = { ok: boolean; count: number; retryAfter: number };
 
-/** Counts one hit. `ok` is false once the count passes the limit. */
-export async function hit(sql: Sql, key: string, rule: Rule): Promise<Counted> {
-  const [r] = await sql<{ count: number; retry: number }[]>`
-    insert into throttles (key, count, window_start) values (${key}, 1, now())
-    on conflict (key) do update set
-      count = case when throttles.window_start <= now() - make_interval(secs => ${rule.windowSec}) then 1 else throttles.count + 1 end,
-      window_start = case when throttles.window_start <= now() - make_interval(secs => ${rule.windowSec}) then now() else throttles.window_start end
-    returning count, greatest(1, ceil(extract(epoch from (window_start + make_interval(secs => ${rule.windowSec}) - now()))))::int as retry`;
-  return { ok: r!.count <= rule.limit, count: r!.count, retryAfter: r!.retry };
+/**
+ * Fixed windows that start at the first hit. This is the pure logic; where it runs depends on the deployment: a Durable Object (`RateLimiter`,
+ * lib/rateLimiter.ts) in production, so counters are shared by every Worker instance, and an in-memory instance when no object is bound (local runs
+ * and tests). Nothing is stored in the database.
+ */
+export class Windows {
+  private m = new Map<string, { count: number; start: number }>();
+
+  hit(key: string, rule: Rule, now = Date.now()): Counted {
+    let e = this.m.get(key);
+    if (!e || e.start + rule.windowSec * 1000 <= now) e = { count: 0, start: now };
+    e.count += 1;
+    this.m.set(key, e);
+    return { ok: e.count <= rule.limit, count: e.count, retryAfter: this.retry(e, rule, now) };
+  }
+
+  peek(key: string, rule: Rule, now = Date.now()): { blocked: boolean; retryAfter: number } {
+    const e = this.m.get(key);
+    if (!e || e.start + rule.windowSec * 1000 <= now || e.count < rule.limit) return { blocked: false, retryAfter: 0 };
+    return { blocked: true, retryAfter: this.retry(e, rule, now) };
+  }
+
+  reset(key: string) { this.m.delete(key); }
+
+  /** Forgets windows that started more than `olderThanMs` ago. */
+  sweep(olderThanMs: number, now = Date.now()): number {
+    let n = 0;
+    for (const [k, e] of this.m) if (e.start < now - olderThanMs) { this.m.delete(k); n++; }
+    return n;
+  }
+
+  /** Tests: forget every window whose key starts with `prefix` (all of them without one). */
+  clear(prefix = "") { for (const k of this.keys()) if (k.startsWith(prefix)) this.m.delete(k); }
+  get(key: string) { return this.m.get(key); }
+  set(key: string, v: { count: number; start: number }) { this.m.set(key, v); }
+  keys() { return [...this.m.keys()]; }
+  size() { return this.m.size; }
+  /** Tests: make every window whose key starts with `prefix` look as if it began `ms` ago. */
+  age(prefix: string, ms: number) { for (const [k, e] of this.m) if (k.startsWith(prefix)) e.start -= ms; }
+
+  private retry(e: { start: number }, rule: Rule, now: number) { return Math.max(1, Math.ceil((e.start + rule.windowSec * 1000 - now) / 1000)); }
 }
 
-/** Reads the count without adding a hit. `blocked` once `limit` hits are already recorded. */
-export async function peek(sql: Sql, key: string, rule: Rule): Promise<{ blocked: boolean; retryAfter: number }> {
-  const [r] = await sql<{ count: number; retry: number }[]>`
-    select count, greatest(1, ceil(extract(epoch from (window_start + make_interval(secs => ${rule.windowSec}) - now()))))::int as retry
-      from throttles where key = ${key} and window_start > now() - make_interval(secs => ${rule.windowSec})`;
-  return r && r.count >= rule.limit ? { blocked: true, retryAfter: r.retry } : { blocked: false, retryAfter: 0 };
+/** What the routes call. */
+export interface Limiter {
+  hit(key: string, rule: Rule): Promise<Counted>;
+  peek(key: string, rule: Rule): Promise<{ blocked: boolean; retryAfter: number }>;
+  reset(key: string): Promise<void>;
+  sweep(): Promise<number>;
 }
 
-export const reset = (sql: Sql, key: string) => sql`delete from throttles where key = ${key}`;
-
-/** Removes counters whose window ended long ago (the daily job calls this). */
-export async function sweep(sql: Sql): Promise<number> {
-  const rows = await sql`delete from throttles where window_start < now() - interval '1 day' returning key`;
-  return rows.length;
+export class MemoryLimiter implements Limiter {
+  readonly windows = new Windows();
+  async hit(key: string, rule: Rule) { return this.windows.hit(key, rule); }
+  async peek(key: string, rule: Rule) { return this.windows.peek(key, rule); }
+  async reset(key: string) { this.windows.reset(key); }
+  async sweep() { return this.windows.sweep(86_400_000); }
 }
+
+/** The in-memory limiter used when no Durable Object is bound (one per process; tests reach into `.windows`). */
+export const memoryLimiter = new MemoryLimiter();
+
+type Namespace = NonNullable<Env["LIMITER"]>;
+
+/** Talks to the RateLimiter Durable Objects; a key always goes to the same shard. */
+export class ObjectLimiter implements Limiter {
+  constructor(private ns: Namespace, private shards: number) {}
+  private shardOf(key: string) { let h = 2166136261; for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0; return h % this.shards; }
+  private call<T>(shard: number, body: unknown): Promise<T> {
+    return this.ns.get(this.ns.idFromName(`limiter-${shard}`)).fetch("https://limiter/op", { method: "POST", body: JSON.stringify(body) }).then((r) => r.json() as Promise<T>);
+  }
+  hit(key: string, rule: Rule) { return this.call<Counted>(this.shardOf(key), { op: "hit", key, ...rule }); }
+  peek(key: string, rule: Rule) { return this.call<{ blocked: boolean; retryAfter: number }>(this.shardOf(key), { op: "peek", key, ...rule }); }
+  async reset(key: string) { await this.call(this.shardOf(key), { op: "reset", key }); }
+  async sweep() { let n = 0; for (let i = 0; i < this.shards; i++) n += (await this.call<{ swept: number }>(i, { op: "sweep" })).swept; return n; }
+}
+
+/** The limiter for this deployment. A limiter failure never blocks a request: the call sites treat an unreachable limiter as "allowed". */
+export function limiterFor(env: Env): Limiter {
+  const n = Math.max(1, Math.min(16, Number(env.LIMITER_SHARDS) || 1));
+  return env.LIMITER ? new ObjectLimiter(env.LIMITER, n) : memoryLimiter;
+}
+
+export const hit = (l: Limiter, key: string, rule: Rule) => l.hit(key, rule).catch((): Counted => ({ ok: true, count: 0, retryAfter: 0 }));
+export const peek = (l: Limiter, key: string, rule: Rule) => l.peek(key, rule).catch(() => ({ blocked: false, retryAfter: 0 }));
+export const reset = (l: Limiter, key: string) => l.reset(key).catch(() => undefined);
+export const sweep = (l: Limiter) => l.sweep().catch(() => 0);
 
 /** The caller's address as Cloudflare reports it. Absent when running locally or in tests: IP limits are then skipped. */
 export const clientIp = (c: Context): string | null => c.req.header("cf-connecting-ip") ?? null;
@@ -65,7 +125,7 @@ export function rateLimit(name: string, rule: Rule, who: (c: Context<AppContext>
   return async (c, next) => {
     const id = who(c);
     if (id !== null) {
-      const r = await hit(c.get("sql"), `${name}:${id}`, rule);
+      const r = await hit(c.get("limiter"), `${name}:${id}`, rule);
       if (!r.ok) return rateLimited(c, r.retryAfter);
     }
     await next();

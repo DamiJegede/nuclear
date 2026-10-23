@@ -1,4 +1,4 @@
-import { RULES, hit, rateLimited } from "./lib/throttle";
+import { RULES, hit, limiterFor, rateLimited } from "./lib/throttle";
 import type { MiddlewareHandler } from "hono";
 import type { AppContext, SessionKind } from "./env";
 import { AGENT_KEY_PREFIX, hashToken, verifyTerminalJwt } from "./crypto";
@@ -11,6 +11,7 @@ const PENDING_OK = new Set(["/v1/account", "/v1/account/documents", "/v1/auth/lo
 export const withDb: MiddlewareHandler<AppContext> = async (c, next) => {
   const sql = connect(c.env);
   c.set("sql", sql);
+  c.set("limiter", limiterFor(c.env));
   try {
     await next();
   } finally {
@@ -44,7 +45,7 @@ export function sessionGuard(...allowed: SessionKind[]): MiddlewareHandler<AppCo
         returning w.id, w.account_id`;
       if (!k) return c.json({ error: "unauthorized" }, 401);
       if (!allowed.includes("agent")) return c.json({ error: "forbidden" }, 403);
-      const rl = await hit(sql, `agent:${k.id}`, RULES.agentRequests);   // a runaway agent is slowed, not the API
+      const rl = await hit(c.get("limiter"), `agent:${k.id}`, RULES.agentRequests);   // a runaway agent is slowed, not the API
       if (!rl.ok) return rateLimited(c, rl.retryAfter);
       c.set("auth", { deviceId: null, accountId: k.account_id, kind: "agent", walletId: k.id });
       return next();

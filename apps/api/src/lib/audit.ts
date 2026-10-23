@@ -37,3 +37,15 @@ export const adminLog = (c: Context<AppContext>, action: string, target?: Target
 /** Log a customer security event. */
 export const customerLog = (c: Context<AppContext>, accountId: string | null, email: string | null, action: string, details?: Record<string, unknown>, target?: Target) =>
   log(c.get("sql"), { actor: { type: "customer", id: accountId, label: email }, action, ...(target ? { target } : {}), ...(details ? { details } : {}), ip: clientIp(c) });
+
+/**
+ * The earmark history of a wallet (money set aside or released), kept as audit rows: there is no table of its own. Works on the pool or inside a
+ * transaction, so the row commits or rolls back with the change it describes.
+ */
+export const earmarkLog = (
+  q: Sql | import("postgres").TransactionSql<{ bigint: bigint }>,
+  accountId: string, walletId: string, delta: bigint, balanceAfter: bigint | null, deviceId: string | null,
+) => q`
+  insert into logs (actor_type, actor_id, action, target_type, target_id, details)
+  values ('customer', ${accountId}, 'wallet.earmark', 'wallet', ${walletId},
+          ${JSON.stringify({ account_id: accountId, amount: delta.toString(), balance_after: balanceAfter === null ? null : balanceAfter.toString(), device_id: deviceId })}::text::jsonb)`;

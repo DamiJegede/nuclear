@@ -1,3 +1,4 @@
+import { earmarkLog } from "./audit";
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 import { CAP_COLS, capApplies, capHeadroom, capToday, type CapRow } from "./cap";
@@ -99,12 +100,8 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
       tx`update balances set ordinary_opening = ${capToday(bal).opening.toString()}, added_today = ${(capToday(bal).added + i.amount).toString()}, opening_day = greatest(opening_day, ${bal.today}::date) where account_id = ${i.accountId}`,
       tx`update wallets set balance = balance - ${amt} where id = ${i.fromWalletId}`,
       destEarmarked ? tx`update wallets set balance = balance + ${amt} where id = ${i.toWalletId}` : tx`select 1`,
-      tx`insert into wallet_allocations (wallet_id, account_id, amount, balance_after, device_id)
-         values (${i.fromWalletId}, ${i.accountId}, ${`-${amt}`}, ${((sw.balance ?? 0n) - i.amount).toString()}::bigint, ${i.deviceId})`,
-      destEarmarked
-        ? tx`insert into wallet_allocations (wallet_id, account_id, amount, balance_after, device_id)
-             values (${i.toWalletId}, ${i.accountId}, ${amt}, ${((dw.balance ?? 0n) + i.amount).toString()}::bigint, ${i.deviceId})`
-        : tx`select 1`,
+      earmarkLog(tx, i.accountId, i.fromWalletId, -i.amount, (sw.balance ?? 0n) - i.amount, i.deviceId),
+      destEarmarked ? earmarkLog(tx, i.accountId, i.toWalletId, i.amount, (dw.balance ?? 0n) + i.amount, i.deviceId) : tx`select 1`,
       // Net zero for the account: the Benefits compartment goes down, the ordinary compartment goes up.
       tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
          values (${txId}, 'move', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}, ${i.fromWalletId}),

@@ -1,7 +1,7 @@
 import { connect } from "../db";
 import type { Env } from "../env";
 import { easternDate, ensureDay } from "./dailyReset";
-import { sweep } from "./throttle";
+import { limiterFor, sweep } from "./throttle";
 import { purge } from "./retention";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
@@ -20,7 +20,7 @@ import { pruneCounters } from "./tracker";
 export async function dailyJobs(scheduledTime: number, env: Env) {
   const sql = connect(env);
   try {
-    const swept = await sweep(sql);
+    const swept = await sweep(limiterFor(env));
     // Finished sessions and used or expired links go; never blocks the rest of the job.
     const purged = await purge(sql).catch((err) => (console.error("purge failed", err), null));
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.

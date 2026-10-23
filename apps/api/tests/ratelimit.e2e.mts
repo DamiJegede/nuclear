@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
+import { memoryLimiter } from "../src/lib/throttle.ts";
 import mcp from "../../mcp/src/index.ts";
 import { dailyJobs } from "../src/lib/cron.ts";
 import { migrate, psql, resetSchema, PG_URL } from "./db.ts";
@@ -18,7 +19,7 @@ const call = async (method: string, path: string, o: { body?: unknown; token?: s
 };
 const signup = async (name: string, email: string, ip?: string) => (await call("POST", "/v1/auth/signup", { ip, body: { name, email, password: "correct horse battery" } })).json;
 const login = (email: string, password: string, ip?: string) => call("POST", "/v1/auth/login", { ip, body: { email, password } });
-const expire = (prefix: string) => q("update throttles set window_start = now() - interval '2 days' where key like $1", [prefix + "%"]);
+const expire = async (prefix: string) => memoryLimiter.windows.age(prefix, 2 * 86_400_000);
 const GOOD = "correct horse battery", BAD = "wrong horse battery staple";
 
 // ---- customer login: five wrong passwords lock the email
@@ -29,14 +30,14 @@ const locked = await login("ada@example.com", GOOD);
 eq("then the email is locked, even for the right password, with a retry hint", [locked.status, locked.json.error, locked.json.retry_after > 0 && locked.json.retry_after <= 900, Number(locked.retryHeader) === locked.json.retry_after], [429, "rate_limited", true, true]);
 eq("other emails are not affected; the locked one stays locked on further tries", [(await login("bob@example.com", GOOD)).status, (await login("ada@example.com", GOOD)).status], [200, 429]);
 await expire("login:ada");
-eq("when the window ends the right password works again and clears the count", [(await login("ada@example.com", GOOD)).status, (await q("select count(*)::int n from throttles where key = 'login:ada@example.com'"))[0].n], [200, 0]);
+eq("when the window ends the right password works again and clears the count", [(await login("ada@example.com", GOOD)).status, memoryLimiter.windows.get("login:ada@example.com")?.count ?? 0], [200, 0]);
 for (let i = 0; i < 3; i++) await login("ada@example.com", BAD);
 await login("ada@example.com", GOOD);
 const more = []; for (let i = 0; i < 4; i++) more.push((await login("ada@example.com", BAD)).status);
 eq("a good login resets the count: three wrong, one right, then four wrong are still plain refusals", more, [401, 401, 401, 401]);
 const ghost = []; for (let i = 0; i < 6; i++) ghost.push((await login("nobody@example.com", BAD)).status);
 eq("an email that does not exist is limited the same way, so the answer reveals nothing", ghost, [401, 401, 401, 401, 401, 429]);
-eq("a refused login is not an invalid-request or a crash: bad bodies are still 400 and are not counted", [(await call("POST", "/v1/auth/login", { body: {} })).status, (await q("select count(*)::int n from throttles where key like 'login:%' and key not in ('login:ada@example.com','login:nobody@example.com')"))[0].n], [400, 0]);
+eq("a refused login is not an invalid-request or a crash: bad bodies are still 400 and are not counted", [(await call("POST", "/v1/auth/login", { body: {} })).status, memoryLimiter.windows.keys().filter((k) => k.startsWith("login:") && !["login:ada@example.com", "login:nobody@example.com"].includes(k)).length], [400, 0]);
 
 // ---- per-IP limits (Cloudflare sends cf-connecting-ip; without it the IP limits are skipped)
 eq("signups: ten per IP per hour, the eleventh is refused, another IP is fine", await (async () => {
@@ -110,9 +111,9 @@ eq("the MCP server shows the agent a clear rate-limit error with how long to wai
 })(), [true, "rate_limited", true, "string"]);
 
 // ---- housekeeping
-await q("update throttles set window_start = now() - interval '3 days' where key like 'login:%'");
-await q("insert into throttles (key, count) values ('fresh-key', 1)");
-const before = (await q("select count(*)::int n from throttles"))[0].n;
+memoryLimiter.windows.age("login:", 3 * 86_400_000);
+memoryLimiter.windows.set("fresh-key", { count: 1, start: Date.now() });
+const before = memoryLimiter.windows.size();
 const job = await dailyJobs(Date.UTC(2026, 6, 1, 6, 0), env);   // 06:00 UTC: not midnight in New York, but the sweep always runs
-eq("the daily job removes counters older than a day and keeps recent ones, even on a run that does not reset", [job.reset, job.swept > 0, (await q("select count(*)::int n from throttles where key = 'fresh-key'"))[0].n, (await q("select count(*)::int n from throttles"))[0].n === before - job.swept], [false, true, 1, true]);
+eq("the daily job removes counters older than a day and keeps recent ones, even on a run that does not reset", [job.reset, job.swept > 0, memoryLimiter.windows.get("fresh-key")?.count ?? 0, memoryLimiter.windows.size() === before - job.swept], [false, true, 1, true]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

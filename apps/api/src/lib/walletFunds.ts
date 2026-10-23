@@ -1,3 +1,4 @@
+import { earmarkLog } from "./audit";
 import type { TransactionSql } from "postgres";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
@@ -72,9 +73,7 @@ export async function setWalletBalance(
 
   await tx`update wallets set balance = ${i.target === null ? null : i.target.toString()}::bigint where id = ${i.walletId}`;
   if (delta !== 0n) {
-    await tx`
-      insert into wallet_allocations (wallet_id, account_id, amount, balance_after, device_id)
-      values (${i.walletId}, ${i.accountId}, ${delta.toString()}, ${i.target === null ? null : i.target.toString()}::bigint, ${i.deviceId})`;
+    await earmarkLog(tx, i.accountId, i.walletId, delta, i.target, i.deviceId);
   }
   return { ok: true, balance: i.target, delta };
 }

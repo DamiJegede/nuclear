@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
+import { memoryLimiter } from "../src/lib/throttle.ts";
 
 psql(["-c", "drop schema public cascade; create schema public;"]);
 migrate();
@@ -76,7 +77,7 @@ eq("a model without a photo has null; an unknown or malformed key is 404", [(awa
 
 // ---- buying
 // The shop allows ten orders a minute per account (see ratelimit.e2e.mts); these scenarios place many, so clear the counter first.
-const order = async (token: string, key: string | undefined, body: object) => { await q("delete from throttles where key like 'shop-order:%'"); return call("POST", "/v1/shop/orders", { token, key, body }); };
+const order = async (token: string, key: string | undefined, body: object) => { memoryLimiter.windows.clear("shop-order:"); return call("POST", "/v1/shop/orders", { token, key, body }); };
 eq("buying needs a session and an idempotency key", [(await order("", "k", { model_id: band.id, quantity: 1, shipping: SHIP })).status, (await order(A, undefined, { model_id: band.id, quantity: 1, shipping: SHIP })).json.error], [401, "idempotency_key_required"]);
 eq("bad bodies are refused (quantity, shipping, country)", [
   (await order(A, "b1", { model_id: band.id, quantity: 0, shipping: SHIP })).status,

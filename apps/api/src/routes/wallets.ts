@@ -286,11 +286,11 @@ wallets.get("/:id/allocations", async (c) => {
   const { accountId, walletId } = c.get("auth");
   if (!id.success || (walletId !== null && walletId !== id.data)) return c.json({ error: "not_found" }, 404);
   const sql = c.get("sql");
-  const rows = await sql<{ id: string; amount: bigint; balance_after: bigint | null; created_at: Date }[]>`
-    select id, amount, balance_after, created_at from wallet_allocations
-     where wallet_id = ${id.data} and account_id = ${accountId}
+  const rows = await sql<{ id: string; amount: string; balance_after: string | null; created_at: Date }[]>`
+    select id, details->>'amount' as amount, details->>'balance_after' as balance_after, created_at from logs
+     where action = 'wallet.earmark' and target_id = ${id.data} and details->>'account_id' = ${accountId}
      order by created_at desc, id desc limit 50`;
-  return c.json({ allocations: rows.map((r) => ({ id: r.id, amount: n(r.amount), balance_after: n(r.balance_after), created_at: r.created_at })) });
+  return c.json({ allocations: rows.map((r) => ({ id: r.id, amount: Number(r.amount), balance_after: r.balance_after === null ? null : Number(r.balance_after), created_at: r.created_at })) });
 });
 
 // The agent's API key. One per agent wallet, created together with the wallet; this route rotates it: it replaces the current key, which

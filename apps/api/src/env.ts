@@ -43,6 +43,10 @@ export interface Env {
   ADMIN_ORIGINS?: string;
   /** Today's running estimate for the admin Overview: the Durable Object namespace (class StatsCounter). Unbound = no estimate (zeros). */
   STATS?: { idFromName(name: string): unknown; get(id: unknown): { fetch(url: string, init?: { method?: string; body?: string }): Promise<Response> } };
+  /** The rate limits' Durable Object namespace (class RateLimiter). Unbound = an in-memory limiter per Worker instance (local runs and tests only). */
+  LIMITER?: { idFromName(name: string): unknown; get(id: unknown): { fetch(url: string, init?: { method?: string; body?: string }): Promise<Response> } };
+  /** How many rate-limit objects share the keys (default 1, max 16). */
+  LIMITER_SHARDS?: string;
   /** How many counter objects share the estimate (default 1, max 64). Reads sum all of them. */
   STATS_SHARDS?: string;
   /** Seconds the admin Overview's live numbers are cached (default 300). 0 = no caching: every read computes everything (tests, tiny deployments). */
@@ -85,5 +89,5 @@ export type AdminAuth =
 
 export type AppContext = {
   Bindings: Env;
-  Variables: { auth: SessionAuth; terminal: TerminalAuth; adminAuth: AdminAuth; orgKey: { accountId: string; keyId: string }; sql: import("./db").Sql };
+  Variables: { auth: SessionAuth; terminal: TerminalAuth; adminAuth: AdminAuth; orgKey: { accountId: string; keyId: string }; sql: import("./db").Sql; limiter: import("./lib/throttle").Limiter };
 };

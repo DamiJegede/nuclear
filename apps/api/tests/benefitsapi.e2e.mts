@@ -4,6 +4,7 @@ process.on("unhandledRejection", (e: any) => { writeFileSync("/tmp/bapi.err", St
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
+import { memoryLimiter } from "../src/lib/throttle.ts";
 import { migrate, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
@@ -104,7 +105,7 @@ eq("remove: crediting or saving a removed employee brings them back", [(await po
 const before = (await q("select last_used_at from api_keys where revoked_at is null"))[0].last_used_at;
 eq("guards: using the key stamps its last use", [before !== null, (await call("GET", "/v1/org/api-key", { token: acme.session_token })).json.key.last_used_at !== null], [true, true]);
 eq("guards: a key is rate limited per minute", await (async () => { let last = 0; for (let n = 0; n < 125; n++) last = (await post(KEY, "/employees", { employees: [] })).status; return last; })(), 429);
-await q("delete from throttles");
+memoryLimiter.windows.clear();
 eq("guards: revoking the key stops it; a suspended organization's key stops too", [(await call("DELETE", "/v1/org/api-key", { token: acme.session_token })).status, (await post(KEY, "/employees", { employees: [E("Q1")] })).status], [204, 401]);
 const k3 = (await call("POST", "/v1/org/api-key", { token: acme.session_token })).json.token;
 await q("update accounts set status='suspended' where id=$1", [acme.account_id]);

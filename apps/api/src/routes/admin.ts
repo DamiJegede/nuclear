@@ -603,7 +603,7 @@ const userTxQuery = z.object({
 admin.get("/users/:id", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
-  const u = await userDetail(c.get("sql"), id.data);
+  const u = await userDetail(c.get("sql"), id.data, c.get("limiter"));
   return u ? c.json({ user: u }) : c.json({ error: "not_found" }, 404);
 });
 for (const [sub, fn, key] of [["wallets", userWallets, "wallets"], ["tags", userTags, "tags"], ["devices", userDevices, "devices"], ["funding", userFunding, "funding"], ["orders", userOrders, "orders"]] as const) {
@@ -648,7 +648,7 @@ admin.post("/users/:id/unlock-login", async (c) => {
   if (!id.success) return c.json({ error: "not_found" }, 404);
   const u = await userDetail(c.get("sql"), id.data);
   if (!u) return c.json({ error: "not_found" }, 404);
-  if (u.email) await resetThrottle(c.get("sql"), `login:${u.email.toLowerCase()}`);
+  if (u.email) await resetThrottle(c.get("limiter"), `login:${u.email.toLowerCase()}`);
   await adminLog(c, "user.login_unlocked", { type: "user", id: id.data, label: u.name });
   return c.body(null, 204);
 });
