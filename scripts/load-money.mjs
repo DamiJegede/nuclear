@@ -11,7 +11,7 @@ const URL = process.env.LOAD_DB_URL;
 if (!URL) { console.error("set LOAD_DB_URL"); process.exit(2); }
 const SECONDS = arg("seconds", 30), WORKERS = arg("workers", 100), HOT = arg("hot", 0.2), SENDS = arg("sends", 0.1);
 const CONSUMERS = arg("consumers", 3000), MERCHANTS = arg("merchants", 30);
-const sql = postgres(URL.split("?")[0], { ssl: "require", max: WORKERS + 4, prepare: false, idle_timeout: 20, connect_timeout: 30, onnotice: () => {} });
+const sql = postgres(URL.split("?")[0], { ssl: /127\.0\.0\.1|localhost/.test(URL) ? false : "require", max: WORKERS + 4, prepare: false, idle_timeout: 20, connect_timeout: 30, onnotice: () => {} });
 
 if (process.argv.includes("--seed")) {
   console.log(`seeding ${CONSUMERS} consumers and ${MERCHANTS} merchants...`);

@@ -9,20 +9,20 @@ Last updated 2026-10-23.
 A closed-loop payment platform: NFC bands and cards, Apple and Google passes, customer wallets, merchant terminals (the Orb), a store, and AI-agent wallets.
 Cloudflare Workers (TypeScript, Hono) → Hyperdrive → PlanetScale PostgreSQL 18.
 
-## Scheme v2 (built 2026-10-23, not deployed)
+## Scheme v2 (live since 2026-10-23)
 
-The money core, the schema and the sessions were rebuilt on a local Postgres following [SCHEME-V2.md](SCHEME-V2.md) (its Status section lists what is done and what differs). In short: `transactions` is immutable and wallet to wallet (the ledger, `checkout_items`, `wallet_allocations`, `throttles`, `account_tokens`, `api_keys`, `benefit_programs` and `orbs` tables are gone; `refunds` is new and `settlements` is one row per merchant per day); system wallets Nuclear Bank and Nuclear Shop and a per-organization escrow wallet; send, pay, refund and purchase are SQL functions (one database call); counters roll themselves; sessions are signed 90-day tokens with `POST /v1/auth/refresh`; reconciliation runs over `account_effects`. 38 API suites pass, the portal suites pass. **Load tested** on a temporary PS-80 branch (about 600 payments/s per vCPU; one merchant's balance row serializes at about 200/s; details in SCHEME-V2.md). **Still to do: the cutover** (drop and rebuild nuclear-dev, deploy the API and all three portals together, re-seed the demo data). Everything below under "Live today" describes the deployed v1 system until then.
+The money core, the schema and the sessions were rebuilt on a local Postgres following [SCHEME-V2.md](SCHEME-V2.md) (its Status section lists what is done and what differs). In short: `transactions` is immutable and wallet to wallet (the ledger, `checkout_items`, `wallet_allocations`, `throttles`, `account_tokens`, `api_keys`, `benefit_programs` and `orbs` tables are gone; `refunds` is new and `settlements` is one row per merchant per day); system wallets Nuclear Bank and Nuclear Shop and a per-organization escrow wallet; send, pay, refund and purchase are SQL functions (one database call); counters roll themselves; sessions are signed 90-day tokens with `POST /v1/auth/refresh`; reconciliation runs over `account_effects`. 38 API suites pass, the portal suites pass. **Cutover done 2026-10-23**: nuclear-dev was rebuilt and the API and all three portals deployed together. Load tests: a temporary PS-80 branch (about 600 payments/s per vCPU; one merchant's balance row serializes at about 200/s; details in SCHEME-V2.md); a simulated week (6M transactions, 10k users, 10 tps, eight green nightly checks) on a local database; and a 14-day, 100k-user run on a temporary M-320 branch (results below once recorded). `seed-demo` has not been re-run on the new database.
 
 ## Live today (all deployed)
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `5fcbd48e` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `f6179eec` |
-| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `cde10bac` |
-| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `e410ac74` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `f5b269e4` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `636fd50b` |
+| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `6c98b572` |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 36 tables, 41 migrations applied | |
+| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (2 migrations) | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
 Quality: 38 API test suites (about 1,560 checks, run on a throwaway local Postgres), 167 admin-portal tests, 30 merchant-portal tests, 52 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
