@@ -63,6 +63,8 @@ export type Reconciliation = {
     benefits_match_ledger: boolean;
     /** Every consumer account's opening value and added-today counter on the balances row equal what the transactions say for today. */
     daily_caps_match_ledger: boolean;
+    /** Every wallet's spending counter for today equals the sum of today's completed sends, payments and purchases from it. */
+    wallet_counters_match: boolean;
   };
 
 /** What the admin Overview shows: the live numbers and the last reconciliation, each with its own time. */
@@ -110,6 +112,14 @@ export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
      where a.type = 'C' and b.opening_day = (now() at time zone ${PROGRAM_TZ})::date
        and (b.ordinary_opening <> coalesce(o.v, 0) or b.added_today <> coalesce(d.v, 0))`;
 
+  const [counters] = await sql<{ n: number }[]>`
+    with start as (select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t)
+    select count(*)::int as n from wallets w, start
+     where w.spent_day = program_today()
+       and w.spent_today <> coalesce((select sum(t.amount) from transactions t
+                                       where t.from_wallet_id = w.id and t.status = 'completed' and t.created_at >= start.t
+                                         and t.type in ('send', 'pay', 'purchase', 'allocate')), 0)`;
+
   const [over] = await sql<{ n: number }[]>`
     select count(*)::int as n from (
       select w.account_id from wallets w join balances b on b.account_id = w.account_id
@@ -128,8 +138,12 @@ export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
     escrow_matches_employees: Number(eff!.escrow_off) === 0,
     benefits_match_ledger: Number(eff!.wallets_off) === 0,
     daily_caps_match_ledger: caps!.n === 0,
+    wallet_counters_match: counters!.n === 0,
   };
 }
+
+/** Every check passed (the headline of the Overview and of the nightly job). */
+export const reconciliationOk = (r: Reconciliation) => Object.entries(r).every(([k, v]) => typeof v !== "boolean" || v);
 
 /** The live numbers: counts and sums over completed transactions. Still scans the transactions table, so callers cache it (statsCache.ts). */
 export async function liveStats(sql: Sql): Promise<LiveStats> {
@@ -234,5 +248,27 @@ export async function liveStats(sql: Sql): Promise<LiveStats> {
         agents: agents.today,
       },
     },
+  };
+}
+
+/**
+ * The full check of one account (level R3 of docs/SCHEME-V2.md, section 8): its balance and credit against everything its transactions did to it,
+ * and each of its Benefits or escrow wallets against theirs. Reads that one account's effects only, through the wallet indexes. Nothing is changed:
+ * a mismatch is fixed by an `adjustment` transaction.
+ */
+export async function accountCheck(sql: Sql, accountId: string) {
+  const [a] = await sql<{ balance: bigint; credit_spent: bigint; effects: bigint; credit_effects: bigint }[]>`
+    select b.balance, b.credit_spent, coalesce(sum(e.delta), 0)::bigint as effects, coalesce(sum(e.credit_delta), 0)::bigint as credit_effects
+      from balances b left join account_effects e on e.account_id = b.account_id
+     where b.account_id = ${accountId} group by b.balance, b.credit_spent`;
+  if (!a) return null;
+  const wallets = await sql<{ id: string; type: string; balance: bigint; effects: bigint }[]>`
+    select w.id, w.type, w.balance, coalesce(sum(e.wdelta), 0)::bigint as effects
+      from wallets w left join account_effects e on e.wallet_id = w.id
+     where w.account_id = ${accountId} and w.type in ('benefits', 'escrow') group by w.id, w.type, w.balance order by w.id`;
+  return {
+    balance: Number(a.balance), effects: Number(a.effects), balance_matches: a.balance === a.effects,
+    credit_spent: Number(a.credit_spent), credit_effects: Number(a.credit_effects), credit_matches: a.credit_spent === a.credit_effects,
+    wallets: wallets.map((w) => ({ id: w.id, type: w.type, balance: Number(w.balance), effects: Number(w.effects), matches: w.balance === w.effects })),
   };
 }

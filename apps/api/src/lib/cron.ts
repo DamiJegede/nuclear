@@ -7,6 +7,7 @@ import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
 import { refreshReconciliation } from "./statsCache";
+import { reconciliationOk } from "./stats";
 import { catchUpSnapshots, addDays, saveReconciliation } from "./snapshots";
 import { pruneCounters } from "./tracker";
 
@@ -39,7 +40,7 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const snapshots = await catchUpSnapshots(sql, yesterday).catch((err) => (console.error("snapshot failed", err), [] as string[]));
     const reconciled = await refreshReconciliation(env, sql, 0).then((s) => s.reconciliation, (err) => (console.error("reconciliation failed", err), null));
     if (reconciled) {
-      const ok = reconciled.balances_match_ledger && reconciled.credit_matches_ledger && reconciled.ledger_balanced;
+      const ok = reconciliationOk(reconciled);
       await saveReconciliation(sql, yesterday, reconciled, ok).catch((err) => console.error("saving reconciliation failed", err));
     }
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.

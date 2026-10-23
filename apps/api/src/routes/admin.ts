@@ -23,6 +23,7 @@ import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "
 import { decodeTimeCursor, pageLimit } from "../lib/paging";
 import { dropDay, probeCounters, readCounters, shardCount, track } from "../lib/tracker";
 import { readStats, refreshLive, refreshReconciliation } from "../lib/statsCache";
+import { accountCheck, reconciliationOk } from "../lib/stats";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
   ACCESS_TOKEN_LENGTH, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
@@ -423,10 +424,19 @@ admin.delete("/stats/loadtest", async (c) => {
   await dropDay(probeEnv(c, Number(c.req.query("shards")) || 64), "loadtest");
   return c.body(null, 204);
 });
+// One account's full check (users, merchants and organizations pages): its balance and credit against all its transactions. Read only.
+for (const kind of ["users", "merchants", "organizations"]) {
+  admin.get(`/${kind}/:id/check`, async (c) => {
+    const id = merchantId.safeParse(c.req.param("id"));
+    if (!id.success) return c.json({ error: "not_found" }, 404);
+    const r = await accountCheck(c.get("sql"), id.data);
+    return r ? c.json({ check: r }) : c.json({ error: "not_found" }, 404);
+  });
+}
 admin.post("/stats/refresh", async (c) => c.json(await refreshLive(c.env, c.get("sql"))));
 admin.post("/stats/reconcile", async (c) => {
   const out = await refreshReconciliation(c.env, c.get("sql"));
-  await adminLog(c, "stats.reconciled", undefined, { ok: out.reconciliation.balances_match_ledger && out.reconciliation.credit_matches_ledger && out.reconciliation.ledger_balanced });
+  await adminLog(c, "stats.reconciled", undefined, { ok: reconciliationOk(out.reconciliation) });
   return c.json(out);
 });
 

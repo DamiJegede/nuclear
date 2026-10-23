@@ -63,6 +63,7 @@ shop.post("/orders", rateLimit("shop-order", RULES.shopOrder, byAccount), async 
 
   const out = await purchase(c.get("sql"), {
     accountId: c.get("auth").accountId,
+    deviceId: c.get("auth").deviceId,
     walletId: body.data.wallet_id ?? null,
     kind: body.data.item_id ? "shop" : "tag",
     productId: (body.data.item_id ?? body.data.model_id)!,

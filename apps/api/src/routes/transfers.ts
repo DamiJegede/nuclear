@@ -42,9 +42,10 @@ transfers.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("au
   const parsed = body.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.flatten() }, 400);
 
-  const { accountId, walletId } = c.get("auth");
+  const { accountId, walletId, deviceId } = c.get("auth");
   const out = await sendFunds(c.get("sql"), {
     actorAccountId: accountId,
+    deviceId,
     authWalletId: walletId,
     fromWalletId: parsed.data.from_wallet_id ?? null,
     toWalletId: parsed.data.to_wallet_id,

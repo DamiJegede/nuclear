@@ -120,6 +120,48 @@ export async function verifyTerminalJwt(
   }
 }
 
+// Consumer and delegated-wallet session tokens: signed, stateless, 90 days. The signature and expiry are all a hot request checks; the
+// devices row (push token, the list of a person's devices, revocation, the rolling expiry) is read only where it matters (docs/SCHEME-V2.md, section 7).
+const SESSION_AUD = "nuclear:session";
+export const SESSION_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+export type SessionClaims = {
+  /** The account. */
+  sub: string;
+  /** The device row this session belongs to. */
+  sid: string;
+  /** owner (the account holder) or wallet (a delegated device). */
+  kind: "owner" | "wallet";
+  /** The wallet of a delegated session. */
+  wid: string | null;
+  /** The account type (C customer, B business, O organization), so a request can tell whether it may skip the database. */
+  typ: string;
+  exp: number;
+};
+
+export async function signSession(secret: string, c: { accountId: string; deviceId: string; walletId: string | null; accountType: string }): Promise<{ token: string; expiresAt: Date }> {
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + SESSION_TTL_SECONDS;
+  const token = await sign(
+    { iss: LINK_ISS, aud: SESSION_AUD, sub: c.accountId, sid: c.deviceId, kind: c.walletId ? "wallet" : "owner", wid: c.walletId, typ: c.accountType, jti: randomBytes(9).toString("base64url"), iat, exp },
+    secret,
+    "HS256",
+  );
+  return { token, expiresAt: new Date(exp * 1000) };
+}
+
+export async function verifySession(secret: string, token: string): Promise<SessionClaims | null> {
+  try {
+    const p = (await verify(token, secret, "HS256")) as Record<string, unknown>;
+    if (p.iss !== LINK_ISS || p.aud !== SESSION_AUD) return null;
+    if (typeof p.sub !== "string" || typeof p.sid !== "string" || typeof p.typ !== "string" || typeof p.exp !== "number") return null;
+    if (p.kind !== "owner" && p.kind !== "wallet") return null;
+    return { sub: p.sub, sid: p.sid, kind: p.kind, wid: typeof p.wid === "string" ? p.wid : null, typ: p.typ, exp: p.exp };
+  } catch {
+    return null;
+  }
+}
+
 // MFA challenge: proof that the password step succeeded, valid for five minutes and good only for the
 // second step. It is not a session: no endpoint accepts it as one.
 const MFA_AUD = "nuclear:admin-mfa";

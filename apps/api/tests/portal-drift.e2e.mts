@@ -34,7 +34,7 @@ const api = createApi(TOKEN, BASE);
 const stats = await api.stats();
 const expected = shape({
   as_of: "", reconciliation_checked_at: "", reconciliation_stale: false, scheme: { balance: 0, consumer_balance: 0, merchant_balance: 0, organization_balance: 0, merchant_debt: 0, pending: 0, credit_outstanding: 0, credit_limit: 0 },
-  reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true },
+  reconciliation: { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true, wallet_counters_match: true },
   users: { total: 0, active: 0, suspended: 0, closed: 0, new_today: 0, new_7d: 0, new_30d: 0, wallets: 0 },
   merchants: { total: 0, active: 0, transacting: 0, terminals: 0 },
   payments: { sent: { count: 0, volume: 0 }, tapped: { count: 0, volume: 0 }, in_app: { count: 0, volume: 0 }, agents: { count: 0, volume: 0 }, merchant_payments: { count: 0, volume: 0 }, total: { count: 0, volume: 0 }, refunds: { count: 0, volume: 0 }, loaded: { count: 0, volume: 0 }, today: { sent: { count: 0, volume: 0 }, tapped: { count: 0, volume: 0 }, in_app: { count: 0, volume: 0 }, agents: { count: 0, volume: 0 } } },

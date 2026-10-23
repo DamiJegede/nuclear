@@ -61,7 +61,7 @@ function paymentJson(
 type Answer =
   | { kind: "ok" | "declined"; replayed: boolean; row: Record<string, unknown>; payer?: { display_name: string; photo: string | null } | null; merchant?: { account_id: string; display_name: string } }
   | { kind: "conflict" }
-  | { kind: "error"; status: 400 | 404 | 409 | 422; error: string };
+  | { kind: "error"; status: 400 | 401 | 404 | 409 | 422; error: string };
 
 function respondAnswer(c: any, a: Answer) {
   if (a.kind === "error") return c.json({ error: a.error }, a.status);
@@ -107,12 +107,12 @@ payments.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("aut
   const body = confirmBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
   const b = body.data;
-  const { accountId, walletId } = c.get("auth");
+  const { accountId, walletId, deviceId } = c.get("auth");
 
   // One database call (app_pay_app): the payer wallet (a delegated device pays from its own wallet; the owner picks one, default wallet),
   // the merchant (the checkout's owner, or the terminal's), the plan, and the payment itself.
   const a = await callMoney<Answer>(c.get("sql"), "app_pay_app", {
-    payer_account: accountId, auth_wallet: walletId, from_wallet: b.from_wallet_id ?? null, checkout_id: b.checkout_id ?? null,
+    payer_account: accountId, device: deviceId, auth_wallet: walletId, from_wallet: b.from_wallet_id ?? null, checkout_id: b.checkout_id ?? null,
     terminal_id: b.terminal_id ?? null, amount: b.amount === undefined ? null : Number(b.amount), items: b.items ?? null,
     reference: b.reference ?? null, key,
   });

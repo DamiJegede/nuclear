@@ -9,38 +9,11 @@ import { amount, n } from "../lib/money";
 import { decryptTagUrl } from "../lib/tagproof";
 import { consumeCounter, isFresh, loadTag } from "../lib/tap";
 import { requireOwner, requireSession } from "../session";
+import { TAG_VIEW as VIEW, tagJson as viewJson, type TagView } from "../lib/views";
 
 export const tags = new Hono<AppContext>();
 tags.use("*", requireSession);
 
-
-type TagView = {
-  id: string;
-  label: string | null;
-  wallet_id: string | null;
-  locked: boolean;
-  transaction_limit: bigint | null;
-  last_read_at: Date | null;
-  created_at: Date;
-  model_id: string;
-  model_type: string;
-  model_name: string;
-  model_photo: string | null;
-};
-
-const VIEW = `t.id, t.label, t.wallet_id, t.locked, t.transaction_limit, t.last_read_at, t.created_at,
-  m.id as model_id, m.type as model_type, m.name as model_name, m.photo as model_photo`;
-
-const viewJson = (t: TagView) => ({
-  id: t.id,
-  label: t.label,
-  wallet_id: t.wallet_id,
-  locked: t.locked,
-  transaction_limit: n(t.transaction_limit),
-  last_read_at: t.last_read_at,
-  created_at: t.created_at,
-  model: { id: t.model_id, type: t.model_type, name: t.model_name, photo: imageUrl(t.model_photo) },
-});
 
 // A tag is managed through its owning wallet's account: owners see every tag on their account,
 // a delegated device only its own wallet's. Unassigned tags have no owner and cannot be managed.

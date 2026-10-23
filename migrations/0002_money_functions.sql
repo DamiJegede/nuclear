@@ -40,7 +40,7 @@ CREATE FUNCTION public.cap_after(acct uuid, bal bigint, opening bigint, opening_
          CASE WHEN opening_day < public.program_today() THEN 0 ELSE added END + add_amount
 $$;
 
--- Wallet to wallet send of funded balance (never credit). p: actor, auth_wallet?, from_wallet?, to_wallet, amount, key, cap.
+-- Wallet to wallet send of funded balance (never credit). p: actor, device?, auth_wallet?, from_wallet?, to_wallet, amount, key, cap.
 CREATE FUNCTION public.app_send(p jsonb) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
@@ -57,6 +57,11 @@ DECLARE
   v_em bigint; v_funds bigint; v_code text;
   v_id uuid; v_room bigint; v_open bigint; v_added bigint;
 BEGIN
+  -- The session's device must still be live (a revoked or expired device cannot move money even though its signed token still reads).
+  IF nullif(p ->> 'device', '') IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.devices WHERE id = (p ->> 'device')::uuid AND revoked_at IS NULL AND session_expires_at > now()) THEN
+    RETURN public.app_err('unauthorized', 401);
+  END IF;
   IF v_auth IS NOT NULL AND nullif(p ->> 'from_wallet', '') IS NOT NULL AND (p ->> 'from_wallet')::uuid <> v_auth THEN
     RETURN public.app_err('wallet_not_found', 404);
   END IF;
@@ -382,6 +387,11 @@ DECLARE
   v_auth uuid := nullif(p ->> 'auth_wallet', '')::uuid;
   v_want uuid; v_wallet uuid; v_merchant uuid; v_terminal uuid; m record; v_key text; v_plan jsonb; v_out jsonb;
 BEGIN
+  -- The session's device must still be live (a revoked or expired device cannot move money even though its signed token still reads).
+  IF nullif(p ->> 'device', '') IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.devices WHERE id = (p ->> 'device')::uuid AND revoked_at IS NULL AND session_expires_at > now()) THEN
+    RETURN public.app_err('unauthorized', 401);
+  END IF;
   IF v_auth IS NOT NULL AND nullif(p ->> 'from_wallet', '') IS NOT NULL AND (p ->> 'from_wallet')::uuid <> v_auth THEN
     RETURN public.app_err('wallet_not_found', 404);
   END IF;
@@ -657,6 +667,11 @@ DECLARE
   m record; v_name text; v_price bigint; v_currency text; v_model_type text; v_digital boolean := false;
   v_total bigint; v_funds bigint; v_code text; v_tx uuid; v_order public.orders; v_claimed uuid;
 BEGIN
+  -- The session's device must still be live (a revoked or expired device cannot move money even though its signed token still reads).
+  IF nullif(p ->> 'device', '') IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.devices WHERE id = (p ->> 'device')::uuid AND revoked_at IS NULL AND session_expires_at > now()) THEN
+    RETURN public.app_err('unauthorized', 401);
+  END IF;
   IF nullif(p ->> 'wallet', '') IS NOT NULL THEN
     SELECT id, type INTO v_wallet, v_wtype FROM public.wallets WHERE id = (p ->> 'wallet')::uuid AND account_id = v_acct;
   ELSE

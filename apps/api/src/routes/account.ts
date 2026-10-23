@@ -13,25 +13,15 @@ import { imageUrl } from "../lib/images";
 import { saveProfilePhoto } from "../lib/profilePhoto";
 import { MAX_DOCUMENTS, MAX_UPLOAD_BYTES, putUpload, uploadKind } from "../lib/uploads";
 import { customerLog } from "../lib/audit";
+import { accountView, balanceView } from "../lib/views";
 
 export const account = new Hono<AppContext>();
 account.use("*", requireSession);
 
 // Primary-account profile. Handle is NULL until the owner sets it.
 account.get("/account", requireOwner, async (c) => {
-  const sql = c.get("sql");
-  const [a] = await sql<
-    { id: string; type: string; handle: string | null; name: string; email: string | null; email_verified_at: Date | null; phone: string | null; photo: string | null; bio: string | null; tier: string; status: string }[]
-  >`select id, type, handle, name, email, email_verified_at, phone, photo, bio, tier, status from accounts where id = ${c.get("auth").accountId}`;
-  if (!a) return c.json({ error: "not_found" }, 404);
-  // A declined business is told why (the reason an admin wrote when declining).
-  const [d] = a.status === "declined"
-    ? await sql<{ reason: string | null; at: Date }[]>`select details->>'reason' as reason, created_at as at from logs where action = 'merchant.declined' and target_id = ${a.id} order by created_at desc, id desc limit 1`
-    : [];
-  return c.json({
-    account_id: a.id, type: a.type, handle: a.handle, name: a.name, email: a.email, email_verified: a.email_verified_at !== null, phone: a.phone, photo: imageUrl(a.photo), bio: a.bio, tier: a.tier, status: a.status,
-    ...(d ? { decline: { reason: d.reason, at: d.at } } : {}),
-  });
+  const view = await accountView(c.get("sql"), c.get("auth").accountId);
+  return view ? c.json(view) : c.json({ error: "not_found" }, 404);
 });
 
 // The account's picture (a person's, or a business's logo), uploaded after the account exists: any PNG, JPEG or WebP, cropped to
@@ -108,58 +98,9 @@ account.put("/account/handle", requireOwner, async (c) => {
   }
 });
 
-type BalanceRow = {
-  balance: bigint;
-  balance_pending: bigint;
-  credit_limit: bigint;
-  credit_spent: bigint;
-};
-const pos = (v: bigint) => (v > 0n ? v : 0n);
-
-// Account-wide funds. The total includes Benefits wallets (employer-funded, bound to one employer each); the rest is "ordinary". Funds set
-// aside for specific wallets (earmarks and Benefits) are not available to the other wallets. Delegated sessions see availability, not credit
-// detail; a session on a Benefits wallet sees that wallet's balance and cannot send.
 account.get("/balance", async (c) => {
-  const { accountId, walletId } = c.get("auth");
-  const sql = c.get("sql");
-  const [b] = await sql<BalanceRow[]>`
-    select balance, balance_pending, credit_limit, credit_spent from balances
-     where account_id = ${accountId}`;
-  if (!b) return c.json({ error: "not_found" }, 404);
-
-  const [e] = await sql<{ total: bigint; benefits: bigint }[]>`
-    select coalesce(sum(balance), 0)::bigint as total,
-           coalesce(sum(balance) filter (where type = 'benefits'), 0)::bigint as benefits
-      from wallets where account_id = ${accountId} and balance is not null`;
-  const [mine] = walletId
-    ? await sql<{ balance: bigint | null; type: string }[]>`select balance, type from wallets where id = ${walletId}`
-    : [undefined];
-  const restricted = b.balance < 0n || b.credit_spent > b.credit_limit;
-  const creditAvailable = pos(b.credit_limit - b.credit_spent);
-  const shared = pos(b.balance - e!.total);
-  const earmarkedWallet = mine?.balance !== null && mine?.balance !== undefined;
-  const benefitsWallet = mine?.type === "benefits";
-  const availableToSend = restricted || benefitsWallet ? 0n : earmarkedWallet ? mine!.balance! : shared;
-  const availableToPay = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared + creditAvailable;
-  const common = {
-    available_to_send: n(availableToSend),
-    available_to_pay: n(availableToPay),
-    restricted,
-  };
-  if (walletId !== null) return c.json(common);
-  const ordinaryEarmarked = e!.total - e!.benefits;
-  return c.json({
-    ...common,
-    balance: n(b.balance),                              // total funded: ordinary + Benefits
-    benefits: n(e!.benefits),
-    ordinary: n(b.balance - e!.benefits),
-    ordinary_shared_available: n(shared),               // what unearmarked wallets can draw on
-    earmarked: n(ordinaryEarmarked),                    // ordinary money set aside for specific wallets (Benefits is reported separately)
-    daily_headroom: n(await dailyHeadroom(sql, accountId, dailyCap(c.env))),
-    balance_pending: n(b.balance_pending),
-    credit_limit: n(b.credit_limit),
-    credit_spent: n(b.credit_spent),
-  });
+  const view = await balanceView(c.get("sql"), c.env, c.get("auth"));
+  return view ? c.json(view) : c.json({ error: "not_found" }, 404);
 });
 
 // Find a recipient's default wallet by exact email. Open product decision (recipient lookup);

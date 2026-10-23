@@ -337,12 +337,12 @@ CREATE TABLE public.devices (
     wallet_id uuid,
     platform text,
     push_token text,
-    session_token_hash text,
+    redeemed_at timestamp with time zone,
     session_expires_at timestamp with time zone,
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_accessed_at timestamp with time zone,
-    CONSTRAINT devices_check CHECK (((session_token_hash IS NULL) = (session_expires_at IS NULL))),
+    CONSTRAINT devices_check CHECK (((redeemed_at IS NULL) = (session_expires_at IS NULL))),
     CONSTRAINT devices_platform_check CHECK ((platform = ANY (ARRAY['ios'::text, 'android'::text, 'web'::text])))
 );
 
@@ -894,12 +894,6 @@ ALTER TABLE ONLY public.categories
 ALTER TABLE ONLY public.devices
     ADD CONSTRAINT devices_pkey PRIMARY KEY (id);
 
---
--- Name: devices devices_session_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.devices
-    ADD CONSTRAINT devices_session_token_hash_key UNIQUE (session_token_hash);
 
 --
 -- Name: employees employees_org_account_id_employee_id_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -1166,7 +1160,7 @@ CREATE INDEX devices_revoked_idx ON public.devices USING btree (revoked_at) WHER
 -- Name: devices_unredeemed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX devices_unredeemed_idx ON public.devices USING btree (created_at) WHERE (session_token_hash IS NULL);
+CREATE INDEX devices_unredeemed_idx ON public.devices USING btree (created_at) WHERE (redeemed_at IS NULL);
 
 --
 -- Name: devices_wallet_id_idx; Type: INDEX; Schema: public; Owner: -

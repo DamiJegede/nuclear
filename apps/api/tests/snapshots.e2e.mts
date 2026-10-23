@@ -142,6 +142,7 @@ eq("missing days are written in order", made, [today, addDays(today, 1), addDays
 // ---- the nightly job: snapshot, ledger checks recorded on the day, old counters pruned
 await wipe("delete from snapshots where snapshot_date > $1::date", [y]);
 await fund(payer, 100, "f9");
+await q("update wallets set spent_day = spent_day - 1"); await q("update balances set opening_day = opening_day - 1");   // the rows of this suite were moved between days by hand: leave today's counters out of the books check
 const night = Date.parse(`${addDays(today, 1)}T05:00:00Z`);
 const job: any = await dailyJobs(night, env);
 const [rowToday] = await q("select reconciled, reconciliation is not null as has from snapshots where snapshot_date = $1::date", [today]);

@@ -10,58 +10,13 @@ import { amount as amountPositive, amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { setWalletBalance } from "../lib/walletFunds";
 import { moveFunds } from "../lib/benefits";
+import { WALLET_COLS as COLS, walletJson, type WalletRow } from "../lib/views";
 import { dailyCap } from "../lib/config";
 
 export const wallets = new Hono<AppContext>();
 wallets.use("*", requireSession);
 
 const MAX_WALLETS_PER_ACCOUNT = 25;
-
-type WalletRow = {
-  id: string;
-  account_id: string;
-  display_name: string;
-  photo: string | null;
-  type: string;
-  daily_limit: bigint | null;
-  spent_today: bigint;
-  allow_pay: boolean;
-  allow_send: boolean;
-  status: string;
-  balance: bigint | null;
-  key_hint: string | null;
-  key_last_used_at: Date | null;
-  created_at: Date;
-  org_account_id: string | null;
-  organization_name: string | null;
-};
-
-const COLS = `id, account_id, display_name, photo, type, daily_limit, (case when spent_day = program_today() then spent_today else 0 end) as spent_today,
-  allow_pay, allow_send, status, balance, key_hint, key_last_used_at, created_at,
-  org_account_id, (select o.name from accounts o where o.id = wallets.org_account_id) as organization_name`;
-
-export function walletJson(w: WalletRow) {
-  return {
-    id: w.id,
-    display_name: w.display_name,
-    photo: imageUrl(w.photo),
-    type: w.type,
-    daily_limit: n(w.daily_limit),
-    spent_today: n(w.spent_today),
-    remaining_today: w.daily_limit === null ? null : n(w.daily_limit > w.spent_today ? w.daily_limit - w.spent_today : 0n),
-    allow_pay: w.allow_pay,
-    allow_send: w.allow_send,
-    status: w.status,
-    // Earmarked funds: null = spends from the account's shared funds; a number = a hard spending limit.
-    balance: n(w.balance),
-    earmarked: w.balance !== null,
-    // The agent API key, if one exists: never the key itself, only what identifies it.
-    key: w.key_hint === null ? null : { hint: w.key_hint, last_used_at: w.key_last_used_at },
-    created_at: w.created_at,
-    // A Benefits wallet: the employer it is bound to for good. Its balance is real funded money that only pays merchants or moves to another wallet of this account.
-    organization: w.org_account_id ? { id: w.org_account_id, name: w.organization_name } : null,
-  };
-}
 
 // List: owners see every wallet on the account; a delegated session sees only its own.
 wallets.get("/", async (c) => {

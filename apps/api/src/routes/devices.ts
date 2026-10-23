@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
-import { newSessionToken, verifyWalletLink } from "../crypto";
+import { signSession, verifyWalletLink } from "../crypto";
 import { requireDeviceSession, requireOwner } from "../session";
 
 export const devices = new Hono<AppContext>();
@@ -25,13 +25,12 @@ devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => 
   const claims = await verifyWalletLink(c.env.JWT_SECRET, body.data.token);
   if (!claims) return c.json({ error: "invalid_link" }, 400);
 
-  const { token, hash } = newSessionToken();
   const sql = c.get("sql");
   // Single-use: conditional update only while unredeemed + unrevoked, owner/wallet matching the
   // JWT, and the account/wallet still active.
   const [dev] = await sql<{ id: string; wallet_id: string; session_expires_at: Date }[]>`
     update devices d
-       set session_token_hash = ${hash},
+       set redeemed_at        = now(),
            session_expires_at = now() + interval '90 days',
            last_accessed_at   = now(),
            platform           = coalesce(${body.data.platform ?? null}, d.platform),
@@ -39,7 +38,7 @@ devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => 
      where d.id = ${claims.device_id}
        and d.account_id = ${claims.account_id}
        and d.wallet_id = ${claims.sub}
-       and d.session_token_hash is null
+       and d.redeemed_at is null
        and d.revoked_at is null
        and exists (select 1
                      from wallets w join accounts a on a.id = w.account_id
@@ -48,35 +47,23 @@ devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => 
     returning d.id, d.wallet_id, d.session_expires_at`;
   if (!dev) return c.json({ error: "invalid_link" }, 400);
 
+  const session = await signSession(c.env.JWT_SECRET, { accountId: claims.account_id, deviceId: dev.id, walletId: dev.wallet_id, accountType: "C" });
   return c.json({
     device_id: dev.id,
     wallet_id: dev.wallet_id,
-    session_token: token,
-    session_expires_at: dev.session_expires_at,
+    session_token: session.token,
+    session_expires_at: session.expiresAt,
   });
 });
 
 devices.use("*", requireDeviceSession);
-
-// Called on every app launch. Rolling 90 days; never shortens expiry or clears revocation.
-devices.post("/session/extend", async (c) => {
-  const { deviceId } = c.get("auth");
-  const [row] = await c.get("sql")<{ session_expires_at: Date }[]>`
-    update devices
-       set session_expires_at = greatest(session_expires_at, now() + interval '90 days'),
-           last_accessed_at   = now()
-     where id = ${deviceId} and revoked_at is null and session_expires_at > now()
-    returning session_expires_at`;
-  if (!row) return c.json({ error: "unauthorized" }, 401);
-  return c.json({ session_expires_at: row.session_expires_at });
-});
 
 // Owner: list registered devices / sessions (never exposes token hashes).
 devices.get("/", requireOwner, async (c) => {
   const { accountId } = c.get("auth");
   const rows = await c.get("sql")`
     select id, wallet_id, platform, created_at, last_accessed_at, session_expires_at, revoked_at,
-           (session_token_hash is not null) as redeemed
+           (redeemed_at is not null) as redeemed
       from devices where account_id = ${accountId}
      order by created_at desc, id desc limit 100`;
   return c.json({ devices: rows });

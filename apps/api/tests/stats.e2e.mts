@@ -92,7 +92,7 @@ eq("merchant payments = tapped + in-app; total = + sent", [s.payments.merchant_p
 eq("refunds count only completed ones (pending excluded)", s.payments.refunds, { count: 1, volume: 300 });
 eq("loaded = completed funding", s.payments.loaded, { count: 2, volume: 15000 });
 eq("today's figures equal lifetime on day one", s.payments.today, { sent: { count: 1, volume: 1500 }, tapped: { count: 2, volume: 2500 }, in_app: { count: 1, volume: 700 }, agents: { count: 0, volume: 0 } });
-eq("books reconcile", s.reconciliation, { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true });
+eq("books reconcile", s.reconciliation, { balances_match_ledger: true, balance_difference: 0, credit_matches_ledger: true, credit_difference: 0, ledger_balanced: true, earmarks_within_balances: true, escrow_matches_employees: true, benefits_match_ledger: true, daily_caps_match_ledger: true, wallet_counters_match: true });
 eq("scheme balance equals total ever loaded (no credit, no fees)", s.scheme.balance, s.payments.loaded.volume);
 
 // older activity is lifetime but not "today"

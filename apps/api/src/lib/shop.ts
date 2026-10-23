@@ -66,6 +66,8 @@ export const orderJson = (o: OrderRow) => ({
 
 export type PurchaseInput = {
   accountId: string;
+  /** The device of the signed session: it must still be live. */
+  deviceId?: string | null;
   walletId: string | null;
   /** What is being bought: a tag model (kind 'tag') or a merchandise item (kind 'shop'). */
   kind: "tag" | "shop";
@@ -79,7 +81,7 @@ export type PurchaseInput = {
 export type PurchaseOutcome =
   | { kind: "ok"; order: OrderRow; replayed: boolean }
   | { kind: "declined"; transactionId: string; code: string; replayed: boolean }
-  | { kind: "error"; status: 404 | 409 | 422; error: string };
+  | { kind: "error"; status: 401 | 404 | 409 | 422; error: string };
 
 /**
  * Buy a tag model or a merchandise item with wallet balance. One DB transaction. Lock order: balances, wallet; the product's stock is
@@ -92,9 +94,9 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
   type Answer =
     | { kind: "ok"; order: Record<string, unknown>; replayed: boolean }
     | { kind: "declined"; transaction_id: string; code: string; replayed: boolean }
-    | { kind: "error"; status: 404 | 409 | 422; error: string };
+    | { kind: "error"; status: 401 | 404 | 409 | 422; error: string };
   const a = await callMoney<Answer>(sql, "app_purchase", {
-    account: i.accountId, wallet: i.walletId, kind: i.kind, product_id: i.productId, quantity: i.quantity, shipping: i.shipping, key: i.idempotencyKey,
+    account: i.accountId, device: i.deviceId ?? null, wallet: i.walletId, kind: i.kind, product_id: i.productId, quantity: i.quantity, shipping: i.shipping, key: i.idempotencyKey,
   });
   if (a.kind === "error") return a;
   if (a.kind === "declined") return { kind: "declined", transactionId: a.transaction_id, code: a.code, replayed: a.replayed };

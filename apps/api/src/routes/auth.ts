@@ -4,7 +4,8 @@ import { customerLog } from "../lib/audit";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
-import { hashPassword, newSessionToken, verifyPassword } from "../crypto";
+import { hashPassword, signSession, verifyPassword } from "../crypto";
+import { accountView, balanceView, listTags, listWallets } from "../lib/views";
 import { requireDeviceSession, requireOwner } from "../session";
 import { issueAccountToken, sendPasswordChanged } from "../lib/accountMail";
 import { verifyAccountLink } from "../crypto";
@@ -40,7 +41,6 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
   const b = parsed.data;
   const sql = c.get("sql");
   const passwordHash = await hashPassword(b.password);
-  const { token, hash } = newSessionToken();
 
   try {
     const result = await sql.begin(async (tx) => {
@@ -60,14 +60,13 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
         await tx`insert into wallets (account_id, display_name, type, balance, allow_pay, allow_send)
                  values (${accountId}, ${`${b.name} escrow`.slice(0, 80)}, 'escrow', 0, false, false)`;
       }
-      const [dev] = await tx<{ id: string; session_expires_at: Date }[]>`
-        insert into devices (account_id, platform, push_token, session_token_hash,
-                             session_expires_at, last_accessed_at)
-        values (${accountId}, ${b.platform ?? null}, ${b.push_token ?? null}, ${hash},
-                now() + interval '90 days', now())
-        returning id, session_expires_at`;
+      const [dev] = await tx<{ id: string }[]>`
+        insert into devices (account_id, platform, push_token, redeemed_at, session_expires_at, last_accessed_at)
+        values (${accountId}, ${b.platform ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
+        returning id`;
       return { accountId, walletId: wallet!.id, device: dev! };
     });
+    const session = await signSession(c.env.JWT_SECRET, { accountId: result.accountId, deviceId: result.device.id, walletId: null, accountType: b.type });
     await customerLog(c, result.accountId, b.email, "customer.signed_up", { type: b.type });
     track(c, { [b.type === "B" ? "merchants_new_n" : b.type === "O" ? "organizations_new_n" : "users_new_n"]: 1 });   // today's running estimate
     // The verification email never holds up or undoes the sign-up.
@@ -77,8 +76,8 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
         account_id: result.accountId,
         default_wallet_id: result.walletId,
         device_id: result.device.id,
-        session_token: token,
-        session_expires_at: result.device.session_expires_at,
+        session_token: session.token,
+        session_expires_at: session.expiresAt,
       },
       201,
     );
@@ -100,8 +99,8 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
   const lock = await peek(c.get("limiter"), failKey, RULES.loginFailures);
   if (lock.blocked) return rateLimited(c, lock.retryAfter);
 
-  const [acct] = await sql<{ id: string; password_hash: string | null; status: string }[]>`
-    select id, password_hash, status from accounts where lower(email) = ${b.email}`;
+  const [acct] = await sql<{ id: string; type: string; password_hash: string | null; status: string }[]>`
+    select id, type, password_hash, status from accounts where lower(email) = ${b.email}`;
   const ok = await verifyPassword(b.password, acct?.password_hash ?? DUMMY_HASH);
   if (!acct || !acct.password_hash || !ok || !["active", "pending", "declined"].includes(acct.status)) {
     const h = await hit(c.get("limiter"), failKey, RULES.loginFailures);
@@ -110,20 +109,45 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
   }
   await reset(c.get("limiter"), failKey);
 
-  const { token, hash } = newSessionToken();
-  const [dev] = await sql<{ id: string; session_expires_at: Date }[]>`
-    insert into devices (account_id, platform, push_token, session_token_hash,
-                         session_expires_at, last_accessed_at)
-    values (${acct.id}, ${b.platform ?? null}, ${b.push_token ?? null}, ${hash},
-            now() + interval '90 days', now())
-    returning id, session_expires_at`;
+  const [dev] = await sql<{ id: string }[]>`
+    insert into devices (account_id, platform, push_token, redeemed_at, session_expires_at, last_accessed_at)
+    values (${acct.id}, ${b.platform ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
+    returning id`;
+  const session = await signSession(c.env.JWT_SECRET, { accountId: acct.id, deviceId: dev!.id, walletId: null, accountType: acct.type });
   await customerLog(c, acct.id, b.email, "customer.login", { device_id: dev!.id });
   return c.json({
     account_id: acct.id,
     device_id: dev!.id,
-    session_token: token,
-    session_expires_at: dev!.session_expires_at,
+    session_token: session.token,
+    session_expires_at: session.expiresAt,
   });
+});
+
+// Called once at app launch (after the biometric check): rolls the device's 90 days forward, hands out a NEW token (the old one is not
+// invalidated: tokens are stateless, so it simply runs to its own expiry) and returns what the first screen needs, in one round trip:
+// the account, the balance summary, the wallets (the Benefits wallets carry their employer) and the tags. A device that launches at least
+// once every 90 days stays signed in; a revoked or expired one, or a suspended account, gets 401 and the app signs the person out.
+auth.post("/refresh", requireDeviceSession, async (c) => {
+  const { accountId, walletId } = c.get("auth");
+  const deviceId = c.get("auth").deviceId!;
+  const sql = c.get("sql");
+  const [row] = await sql<{ type: string }[]>`
+    update devices d
+       set session_expires_at = greatest(d.session_expires_at, now() + interval '90 days'), last_accessed_at = now()
+      from accounts a
+     where d.id = ${deviceId} and d.account_id = ${accountId} and a.id = d.account_id and a.status in ('active', 'pending', 'declined')
+       and d.revoked_at is null and d.session_expires_at > now()
+    returning a.type`;
+  if (!row) return c.json({ error: "unauthorized" }, 401);
+  const session = await signSession(c.env.JWT_SECRET, { accountId, deviceId, walletId, accountType: row.type });
+  const who = { accountId, walletId };
+  const [account, balance, wallets, tags] = await Promise.all([
+    walletId ? null : accountView(sql, accountId),
+    row.type === "C" ? balanceView(sql, c.env, who) : null,
+    row.type === "C" ? listWallets(sql, who) : [],
+    row.type === "C" ? listTags(sql, who) : [],
+  ]);
+  return c.json({ device_id: deviceId, session_token: session.token, session_expires_at: session.expiresAt, account, balance, wallets, tags });
 });
 
 auth.post("/logout", requireDeviceSession, async (c) => {

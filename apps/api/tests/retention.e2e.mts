@@ -44,6 +44,18 @@ await q(`insert into admin_sessions (admin_id, token_hash, expires_at, revoked_a
 const r2 = await purge(sql);
 eq("admin sessions expired or revoked over 30 days ago go; the rest stay", [r2.admin_sessions, (await q("select token_hash from admin_sessions order by 1")).map((x: any) => x.token_hash)], [2, ["s3", "s4"]]);
 
+// ---- declined transactions: the one permitted delete
+const bobS = await sign("Bob", "bob@x.test");
+await adm.unsafe("alter table transactions disable trigger transactions_no_update");
+const wid = (a: any) => a.default_wallet_id;
+for (const [k, days, st, code] of [["old-declined", 92, "declined", "insufficient_balance"], ["young-declined", 10, "declined", "insufficient_balance"], ["old-completed", 92, "completed", null], ["too-old-declined", 120, "declined", "insufficient_balance"]] as const) {
+  await q(`insert into transactions (type, status, status_code, from_wallet_id, to_wallet_id, amount, account_id, idem, created_at) values ('send', $1, $2, $3, $4, 5, $5, $6, ${old(days)})`, [st, code, wid(ada), wid(bobS), ada.account_id, "ret:" + k]);
+}
+await adm.unsafe("alter table transactions enable trigger transactions_no_update");
+const r3 = await purge(sql);
+eq("a declined transaction that just passed 90 days goes; a young declined one, a completed one and one the nightly window missed stay", [r3.declined_transactions, (await q("select substr(idem, 5) k from transactions where idem like 'ret:%' order by 1")).map((x: any) => x.k)], [1, ["old-completed", "too-old-declined", "young-declined"]]);
+eq("a completed transaction cannot be deleted at any age", (await tryq("delete from transactions where idem = 'ret:old-completed'")).includes("immutable"), true);
+
 // ---- a snapshot is final
 const day = "2026-01-10";
 await takeSnapshot(sql, day);

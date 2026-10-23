@@ -26,6 +26,7 @@ export type Stats = {
     escrow_matches_employees: boolean;
     benefits_match_ledger: boolean;
     daily_caps_match_ledger: boolean;
+    wallet_counters_match: boolean;
   };
   /** When the ledger checks above were last computed (they run nightly or on Run Check, not per request). */
   reconciliation_checked_at: string;
