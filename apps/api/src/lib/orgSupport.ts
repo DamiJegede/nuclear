@@ -13,7 +13,7 @@ export async function organizationList(sql: Sql, q: string | null) {
     mode: string | null; chosen: boolean | null; employees: number; claimed: number; held: bigint; runs: number;
   }[]>`
     select a.id, coalesce(b.display_name, a.name) as name, a.email, a.status, a.created_at, (a.email_verified_at is not null) as email_verified,
-           coalesce(bal.balance, 0) as balance, b.program_mode as mode, (b.program_chosen_at is not null) as chosen,
+           shared_funds(a.id) as balance, b.program_mode as mode, (b.program_chosen_at is not null) as chosen,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active')::int as employees,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active' and e.employee_account_id is not null)::int as claimed,
            (select coalesce(sum(e.balance), 0) from employees e where e.org_account_id = a.id and e.employee_account_id is null) as held,
@@ -36,7 +36,7 @@ export async function organizationDetail(sql: Sql, id: string) {
     post_code: string | null; country: string | null; website: string | null;
     mode: string | null; chosen_at: Date | null; cadence: string | null; day_of_month: number | null; weekday: number | null; next_run_date: string | null;
   }[]>`
-    select a.id, a.name, a.handle, a.email, a.email_verified_at, a.phone, a.status, a.created_at, a.photo, a.bio, bal.balance,
+    select a.id, a.name, a.handle, a.email, a.email_verified_at, a.phone, a.status, a.created_at, a.photo, a.bio, shared_funds(a.id) as balance,
            b.legal_name, b.display_name, b.address, b.city, b.state, b.post_code, b.country, b.website,
            b.program_mode as mode, b.program_chosen_at as chosen_at, b.program_cadence as cadence, b.program_day_of_month as day_of_month, b.program_weekday as weekday, b.program_next_run_date::text as next_run_date
       from accounts a

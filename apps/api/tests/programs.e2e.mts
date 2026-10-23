@@ -22,12 +22,12 @@ const call = async (m: string, p: string, o: { body?: unknown; token?: string; k
 };
 const sign = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { type, name, email, password: "correct horse battery" } })).json;
 const reconciled = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation;
-const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
+const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; w uuid; begin
   insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${accountId}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
   insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${accountId}', bank, ${cents}, 'bk-' || gen_random_uuid(), 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${accountId}', '${accountId}', bank, ${cents}, 'completed', 'bk-' || gen_random_uuid(), now()) returning id into tid;
+  select id into w from wallets where account_id = '${accountId}' and type = 'default';
+  insert into transactions (type, status, from_wallet_id, to_wallet_id, amount, funding_id, account_id, idem) values ('fund', 'completed', '00000000-0000-7000-8000-000000000002', w, ${cents}, fid, '${accountId}', 'fund:' || 'bk-' || gen_random_uuid()) returning id into tid;
   update balances set balance = balance + ${cents} where account_id = '${accountId}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', ${cents}), (fid, 'release', 2, '${accountId}', 'funded_balance', 'credit', ${cents});
   update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 
 // ---- schedule arithmetic (dates are program days, YYYY-MM-DD)
@@ -78,7 +78,7 @@ const release = () => q("update businesses set program_last_attempt_at = null");
 const runDay = async (d: string) => { await release(); return runDuePrograms(env, sql, d); };
 await call("PUT", "/v1/org/program", { token: acme.session_token, body: { mode: "fixed", cadence: "monthly", day_of_month: 15 } });
 const due = (await prog()).next_run_date as string;
-const balanceOf = async () => Number((await q("select balance from balances where account_id=$1", [acme.account_id]))[0].balance);
+const balanceOf = async () => Number((await q("select shared_funds($1) as balance", [acme.account_id]))[0].balance);
 eq("scheduler: nothing runs before the payment date", [await runDay(addDays(due, -10)), (await q("select count(*)::int n from benefit_runs where source='schedule'"))[0].n], [{ warned: 0, credited: 0, waiting: 0, missed: 0, skipped: 0 }, 0]);
 const r1 = await runDay(due);
 const run = (await q("select source, status, run_date::text d, row_count, total::int t, sent::int s, held::int h, attempts from benefit_runs where idempotency_key = $1", ["program:" + due]))[0];
@@ -146,7 +146,7 @@ await call("PUT", "/v1/org/program", { token: raceOrg.session_token, body: { mod
 const rdue = (await call("GET", "/v1/org/program", { token: raceOrg.session_token })).json.program.next_run_date as string;
 await release();
 const race = await Promise.all([runDuePrograms(env, sql, rdue), runDuePrograms(env, sql, rdue), runDuePrograms(env, sql, rdue)]);
-eq("scheduler: three simultaneous cron runs pay a due program exactly once", [race.reduce((t, x) => t + x.credited, 0), (await q("select count(*)::int n, coalesce(sum(total),0)::int t from benefit_runs where org_account_id=$1", [raceOrg.account_id]))[0], (await q("select balance::int b from balances where account_id=$1", [raceOrg.account_id]))[0].b], [1, { n: 1, t: 1000 }, 49000]);
+eq("scheduler: three simultaneous cron runs pay a due program exactly once", [race.reduce((t, x) => t + x.credited, 0), (await q("select count(*)::int n, coalesce(sum(total),0)::int t from benefit_runs where org_account_id=$1", [raceOrg.account_id]))[0], (await q("select shared_funds($1)::int b", [raceOrg.account_id]))[0].b], [1, { n: 1, t: 1000 }, 49000]);
 
 // ---- mass edit: one action on many employees, all or nothing
 const bulk = (token: string, body: unknown) => call("POST", "/v1/org/employees/bulk", { token, body });

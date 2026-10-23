@@ -1,6 +1,6 @@
 import { connect } from "../db";
 import type { Env } from "../env";
-import { easternDate, ensureDay } from "./dailyReset";
+import { easternDate } from "./dates";
 import { limiterFor, sweep } from "./throttle";
 import { purge } from "./retention";
 import { remindUnclaimed } from "./orgMail";
@@ -12,10 +12,8 @@ import { pruneCounters } from "./tracker";
 
 /**
  * The daily job. Cloudflare fires it at 04:00 and 05:00 UTC, which brackets midnight in New York in
- * both summer (04:00) and winter (05:00). Neither run decides anything by the clock: each asks for the
- * reset of its own program day, and only the first one on a new day does anything (see ensureDay). If the
- * cron is ever missed, the first money request after midnight does the same reset. Both runs sweep old
- * rate-limit counters.
+ * both summer (04:00) and winter (05:00). Neither run decides anything by the clock: each works on its own program day, and the
+ * jobs claim their day so the second run does nothing new. There is no daily counter reset: counters roll themselves.
  */
 export async function dailyJobs(scheduledTime: number, env: Env) {
   const sql = connect(env);
@@ -26,7 +24,6 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
     await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})
               on conflict (key) do update set value = excluded.value`;
-    const day = await ensureDay(sql, easternDate(new Date(scheduledTime)));
     // The monthly nudge to employees who have not claimed their employer credit (see lib/orgMail.ts); never blocks the reset.
     const reminders = await remindUnclaimed(env, sql).catch((err) => (console.error("reminders failed", err), null));
     // Fixed Benefits programs: credit what is due today (and retry or close what is waiting). Never blocks the reset.
@@ -47,7 +44,7 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     }
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
     await pruneCounters(env, addDays(today, -3)).catch(() => null);
-    return { ...day, swept, reminders, programs, settlement, polled, snapshots, reconciled, purged };
+    return { swept, reminders, programs, settlement, polled, snapshots, reconciled, purged };
   } finally {
     await sql.end();
   }

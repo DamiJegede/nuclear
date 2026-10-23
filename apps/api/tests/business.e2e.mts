@@ -67,19 +67,17 @@ await call("PUT", "/v1/business/bank", { token: B, body: { routing_number: "1100
 eq("replacing it marks the old one removed and the page shows the new one", [(await get("/bank")).json.bank.last4, (await q("select status from bank_accounts where account_id=$1 order by created_at", [biz.account_id])).map((r: any) => r.status), (await call("GET", `/v1/admin/merchants/${biz.account_id}`, { token: OP })).json.merchant.bank.last4], ["7766", ["removed", "active"], "7766"]);
 const bankId = (await q("select bank_account_id id from businesses where account_id=$1", [biz.account_id]))[0].id;
 eq("no payouts yet (the settlement job is not built)", (await get("/payouts")).json.payouts, []);
-await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 123400, 'completed', now(), 'settle-1')", [biz.account_id, bankId]);
-await q("insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 500, 'pending', null, 'settle-2')", [biz.account_id, bankId]);
-await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key) values ('settle', $1, $1, $2, 777, 'completed', now(), 'settle-x')", [other.account_id, (await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1,'SANDBOX','SANDBOX','5678') returning id", [other.account_id]))[0].id]);
+await q("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount, status, resolved_at) values ('2026-10-15', $1, $2, 'credit', 123400, 'settled', now())", [biz.account_id, bankId]);
+await q("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount) values ('2026-10-16', $1, $2, 'debit', 500)", [biz.account_id, bankId]);
+await q("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount, status, resolved_at) values ('2026-10-15', $1, $2, 'credit', 777, 'settled', now())", [other.account_id, (await q("insert into bank_accounts (account_id, routing_number, account_number, last4) values ($1,'SANDBOX','SANDBOX','5678') returning id", [other.account_id]))[0].id]);
 const po = (await get("/payouts")).json.payouts;
 eq("settlements show as payouts (to the bank) and collections (from it), newest first, with the bank's last four; never another business's", [po.map((p: any) => [p.kind, p.amount, p.status, p.bank_last4]), (await call("GET", "/v1/business/payouts", { token: O })).json.payouts.map((p: any) => p.amount)], [[["collection", 500, "pending", "7766"], ["payout", 123400, "completed", "7766"]], [777]]);
-const run = (await q("insert into settlements (cutoff_date, cutoff_at) values ('2026-10-16', now()) returning id"))[0].id;
-await q("insert into transactions (type, from_account_id, to_account_id, to_bank_account_id, amount, status, completed_at, idempotency_key, settlement_id) values ('settle', $1, $1, $2, 100, 'completed', now(), 'settle:2026-10-16', $3)", [biz.account_id, bankId, run]);
 const refuse = async (sqlText: string, params: unknown[] = []) => { try { await q(sqlText, params); return "accepted"; } catch { return "refused"; } };
-eq("settlements: one run per cutoff date; completed needs a time; only settle transactions may point at a run", [
-  await refuse("insert into settlements (cutoff_date, cutoff_at) values ('2026-10-16', now())"),
-  await refuse("insert into settlements (cutoff_date, cutoff_at, status) values ('2026-10-15', now(), 'completed')"),
-  await refuse("insert into settlements (cutoff_date, cutoff_at, payout_total) values ('2026-10-14', now(), -1)"),
-  (await q("select count(*)::int n from transactions where settlement_id = $1", [run]))[0].n], ["refused", "refused", "refused", 1]);
+eq("settlements: one row per merchant per day; resolved exactly when no longer submitted; positive amount", [
+  await refuse("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount) values ('2026-10-16', $1, $2, 'credit', 5)", [biz.account_id, bankId]),
+  await refuse("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount, status) values ('2026-10-14', $1, $2, 'credit', 5, 'settled')", [biz.account_id, bankId]),
+  await refuse("insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount) values ('2026-10-13', $1, $2, 'credit', 0)", [biz.account_id, bankId]),
+  (await q("select count(*)::int n from settlements where merchant_account_id = $1", [biz.account_id]))[0].n], ["refused", "refused", "refused", 2]);
 // the numbers are stored encrypted, bound to their account and field, and every full read is audited
 const stored = (await q("select routing_number r, account_number a, last4 from bank_accounts where id=$1", [bankId]))[0];
 eq("the account number is stored encrypted (v1.) and never as digits; the public routing number is plain; only the last four are readable", [stored.r, stored.a.startsWith("v1."), /[0-9]{6}/.test(stored.a), stored.last4], ["110000000", true, false, "7766"]);
@@ -149,9 +147,8 @@ eq("the overview names today's best seller (most units sold today) and null when
 await q("update products set sold_today = 3, total_sold = 20 where id=$1", [muf.id]);
 eq("a tie goes to the bigger lifetime seller", (await get("/overview")).json.best_seller.name, "Scone");
 // 30 orders with items: the list reads them with two queries in all, not 1 + 2 per order
-await q(`insert into checkouts (account_id, terminal_id, total, status) select $1, $2, 100, 'open' from generate_series(1, 30)`, [biz.account_id, term.terminal.id]);
-await q(`insert into checkout_items (checkout_id, name, unit_price, quantity) select id, 'Thing', 100, 1 from checkouts where account_id = $1 and total = 100`, [biz.account_id]);
+await q(`insert into checkouts (account_id, terminal_id, total, status, items) select $1, $2, 100, 'open', jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'product_id', null, 'name', 'Thing', 'unit_price', 100, 'discount', 0, 'quantity', 1)) from generate_series(1, 30)`, [biz.account_id, term.terminal.id]);
 const listed = (await get("/checkouts?status=open&limit=50")).json.checkouts;
 eq("a page of orders carries its items (every one has its line)", [listed.length, listed.filter((c: any) => c.items.length === 1).length], [30, 30]);
-eq("only a settle transaction may point at a settlement run (a payment cannot)", [(await q("select count(*)::int n from transactions where type = 'pay'"))[0].n > 0, await refuse("update transactions set settlement_id = (select id from settlements limit 1) where type = 'pay'")], [true, "refused"]);
+eq("only settlement transactions may point at a settlement (a payment cannot)", [(await q("select count(*)::int n from transactions where type = 'pay'"))[0].n >= 0, await refuse("insert into transactions (type,status,from_wallet_id,to_wallet_id,amount,settlement_id,account_id,idem) select 'pay','completed',$1,w.id,1,(select id from settlements limit 1),$2,'bad-settle' from wallets w where w.account_id=$2 and w.type='default'", [biz.default_wallet_id, other.account_id])], [true, "refused"]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

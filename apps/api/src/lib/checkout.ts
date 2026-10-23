@@ -7,6 +7,16 @@ import { findPay, payCore, type PayInput, type PayOutcome } from "./pay";
 type Q = Sql | TransactionSql<{ bigint: bigint }>;
 type Tx = TransactionSql<{ bigint: bigint }>;
 
+/** One line of a checkout's immutable snapshot. */
+export type ItemSnapshot = {
+  id: string;
+  product_id: string | null;
+  name: string;
+  unit_price: number;
+  discount: number;
+  quantity: number;
+};
+
 export type CheckoutRow = {
   id: string;
   account_id: string;
@@ -14,6 +24,8 @@ export type CheckoutRow = {
   reference: string | null;
   currency: string;
   total: bigint;
+  items: ItemSnapshot[];
+  /** open | paid | canceled | expired (expired is derived from expires_at). */
   status: string;
   expires_at: Date | null;
   created_at: Date;
@@ -32,7 +44,19 @@ export type ItemRow = {
   refund_pending_quantity: number;
 };
 
-const CO_COLS = `id, account_id, terminal_id, reference, currency, total, status, expires_at, created_at`;
+const CO_COLS = `id, account_id, terminal_id, reference, currency, total, items,
+  case when status = 'open' and expires_at is not null and expires_at <= now() then 'expired' else status end as status,
+  expires_at, created_at`;
+
+export const snapshotOf = (lines: CartLine[]): ItemSnapshot[] =>
+  lines.map((l) => ({
+    id: crypto.randomUUID(),
+    product_id: l.productId,
+    name: l.name,
+    unit_price: Number(l.price),
+    discount: Number(l.discount),
+    quantity: l.quantity,
+  }));
 
 export async function insertCheckout(
   tx: Tx,
@@ -43,27 +67,15 @@ export async function insertCheckout(
     total: bigint;
     lines: CartLine[];
     expiresInSeconds: number | null;
+    /** `paid` for a one-step payment that is written together with its payment. */
+    status?: "open" | "paid";
   },
 ): Promise<CheckoutRow> {
   const [c] = await tx<CheckoutRow[]>`
-    insert into checkouts (account_id, terminal_id, reference, total, expires_at)
-    values (${i.merchantId}, ${i.terminalId}, ${i.reference}, ${i.total.toString()},
-            ${i.expiresInSeconds === null ? null : tx`now() + make_interval(secs => ${i.expiresInSeconds})`})
+    insert into checkouts (account_id, terminal_id, reference, total, items, expires_at, status)
+    values (${i.merchantId}, ${i.terminalId}, ${i.reference}, ${i.total.toString()}, ${tx.json(snapshotOf(i.lines) as never)},
+            ${i.expiresInSeconds === null ? null : tx`now() + make_interval(secs => ${i.expiresInSeconds})`}, ${i.status ?? "open"})
     returning ${tx.unsafe(CO_COLS)}`;
-  if (i.lines.length > 0) {
-    await tx`
-      insert into checkout_items ${tx(
-        i.lines.map((l) => ({
-          checkout_id: c!.id,
-          product_id: l.productId,
-          name: l.name,
-          unit_price: l.price.toString(),
-          discount: l.discount.toString(),
-          quantity: l.quantity,
-        })),
-        "checkout_id", "product_id", "name", "unit_price", "discount", "quantity",
-      )}`;
-  }
   return c!;
 }
 
@@ -74,26 +86,69 @@ export async function getCheckout(q: Q, merchantId: string | null, id: string): 
   return c;
 }
 
+type Counts = Map<string, { done: number; pending: number }>;
+
+/**
+ * Units already refunded or reserved by pending refunds, per line, for the given checkouts. A refund's lines are in its transaction's
+ * `meta.items` (a pending request keeps them on the `refunds` row), so nothing is stored on the checkout: the payment stays immutable.
+ */
+async function refundCounts(q: Q, checkoutIds: string[]): Promise<Map<string, Counts>> {
+  const out = new Map<string, Counts>();
+  if (checkoutIds.length === 0) return out;
+  const rows = await q<{ checkout_id: string; item_id: string; done: number; pending: number }[]>`
+    select p.checkout_id, i.item ->> 'checkout_item_id' as item_id,
+           coalesce(sum((i.item ->> 'quantity')::int) filter (where r.kind = 'done'), 0)::int as done,
+           coalesce(sum((i.item ->> 'quantity')::int) filter (where r.kind = 'pending'), 0)::int as pending
+      from transactions p
+      join (select related_id as pay_id, meta -> 'items' as items, 'done' as kind from transactions where type = 'refund' and status = 'completed' and meta ? 'items'
+            union all
+            select pay_transaction_id, items, 'pending' from refunds where status = 'pending' and items is not null) r on r.pay_id = p.id
+      cross join lateral jsonb_array_elements(r.items) i(item)
+     where p.type = 'pay' and p.status = 'completed' and p.checkout_id in ${q(checkoutIds)}
+     group by 1, 2`;
+  for (const r of rows) {
+    let m = out.get(r.checkout_id);
+    if (!m) out.set(r.checkout_id, (m = new Map()));
+    m.set(r.item_id, { done: r.done, pending: r.pending });
+  }
+  return out;
+}
+
+const toItems = (c: CheckoutRow, counts: Counts | undefined): ItemRow[] =>
+  c.items.map((it) => ({
+    id: it.id,
+    product_id: it.product_id,
+    name: it.name,
+    unit_price: BigInt(it.unit_price),
+    discount: BigInt(it.discount),
+    quantity: it.quantity,
+    refunded_quantity: counts?.get(it.id)?.done ?? 0,
+    refund_pending_quantity: counts?.get(it.id)?.pending ?? 0,
+  }));
+
 export async function getItems(q: Q, checkoutId: string): Promise<ItemRow[]> {
-  return q<ItemRow[]>`
-    select id, product_id, name, unit_price, discount, quantity, refunded_quantity, refund_pending_quantity
-      from checkout_items where checkout_id = ${checkoutId}
-     order by created_at, id`;
+  const c = await getCheckout(q, null, checkoutId);
+  if (!c) return [];
+  return toItems(c, c.status === "paid" ? (await refundCounts(q, [c.id])).get(c.id) : undefined);
+}
+
+/** The items of a checkout already read (no extra read of the checkout; one query for the refund counts when it is paid). */
+export async function itemsOf(q: Q, c: CheckoutRow): Promise<ItemRow[]> {
+  return toItems(c, c.status === "paid" && c.items.length > 0 ? (await refundCounts(q, [c.id])).get(c.id) : undefined);
 }
 
 /** A page of a business's checkouts with their items: two queries in all, however many rows (never one per checkout). */
 export async function listCheckouts(q: Q, accountId: string, status: string, limit: number) {
+  const where =
+    status === "open" ? q`status = 'open' and (expires_at is null or expires_at > now())`
+    : status === "expired" ? q`status = 'open' and expires_at is not null and expires_at <= now()`
+    : q`status = ${status}`;
   const rows = await q<CheckoutRow[]>`
-    select ${q.unsafe(CO_COLS)} from checkouts where account_id = ${accountId} and status = ${status}
+    select ${q.unsafe(CO_COLS)} from checkouts where account_id = ${accountId} and ${where}
      order by created_at desc, id desc limit ${limit}`;
   if (rows.length === 0) return [];
-  const items = await q<(ItemRow & { checkout_id: string })[]>`
-    select id, checkout_id, product_id, name, unit_price, discount, quantity, refunded_quantity, refund_pending_quantity
-      from checkout_items where checkout_id in ${q(rows.map((r) => r.id))}
-     order by created_at, id`;
-  const by = new Map<string, ItemRow[]>();
-  for (const it of items) (by.get(it.checkout_id) ?? by.set(it.checkout_id, []).get(it.checkout_id)!).push(it);
-  return rows.map((r) => checkoutJson(r, by.get(r.id) ?? []));
+  const counts = status === "paid" ? await refundCounts(q, rows.map((r) => r.id)) : new Map<string, Counts>();
+  return rows.map((r) => checkoutJson(r, toItems(r, counts.get(r.id))));
 }
 
 export const itemJson = (it: ItemRow) => ({
@@ -121,10 +176,10 @@ export const checkoutJson = (c: CheckoutRow, items: ItemRow[]) => ({
   items: items.map(itemJson),
 });
 
-export type PayCheckoutInput = Omit<PayInput, "checkoutId" | "amount" | "forceDecline" | "reference"> & {
+export type PayCheckoutInput = Omit<PayInput, "checkoutId" | "amount" | "forceDecline" | "reference" | "items"> & {
   /** Pay this existing checkout... */
   checkoutId: string | null;
-  /** ...or create one in the same transaction (one-step). */
+  /** ...or pay in one step: a cart with items is written as an already paid checkout; an amount alone has no checkout at all. */
   create: { lines: CartLine[]; total: bigint; reference: string | null } | null;
   /** If set, a recorded attempt of a different amount is a conflict. */
   expectAmount?: bigint;
@@ -148,60 +203,53 @@ export async function payCheckout(tx: Tx, i: PayCheckoutInput): Promise<PayOutco
     return payCore(tx, { ...i, checkoutId: prev.checkout_id, amount: prev.amount, reference: prev.reference });
   }
 
-  let checkout: CheckoutRow;
+  let checkout: CheckoutRow | null = null;
+  let amount: bigint;
+  let reference: string | null;
   let decline: string | null = null;
   let created = false;
+  let snapshot: ItemSnapshot[] = [];
 
-  let preItems: { product_id: string | null; quantity: number }[] | null = null;
   if (i.checkoutId) {
-    // The checkout lock and its items go out together (one round trip; the lock is taken first).
-    const [[c], items0] = await Promise.all([
-      tx<(CheckoutRow & { is_expired: boolean })[]>`
-        select ${tx.unsafe(CO_COLS)}, (expires_at is not null and expires_at <= now()) as is_expired
-          from checkouts where id = ${i.checkoutId} and account_id = ${i.merchantAccountId}
-           for no key update`,
-      tx<{ product_id: string | null; quantity: number }[]>`
-        select product_id, quantity from checkout_items where checkout_id = ${i.checkoutId}`,
-    ]);
-    preItems = items0;
+    const [c] = await tx<CheckoutRow[]>`
+      select ${tx.unsafe(CO_COLS)} from checkouts where id = ${i.checkoutId} and account_id = ${i.merchantAccountId} for no key update`;
     if (!c) throw new Error("checkout missing");
     checkout = c;
-    if (c.status !== "open") {
-      decline = c.status === "paid" ? "checkout_paid" : "checkout_not_open";
-    } else if (c.is_expired) {
-      await tx`update checkouts set status = 'expired' where id = ${c.id}`;
-      decline = "checkout_expired";
-    }
+    amount = c.total;
+    reference = c.reference;
+    snapshot = c.items;
+    if (c.status === "expired") decline = "checkout_expired";
+    else if (c.status !== "open") decline = c.status === "paid" ? "checkout_paid" : "checkout_not_open";
   } else {
-    checkout = await insertCheckout(tx, {
-      merchantId: i.merchantAccountId,
-      terminalId: i.terminalId,
-      reference: i.create!.reference,
-      total: i.create!.total,
-      lines: i.create!.lines,
-      expiresInSeconds: null,
-    });
-    created = true;
+    amount = i.create!.total;
+    reference = i.create!.reference;
+    if (i.create!.lines.length > 0) {
+      checkout = await insertCheckout(tx, {
+        merchantId: i.merchantAccountId, terminalId: i.terminalId, reference, total: amount,
+        lines: i.create!.lines, expiresInSeconds: null, status: "paid",
+      });
+      created = true;
+      snapshot = checkout.items;
+    }
   }
 
-  const items = preItems ?? await tx<{ product_id: string | null; quantity: number }[]>`
-    select product_id, quantity from checkout_items where checkout_id = ${checkout.id}`;
-  const lines = stockLines(items);
+  const lines = stockLines(snapshot.map((x) => ({ product_id: x.product_id, quantity: x.quantity })));
   if (!decline) decline = await reserveStock(tx, i.merchantAccountId, lines);
 
   const out = await payCore(tx, {
     ...i,
-    checkoutId: checkout.id,
-    amount: checkout.total,
-    reference: checkout.reference,
+    checkoutId: checkout?.id ?? null,
+    amount,
+    reference,
+    items: snapshot,
     forceDecline: decline,
   });
 
   if (out.kind === "ok" && !out.replayed) {
-    await Promise.all([commitStock(tx, lines), tx`update checkouts set status = 'paid' where id = ${checkout.id}`]);
+    await Promise.all([commitStock(tx, lines), ...(checkout && !created ? [tx`update checkouts set status = 'paid' where id = ${checkout.id}`] : [])]);
   } else if (out.kind === "declined" && !out.replayed && created) {
     // A one-step checkout that failed to settle is dead; the POS starts a new one.
-    await tx`update checkouts set status = 'canceled' where id = ${checkout.id}`;
+    await tx`update checkouts set status = 'canceled' where id = ${checkout!.id}`;
   }
   return out;
 }

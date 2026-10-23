@@ -1,6 +1,6 @@
 import type { Sql } from "../db";
 import { imageUrl } from "./images";
-import { PROGRAM_TZ } from "./ledger";
+import { PROGRAM_TZ } from "./dates";
 import { n } from "./money";
 import { peek, RULES, type Limiter } from "./throttle";
 import { party, type DayRange } from "./adminLists";
@@ -34,7 +34,7 @@ export async function userDetail(sql: Sql, id: string, limiter?: Limiter) {
       (count(*) filter (where x.status = 'failed' and x.from_account_id = ${id}))::int as failed_n,
       (count(*) filter (where x.completed_at >= start.t))::int as today_n,
       max(x.completed_at) as last_at
-      from transactions x, start
+      from txn x, start
      where x.from_account_id = ${id} or x.to_account_id = ${id}`;
   const [c] = await sql<{ wallets: number; agents: number; tags: number; devices: number; orders: number }[]>`
     select (select count(*) from wallets where account_id = ${id} and status <> 'closed')::int as wallets,
@@ -65,7 +65,7 @@ export async function userWallets(sql: Sql, id: string) {
     id: string; display_name: string; type: string; status: string; balance: bigint | null; daily_limit: bigint | null; spent_today: bigint;
     allow_pay: boolean; allow_send: boolean; key_hint: string | null; key_last_used_at: Date | null; created_at: Date; tags: number;
   }[]>`
-    select w.id, w.display_name, w.type, w.status, w.balance, w.daily_limit, w.spent_today, w.allow_pay, w.allow_send,
+    select w.id, w.display_name, w.type, w.status, w.balance, w.daily_limit, (case when w.spent_day = program_today() then w.spent_today else 0 end) as spent_today, w.allow_pay, w.allow_send,
            w.key_hint, w.key_last_used_at, w.created_at,
            (select count(*) from tags t where t.wallet_id = w.id)::int as tags
       from wallets w where w.account_id = ${id}
@@ -166,7 +166,7 @@ export async function userTransactions(
            case when t.type = 'purchase' then 'Nuclear store' else coalesce(tb.display_name, ta.name) end as to_name,
            case when t.type = 'fund' then null else fa.id end as from_id, fa.type as from_type, fa.photo as from_photo,
            case when t.type = 'purchase' then null else ta.id end as to_id, ta.type as to_type, ta.photo as to_photo
-      from transactions t
+      from txn t
       left join accounts fa on fa.id = t.from_account_id left join businesses fb on fb.account_id = t.from_account_id
       left join accounts ta on ta.id = t.to_account_id left join businesses tb on tb.account_id = t.to_account_id
       left join wallets fw on fw.id = t.from_wallet_id left join wallets tw on tw.id = t.to_wallet_id
@@ -184,11 +184,11 @@ export async function userTransactions(
            (count(*) filter (where t.type in ('pay', 'purchase') and t.from_account_id = ${id}))::int as payments,
            (count(*) filter (where t.type = 'fund'))::int as loads,
            (count(*) filter (where t.type = 'refund' and t.to_account_id = ${id}))::int as refunds
-      from transactions t where ${mine} ${visible} ${inRange}`;
+      from txn t where ${mine} ${visible} ${inRange}`;
   const [tot] = await sql<{ out_v: bigint; in_v: bigint }[]>`
     select coalesce(sum(t.amount) filter (where t.from_account_id = ${id} and t.type <> 'fund'), 0) as out_v,
            coalesce(sum(t.amount) filter (where t.to_account_id = ${id}), 0) as in_v
-      from transactions t where t.status = 'completed' and ${mine} ${visible} ${inRange}`;
+      from txn t where t.status = 'completed' and ${mine} ${visible} ${inRange}`;
   return {
     counts: c!,
     totals: { money_out: n(tot!.out_v), money_in: n(tot!.in_v) },

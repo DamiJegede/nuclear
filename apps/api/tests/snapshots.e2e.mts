@@ -5,10 +5,12 @@ import { connect } from "../src/db.ts";
 import { Counters } from "../src/lib/counters.ts";
 import { StatsCounter } from "../src/lib/statsCounter.ts";
 import { takeSnapshot, catchUpSnapshots, addDays } from "../src/lib/snapshots.ts";
-import { easternDate } from "../src/lib/dailyReset.ts";
+import { easternDate } from "../src/lib/dates.ts";
 import { dailyJobs } from "../src/lib/cron.ts";
-import { migrate, resetSchema, PG_URL } from "./db.ts";
+import { migrate, psql, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
+// transactions are immutable; this suite moves rows between days, so the trigger is lifted for it
+psql(["-c", "alter table transactions disable trigger transactions_no_update"]);
 const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const OP = "op-" + randomBytes(16).toString("hex");
@@ -84,7 +86,7 @@ await call("POST", "/v1/transfers", { token: friend.session_token, key: "big", b
 eq("a replayed send and a declined send leave the counters alone", JSON.stringify([...objects.values()][0]!.days), before);
 
 // move every row to yesterday noon (New York), then clear the running counters: yesterday is the snapshot's business
-await q(`update transactions set "timestamp" = ${noonOf(y)}, completed_at = ${noonOf(y)} where completed_at is not null`);
+await q(`update transactions set created_at = ${noonOf(y)} where status = 'completed'`);
 await q(`update accounts set created_at = ${noonOf(y)}`);
 await q(`update benefit_runs set created_at = ${noonOf(y)}`);
 await q(`update employees set created_at = ${noonOf(y)}`);
@@ -99,7 +101,7 @@ eq("the merchants paid, and the people who joined", [Number(s.merchants_paid), N
 eq("benefits: the run, what was held, the employee", [Number(s.benefit_runs_count), Number(s.benefit_credited), Number(s.benefit_sent), Number(s.benefit_held), Number(s.employees_added), Number(s.employees_total), Number(s.employees_claimed), Number(s.employees_unclaimed), Number(s.employee_escrow)], [1, 6000, 0, 6000, 1, 1, 0, 1, 6000]);
 eq("allocations to employees are in the ledger as claims-in-waiting, claims are zero", [Number(s.claims_count), Number(s.claims_volume)], [0, 0]);
 const sumBal = Number((await q("select sum(balance)::bigint t from balances"))[0].t);
-eq("money held: the scheme balance is every balance, split by kind", [Number(s.scheme_balance) === sumBal, Number(s.merchant_balance), Number(s.organization_balance), Number(s.consumer_balance) + Number(s.merchant_balance) + Number(s.organization_balance) === sumBal], [true, 3100, 94000, true]);
+eq("money held: the scheme balance is every balance, split by kind (an organization's balance includes what it holds for employees)", [Number(s.scheme_balance) === sumBal, Number(s.merchant_balance), Number(s.organization_balance), Number(s.consumer_balance) + Number(s.merchant_balance) + Number(s.organization_balance) === sumBal], [true, 3100, 100000, true]);
 eq("people gauges", [Number(s.users_total), Number(s.merchants_total), Number(s.merchants_active), Number(s.merchants_transacting), Number(s.organizations_total), Number(s.terminals)], [2, 1, 1, 1, 1, 1]);
 eq("lifetime starts from all history", [Number(s.lifetime_sends_count), Number(s.lifetime_in_app_volume), Number(s.lifetime_loads_volume), Number(s.lifetime_refunds_count), Number(s.lifetime_benefit_credited), Number(s.lifetime_benefit_runs_count)], [1, 3500, 150000, 1, 6000, 1]);
 eq("the same day is never snapshotted twice", [await takeSnapshot(sqlc, y), (await q("select count(*)::int n from snapshots"))[0].n], [false, 1]);
@@ -124,11 +126,11 @@ eq("a new person shows today", [s1.users.new_today, s1.users.total, s1.users.new
 eq("the estimate is exact as of the snapshot's midnight", s1.estimate.snapshot_date, y);
 
 // ---- tomorrow's snapshot chains from yesterday's
-await q(`update transactions set "timestamp" = ${noonOf(today)}, completed_at = ${noonOf(today)} where idempotency_key in ('f2', 's2', 'c:' || '${payer.account_id}' || ':p3') or (type in ('fund','send','pay') and completed_at > now() - interval '5 minutes')`);
+await q(`update transactions set created_at = ${noonOf(today)} where status = 'completed' and type in ('fund','send','pay') and created_at > now() - interval '5 minutes'`);
 const tomorrow = addDays(today, 1);
 eq("the next snapshot", await takeSnapshot(sqlc, today), true);
 const [s2] = await q("select * from snapshots where snapshot_date = $1::date", [today]);
-const [full] = await q("select count(*) filter (where type='send')::int sends, coalesce(sum(amount) filter (where type='send'),0)::bigint sv, coalesce(sum(amount) filter (where type='pay' and tag_id is null),0)::bigint iv, coalesce(sum(amount) filter (where type='fund'),0)::bigint lv from transactions where status='completed' and completed_at < (($1::date + 1)::timestamp at time zone 'America/New_York')", [today]);
+const [full] = await q("select count(*) filter (where type='send')::int sends, coalesce(sum(amount) filter (where type='send'),0)::bigint sv, coalesce(sum(amount) filter (where type='pay' and tag_id is null),0)::bigint iv, coalesce(sum(amount) filter (where type='fund'),0)::bigint lv from transactions where status='completed' and created_at < (($1::date + 1)::timestamp at time zone 'America/New_York')", [today]);
 eq("lifetime is the previous day's plus the day, and equals a full recount", [Number(s2.lifetime_sends_count), Number(s2.lifetime_sends_volume), Number(s2.lifetime_in_app_volume), Number(s2.lifetime_loads_volume)], [full.sends, Number(full.sv), Number(full.iv), Number(full.lv)]);
 eq("the day's own columns are only the day", [Number(s2.sends_count), Number(s2.sends_volume), Number(s2.loads_volume)], [1, 700, 2000]);
 

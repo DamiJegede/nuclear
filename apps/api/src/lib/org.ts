@@ -2,15 +2,18 @@ import { randomBytes } from "node:crypto";
 import type { Sql } from "../db";
 import { hashToken } from "../crypto";
 import { ensureBenefitsWallet } from "./benefits";
+import { earmarkedTotalQuery, pos } from "./walletFunds";
+import { insertTx } from "./txn";
 
 /**
  * Employer credits (docs/ORGANIZATIONS.md). An organization (account type O) credits its employees from its own funded balance:
  *  - an employee who already claimed (has an account): a normal `send` from the organization's default wallet to theirs;
- *  - an employee who has not: an `allocate` transaction holds the money (ledger bucket employee_escrow, employees.balance) until they
- *    claim it with the emailed token (`claim` transaction). Held credits never expire.
+ *  - an employee who has not: an `allocate` transaction moves the money from the organization's wallet to its own escrow wallet (an earmark:
+ *    the organization's balance does not change, the money simply stops being available), and employees.balance says who is owed what, until
+ *    they claim it with the emailed token (a `claim` transaction from the escrow wallet to their Benefits wallet). Held credits never expire.
  * A whole CSV is ONE database transaction using bulk statements: it is applied completely or not at all, and a batch the organization
  * cannot cover is refused before anything is written. Lock order: the organization's balances row, then the recipients' balances rows
- * (by account id), then the organization's wallet.
+ * (by account id), then the organization's wallets.
  */
 
 export const MAX_BATCH_ROWS = 2000;
@@ -50,13 +53,15 @@ export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotenc
   let i: { orgId: string; idempotencyKey: string; rows: CreditRow[] } = { ...input, rows: [] };
   return sql.begin(async (tx): Promise<RunOutcome> => {
     // 1. Lock the organization's balance and wallet (one round trip), then the run's idempotency check.
-    const [[bal], [wallet], [org]] = await Promise.all([
+    const [[bal], [wallet], [escrow], [org], [em]] = await Promise.all([
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${i.orgId} for no key update`,
       tx<{ id: string; status: string; allow_send: boolean }[]>`
         select id, status, allow_send from wallets where account_id = ${i.orgId} and type = 'default' for no key update`,
+      tx<{ id: string }[]>`select id from wallets where account_id = ${i.orgId} and type = 'escrow' for no key update`,
       tx<{ status: string; type: string; name: string }[]>`select status, type, name from accounts where id = ${i.orgId}`,
+      earmarkedTotalQuery(tx, i.orgId),
     ]);
-    if (!bal || !wallet || !org) throw new Error("organization rows missing");
+    if (!bal || !wallet || !escrow || !org) throw new Error("organization rows missing");
     if (org.type !== "O") return { kind: "error", status: 404, error: "organization_required" };
     if (org.status !== "active" || wallet.status !== "active" || !wallet.allow_send) return { kind: "error", status: 422, error: "organization_unavailable" };
 
@@ -78,9 +83,10 @@ export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotenc
     if (incomplete.length) throw new RunRefused("employee_details_required", { employee_ids: incomplete });
     i = { ...input, rows: input.rows.map((r) => ({ employee_id: r.employee_id, amount: r.amount, name: (r.name ?? onFile.get(r.employee_id)!.name), email: (r.email ?? onFile.get(r.employee_id)!.email) })) };
 
-    // 2. The whole run or nothing: the balance must cover the total.
-    if (bal.balance < total) {
-      return { kind: "error", status: 422, error: "insufficient_balance", extra: { required: Number(total), available: Number(bal.balance < 0n ? 0n : bal.balance) } };
+    // 2. The whole run or nothing: the funds must cover the total. Credit held for employees (the escrow wallet's earmark) is not available.
+    const available = pos(bal.balance - em!.total);
+    if (available < total) {
+      return { kind: "error", status: 422, error: "insufficient_balance", extra: { required: Number(total), available: Number(available) } };
     }
 
     // 3. Employees: create new ones, refresh name and email of known ones (employee_id is immutable and is the key).
@@ -125,7 +131,7 @@ export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotenc
     const lines = i.rows.map((r, idx) => {
       const e = byKey.get(r.employee_id)!;
       const held = e.employee_account_id === null;
-      return { n: idx + 1, ref: e.id, held, amount: r.amount, to_account: e.employee_account_id, to_wallet: e.employee_account_id ? walletOf.get(e.employee_account_id)! : null };
+      return { n: idx + 1, ref: e.id, held, amount: r.amount, to_account: e.employee_account_id, to_wallet: e.employee_account_id ? walletOf.get(e.employee_account_id)! : escrow.id };
     });
     const held = lines.filter((l) => l.held).reduce((s, l) => s + l.amount, 0n);
     const sent = total - held;
@@ -141,13 +147,16 @@ export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotenc
           returning id, row_count, total, sent, held, source, status, run_date::text as run_date, created_at`;
     const runId = run!.id;
 
-    const payload = JSON.stringify(lines.map((l) => ({ n: l.n, type: l.held ? "allocate" : "send", to_account: l.to_account, to_wallet: l.to_wallet, amount: l.amount.toString() })));
-    const txs = await tx<{ id: string; idempotency_key: string; type: string; amount: bigint }[]>`
-      insert into transactions (type, from_account_id, from_wallet_id, to_account_id, to_wallet_id, amount, status, idempotency_key, completed_at)
-      select r.type, ${i.orgId}, ${wallet.id}, r.to_account, r.to_wallet, r.amount, 'completed', ${`run:${runId}:`} || r.n::text, now()
-        from jsonb_to_recordset(${payload}::text::jsonb) as r(n int, type text, to_account uuid, to_wallet uuid, amount bigint)
-      returning id, idempotency_key, type, amount`;
-    const txByN = new Map(txs.map((t) => [Number(t.idempotency_key.split(":")[2]), t]));
+    // A credit to an employee who has claimed is a `send` to their Benefits wallet; one for an employee who has not is an `allocate` from the
+    // organization's wallet to its own escrow wallet (same account: its balance does not change, the escrow earmark goes up).
+    const payload = JSON.stringify(lines.map((l) => ({ n: l.n, type: l.held ? "allocate" : "send", to_wallet: l.to_wallet, amount: l.amount.toString() })));
+    const txs = await tx<{ id: string; idem: string }[]>`
+      insert into transactions (type, status, from_wallet_id, to_wallet_id, amount, account_id, idem, meta)
+      select r.type, 'completed', ${wallet.id}, r.to_wallet, r.amount, ${i.orgId}, ${`benefit:${runId}:`} || r.n::text,
+             jsonb_build_object('run_id', ${runId}::text)
+        from jsonb_to_recordset(${payload}::text::jsonb) as r(n int, type text, to_wallet uuid, amount bigint)
+      returning id, idem`;
+    const txByN = new Map(txs.map((t) => [Number(t.idem.split(":")[2]), t]));
 
     // 6. Tokens for the employees who must be told (one fresh token each; an employee in the CSV is unique).
     const notices: Notice[] = [];
@@ -164,32 +173,20 @@ export async function runBenefitRun(sql: Sql, input: { orgId: string; idempotenc
     }
 
     // 7. Every write in one round trip, applied in this order.
-    const ledger = JSON.stringify(
-      lines.flatMap((l) => {
-        const t = txByN.get(l.n)!;
-        const key = l.held ? "allocate" : "send";
-        return [
-          { tx: t.id, key, line: 1, account: i.orgId, bucket: "funded_balance", dir: "debit", amount: l.amount.toString(), wallet: null },
-          { tx: t.id, key, line: 2, account: l.to_account, bucket: l.held ? "employee_escrow" : "funded_balance", dir: "credit", amount: l.amount.toString(), wallet: l.held ? null : l.to_wallet },
-        ];
-      }),
-    );
     const rowsJson = JSON.stringify(lines.map((l) => ({ ref: l.ref, amount: l.amount.toString(), mode: l.held ? "held" : "sent", tx: txByN.get(l.n)!.id })));
     const incoming = JSON.stringify(lines.filter((l) => !l.held).map((l) => ({ account: l.to_account, amount: l.amount.toString() })));
     await Promise.all([
-      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
-         select l.tx, l.key, l.line, l.account, l.bucket, l.dir, l.amount, l.wallet
-           from jsonb_to_recordset(${ledger}::text::jsonb) as l(tx uuid, key text, line int, account uuid, bucket text, dir text, amount bigint, wallet uuid)`,
-      // The Benefits wallets hold their credits (a compartment inside the account total).
+      // The Benefits wallets hold their credits (a compartment inside the account total); the escrow wallet holds what is waiting to be claimed.
       tx`update wallets w set balance = w.balance + s.amount
            from (select wallet, sum(amount) as amount
-                   from jsonb_to_recordset(${JSON.stringify(lines.filter((l) => !l.held).map((l) => ({ wallet: l.to_wallet, amount: l.amount.toString() })))}::text::jsonb) as x(wallet uuid, amount bigint) group by wallet) s
+                   from jsonb_to_recordset(${JSON.stringify(lines.map((l) => ({ wallet: l.to_wallet, amount: l.amount.toString() })))}::text::jsonb) as x(wallet uuid, amount bigint) group by wallet) s
           where w.id = s.wallet`,
       tx`insert into benefit_run_rows (run_id, employee_ref, amount, mode, transaction_id)
          select ${runId}, r.ref, r.amount, r.mode, r.tx
            from jsonb_to_recordset(${rowsJson}::text::jsonb) as r(ref uuid, amount bigint, mode text, tx uuid)`,
-      tx`update balances set balance = balance - ${total.toString()} where account_id = ${i.orgId}`,
-      tx`update wallets set spent_today = spent_today + ${total.toString()} where id = ${wallet.id}`,
+      // Only the credits that left the organization (sent) reduce its balance; held credits stay in it, set aside in the escrow wallet.
+      tx`update balances set balance = balance - ${sent.toString()} where account_id = ${i.orgId}`,
+      tx`update wallets set spent_today = case when spent_day = program_today() then spent_today + ${total.toString()} else ${total.toString()} end, spent_day = program_today() where id = ${wallet.id}`,
       tx`update balances b set balance = b.balance + s.amount
            from (select account, sum(amount) as amount
                    from jsonb_to_recordset(${incoming}::text::jsonb) as x(account uuid, amount bigint) group by account) s
@@ -321,11 +318,14 @@ export async function claimCredit(sql: Sql, i: { accountId: string; token: strin
         from employees e join accounts o on o.id = e.org_account_id
        where e.claim_token_hash = ${hash} for no key update of e`;
     if (!emp) return { kind: "error", status: 404, error: "invalid_token" };
-    const [[bal], [acct]] = await Promise.all([
+    // Lock order: the organization's balances row first (the same as a benefits run), then the employee's, then the organization's escrow wallet.
+    await tx`select 1 from balances where account_id = ${emp.org_account_id} for no key update`;
+    const [[bal], [acct], [escrow]] = await Promise.all([
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${i.accountId} for no key update`,
       tx<{ type: string; status: string }[]>`select type, status from accounts where id = ${i.accountId}`,
+      tx<{ id: string }[]>`select id from wallets where account_id = ${emp.org_account_id} and type = 'escrow' for no key update`,
     ]);
-    if (!bal || !acct) throw new Error("account rows missing");
+    if (!bal || !acct || !escrow) throw new Error("account rows missing");
     if (acct.type !== "C") return { kind: "error", status: 422, error: "consumer_account_required" };
     if (acct.status !== "active") return { kind: "error", status: 422, error: "account_unavailable" };
 
@@ -335,17 +335,13 @@ export async function claimCredit(sql: Sql, i: { accountId: string; token: strin
       select id, status, display_name, balance from wallets where id = ${made.id} for no key update`;
     if (!wallet || wallet.status !== "active") return { kind: "error", status: 422, error: "account_unavailable" };
 
+    // The claim is a real transaction from the organization's escrow wallet to the employee's Benefits wallet.
     const amt = emp.balance;
-    let line = 1;
     if (amt > 0n) {
-      const [t] = await tx<{ id: string }[]>`
-        insert into transactions (type, to_account_id, to_wallet_id, amount, status, idempotency_key, completed_at)
-        values ('claim', ${i.accountId}, ${wallet.id}, ${amt.toString()}, 'completed', ${`claim:${emp.id}`}, now())
-        returning id`;
       await Promise.all([
-        tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
-           values (${t!.id}, 'claim', ${line++}, null, 'employee_escrow', 'debit', ${amt.toString()}, null),
-                  (${t!.id}, 'claim', ${line++}, ${i.accountId}, 'funded_balance', 'credit', ${amt.toString()}, ${wallet.id})`,
+        insertTx(tx, { type: "claim", from: escrow.id, to: wallet.id, amount: amt, account: i.accountId, idem: `claim:${emp.id}` }),
+        tx`update balances set balance = balance - ${amt.toString()} where account_id = ${emp.org_account_id}`,
+        tx`update wallets set balance = balance - ${amt.toString()} where id = ${escrow.id}`,
         tx`update balances set balance = balance + ${amt.toString()} where account_id = ${i.accountId}`,
         tx`update wallets set balance = balance + ${amt.toString()} where id = ${wallet.id}`,
       ]);

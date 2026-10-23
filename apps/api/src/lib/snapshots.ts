@@ -1,14 +1,14 @@
 import type { Sql } from "../db";
 import type { Env } from "../env";
-import { PROGRAM_TZ } from "./ledger";
-import { easternDate } from "./dailyReset";
+import { PROGRAM_TZ } from "./dates";
+import { easternDate } from "./dates";
 import { readCounters } from "./tracker";
 import type { Days, Deltas } from "./counters";
 import { liveStats, type LiveStats } from "./stats";
 
 /**
  * Daily snapshots (migration 0040, docs/TABLES.md "snapshots"). Once a night the cron records what happened on the program day that just ended,
- * exactly, from the day's own transactions (a range read on `transactions_completed_at_idx`), plus the gauges (balances, people) at that moment and a
+ * exactly, from the day's own transactions (a range read on `transactions_created_idx`), plus the gauges (balances, people) at that moment and a
  * running lifetime (previous row + the day). The admin Overview shows the latest snapshot plus today's running estimate (tracker.ts), so it never
  * scans history.
  */
@@ -24,8 +24,8 @@ const FILTERS: Record<string, string> = {
   refunds: "type = 'refund'",
   loads: "type = 'fund'",
   purchases: "type = 'purchase'",
-  payouts: "type = 'settle' and to_bank_account_id is not null",
-  collections: "type = 'settle' and from_bank_account_id is not null",
+  payouts: "type = 'settle'",
+  collections: "type = 'collect'",
   claims: "type = 'claim'",
 };
 const DAY_KINDS = Object.keys(FILTERS);
@@ -44,11 +44,14 @@ export async function takeSnapshot(sql: Sql, date: string): Promise<boolean> {
   const [exists] = await sql`select 1 from snapshots where snapshot_date = ${date}::date`;
   if (exists) return false;
   const b = sql`(select (${date}::date)::timestamp at time zone ${PROGRAM_TZ} as s, ((${date}::date + 1))::timestamp at time zone ${PROGRAM_TZ} as e) b`;
+  // The completed transactions, with the receiving account (the range is read through the created_at index).
+  const completed = sql`(select t.type, t.amount, t.tag_id, t.from_wallet_id, t.created_at, tw.account_id as to_account_id
+                           from transactions t join wallets tw on tw.id = t.to_wallet_id where t.status = 'completed')`;
 
   const [day] = await sql<Counts[]>`
     select ${sql.unsafe(selectList(DAY_KINDS))}, count(distinct to_account_id) filter (where type = 'pay')::bigint as merchants_paid
-      from transactions t, ${b}
-     where t.status = 'completed' and t.completed_at >= b.s and t.completed_at < b.e`;
+      from ${completed} t, ${b}
+     where t.created_at >= b.s and t.created_at < b.e`;
 
   // Lifetime = the previous day's lifetime plus this day. With no previous day (first run, or a gap) it is summed from all history once.
   const [prev] = await sql<Counts[]>`select * from snapshots where snapshot_date = ${addDays(date, -1)}::date`;
@@ -60,7 +63,7 @@ export async function takeSnapshot(sql: Sql, date: string): Promise<boolean> {
     }
   } else {
     const [all] = await sql<Counts[]>`
-      select ${sql.unsafe(selectList(LIFETIME_KINDS))} from transactions t, ${b} where t.status = 'completed' and t.completed_at < b.e`;
+      select ${sql.unsafe(selectList(LIFETIME_KINDS))} from ${completed} t, ${b} where t.created_at < b.e`;
     for (const k of LIFETIME_KINDS) { lifetime[`lifetime_${k}_count`] = all![`${k}_count`]!; lifetime[`lifetime_${k}_volume`] = all![`${k}_volume`]!; }
   }
 
@@ -107,8 +110,8 @@ export async function takeSnapshot(sql: Sql, date: string): Promise<boolean> {
       from balances bl join accounts a on a.id = bl.account_id`;
 
   const [more] = await sql<Counts[]>`
-    select (select count(distinct t.to_account_id) from transactions t, ${b}
-             where t.type = 'pay' and t.status = 'completed' and t.completed_at >= b.e - interval '30 days' and t.completed_at < b.e)::bigint as merchants_transacting,
+    select (select count(distinct t.to_account_id) from ${completed} t, ${b}
+             where t.type = 'pay' and t.created_at >= b.e - interval '30 days' and t.created_at < b.e)::bigint as merchants_transacting,
            (select count(*) from employees e, ${b} where e.created_at >= b.s and e.created_at < b.e)::bigint as employees_added`;
 
   const row = { snapshot_date: date, ...day, ...lifetime, ...runs, ...people, ...gauges, ...more };

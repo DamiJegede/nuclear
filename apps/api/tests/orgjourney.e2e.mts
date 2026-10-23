@@ -22,12 +22,12 @@ const call = async (m: string, p: string, o: { body?: unknown; token?: string; k
 };
 const sign = async (name: string, email: string, type = "C") => (await call("POST", "/v1/auth/signup", { body: { type, name, email, password: "correct horse battery" } })).json;
 const stats = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json;
-const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
+const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; w uuid; begin
   insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${accountId}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
   insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${accountId}', bank, ${cents}, 'bk-' || gen_random_uuid(), 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${accountId}', '${accountId}', bank, ${cents}, 'completed', 'bk-' || gen_random_uuid(), now()) returning id into tid;
+  select id into w from wallets where account_id = '${accountId}' and type = 'default';
+  insert into transactions (type, status, from_wallet_id, to_wallet_id, amount, funding_id, account_id, idem) values ('fund', 'completed', '00000000-0000-7000-8000-000000000002', w, ${cents}, fid, '${accountId}', 'fund:' || 'bk-' || gen_random_uuid()) returning id into tid;
   update balances set balance = balance + ${cents} where account_id = '${accountId}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', ${cents}), (fid, 'release', 2, '${accountId}', 'funded_balance', 'credit', ${cents});
   update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 const tokenOf = (to: string) => decodeURIComponent(mails.filter((m) => m.to === to).at(-1)!.text.match(/claim\?token=([^\s]+)/)![1]);
 const sql = connect(env);
@@ -116,7 +116,7 @@ await release();
 eq("8. switch: nothing is paid on later days", (await runDuePrograms(env, sql, addDays(due2, 30))).credited, 0);
 const rec = (await stats()).reconciliation;
 eq("8. books: ledger balanced, balances match the ledger, escrow matches held employees, Benefits wallets match the ledger", [rec.ledger_balanced, rec.balances_match_ledger, rec.escrow_matches_employees, rec.benefits_match_ledger], [true, true, true, true]);
-eq("8. money: the organization paid out exactly what its runs say", [(await q("select balance::int b from balances where account_id=$1", [org.account_id]))[0].b, (await q("select sum(total)::int t from benefit_runs where org_account_id=$1 and status='credited'", [org.account_id]))[0].t], [2_000_000 - 21000 - 2500 - 16000, 21000 + 2500 + 16000]);
+eq("8. money: the organization paid out exactly what its runs say", [(await q("select shared_funds($1)::int b", [org.account_id]))[0].b, (await q("select sum(total)::int t from benefit_runs where org_account_id=$1 and status='credited'", [org.account_id]))[0].t], [2_000_000 - 21000 - 2500 - 16000, 21000 + 2500 + 16000]);
 await sql.end();
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end();

@@ -6,7 +6,7 @@ import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amountOrZero, n } from "../lib/money";
 import { achProvider } from "../lib/ach";
-import { easternDate } from "../lib/dailyReset";
+import { easternDate } from "../lib/dates";
 import { confirmSettlement, runSettlement } from "../lib/settlement";
 import { SETTLEMENT_ADMINS, SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { approvePending, rejectPending } from "../lib/refund";
@@ -493,8 +493,8 @@ admin.get("/merchants/:id/transactions", async (c) => {
   return c.json(await merchantTransactions(c.get("sql"), id.data, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }));
 });
 
-// Admin-only actions on a merchant. Both are recorded on the rows they touch without any new schema:
-// a refund resolved here carries `provider_reference` = "admin:<ACCESS ID>" (or "operator"), shown as the approver.
+// Admin-only actions on a merchant. An approved refund carries `meta.provider_reference` = "admin:<ACCESS ID>" (or "operator"), shown
+// as the approver; the rejection (and the approval) is also in the audit log.
 const adminOnly = (c: any) => {
   const a = c.get("adminAuth");
   return a.kind === "admin" && !MERCHANT_ADMINS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
@@ -507,9 +507,7 @@ for (const action of ["approve", "reject"] as const) {
     const id = merchantId.safeParse(c.req.param("id")), rid = merchantId.safeParse(c.req.param("refundId"));
     if (!id.success || !rid.success) return c.json({ error: "not_found" }, 404);
     const out = await c.get("sql").begin(async (tx) => {
-      const r = action === "approve" ? await approvePending(tx, id.data, rid.data, null) : await rejectPending(tx, id.data, rid.data);
-      if (r.kind !== "error") await tx`update transactions set provider_reference = ${actor(c)} where id = ${rid.data}`;
-      return r;
+      return action === "approve" ? await approvePending(tx, id.data, rid.data, null, actor(c)) : await rejectPending(tx, id.data, rid.data);
     });
     if (out.kind === "error") return c.json({ error: out.error }, out.status);
     if (action === "approve" && out.kind === "ok" && !out.replayed && out.row.status === "completed") track(c, { refunds_n: 1, refunds_v: Number(out.row.amount) });   // today's running estimate
@@ -795,25 +793,34 @@ admin.post("/terminals/:id/sign-out", async (c) => {
 });
 
 // ---- Settlements: the daily payout and collection runs (lib/settlement.ts) --------------------------------------
+// One `settlements` row per merchant per day; a "run" is the group of rows for a settle date, and its id is that date.
 admin.get("/settlements", async (c) => {
-  const rows = await c.get("sql")<{ id: string; cutoff_date: string; cutoff_at: Date; status: string; merchants: number; payout_total: bigint; collection_total: bigint; provider_reference: string | null; failure_code: string | null; created_at: Date; completed_at: Date | null }[]>`
-    select id, cutoff_date::text, cutoff_at, status, merchants, payout_total, collection_total, provider_reference, failure_code, created_at, completed_at
-      from settlements order by cutoff_date desc limit 60`;
-  return c.json({ settlements: rows.map((r) => ({ ...r, payout_total: Number(r.payout_total), collection_total: Number(r.collection_total) })) });
+  const rows = await c.get("sql")<{ cutoff_date: string; status: string; merchants: number; payout_total: bigint; collection_total: bigint; provider_reference: string | null; created_at: Date; completed_at: Date | null }[]>`
+    select settle_date::text as cutoff_date,
+           case when count(*) filter (where status = 'submitted') > 0 then 'submitted'
+                when count(*) filter (where status = 'failed') = count(*) then 'failed' else 'completed' end as status,
+           count(*)::int as merchants,
+           coalesce(sum(amount) filter (where direction = 'credit' and status in ('settled', 'submitted')), 0)::bigint as payout_total,
+           coalesce(sum(amount) filter (where direction = 'debit' and status in ('settled', 'submitted')), 0)::bigint as collection_total,
+           max(provider_reference) as provider_reference, min(created_at) as created_at, max(resolved_at) as completed_at
+      from settlements group by settle_date order by settle_date desc limit 60`;
+  return c.json({ settlements: rows.map((r) => ({ ...r, id: r.cutoff_date, payout_total: Number(r.payout_total), collection_total: Number(r.collection_total) })) });
 });
 
 admin.get("/settlements/:id", async (c) => {
   const id = c.req.param("id");
-  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(id) || Number.isNaN(Date.parse(id))) return c.json({ error: "not_found" }, 404);
   const sql = c.get("sql");
-  const [run] = await sql<{ id: string; cutoff_date: string; status: string; provider_reference: string | null; failure_code: string | null }[]>`
-    select id, cutoff_date::text, status, provider_reference, failure_code from settlements where id = ${id}`;
-  if (!run) return c.json({ error: "not_found" }, 404);
-  const items = await sql<{ id: string; merchant_id: string; merchant: string; amount: bigint; status: string; status_code: string | null; payout: boolean; last4: string | null }[]>`
-    select t.id, t.from_account_id as merchant_id, a.name as merchant, t.amount, t.status, t.status_code, (t.to_bank_account_id is not null) as payout, ba.last4
-      from transactions t join accounts a on a.id = t.from_account_id left join bank_accounts ba on ba.id = coalesce(t.to_bank_account_id, t.from_bank_account_id)
-     where t.settlement_id = ${id} order by t.amount desc, t.id`;
-  return c.json({ settlement: run, items: items.map((i) => ({ id: i.id, merchant_id: i.merchant_id, merchant: i.merchant, kind: i.payout ? "payout" : "collection", amount: Number(i.amount), status: i.status, status_code: i.status_code, bank_last4: i.last4 })) });
+  const items = await sql<{ id: string; merchant_id: string; merchant: string; amount: bigint; status: string; failure_code: string | null; direction: string; last4: string | null; provider_reference: string | null }[]>`
+    select s.id, s.merchant_account_id as merchant_id, a.name as merchant, s.amount, s.status, s.failure_code, s.direction, ba.last4, s.provider_reference
+      from settlements s join accounts a on a.id = s.merchant_account_id left join bank_accounts ba on ba.id = s.bank_account_id
+     where s.settle_date = ${id}::date order by s.amount desc, s.id`;
+  if (!items.length) return c.json({ error: "not_found" }, 404);
+  const open = items.some((i) => i.status === "submitted");
+  return c.json({
+    settlement: { id, cutoff_date: id, status: open ? "submitted" : items.every((i) => i.status === "failed") ? "failed" : "completed", provider_reference: items.find((i) => i.provider_reference)?.provider_reference ?? null },
+    items: items.map((i) => ({ id: i.id, merchant_id: i.merchant_id, merchant: i.merchant, kind: i.direction === "credit" ? "payout" : "collection", amount: Number(i.amount), status: i.status, status_code: i.failure_code, bank_last4: i.last4 })),
+  });
 });
 
 const settlementAdmin = (c: any) => {
@@ -825,7 +832,7 @@ const settlementAdmin = (c: any) => {
 admin.post("/settlements/run", async (c) => {
   const denied = settlementAdmin(c); if (denied) return denied;
   const r = await runSettlement(c.env, c.get("sql"), easternDate(new Date()));
-  await adminLog(c, "settlement.run", r.ran ? { type: "settlement", id: r.settlement_id } : undefined, { ...r });
+  await adminLog(c, "settlement.run", r.ran ? { type: "settlement", label: r.cutoff_date } : undefined, { ...r });
   if (!r.ran && r.reason === "no_provider") return c.json({ error: "no_payment_provider", ...r }, 503);
   return c.json(r);
 });
@@ -834,12 +841,12 @@ admin.post("/settlements/run", async (c) => {
 admin.post("/settlements/:id/confirm", async (c) => {
   const denied = settlementAdmin(c); if (denied) return denied;
   const id = c.req.param("id");
-  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(id) || Number.isNaN(Date.parse(id))) return c.json({ error: "not_found" }, 404);
   const provider = achProvider(c.env);
   if (!provider) return c.json({ error: "no_payment_provider" }, 503);
   const r = await confirmSettlement(c.get("sql"), id, provider);
   if (r.status === "missing") return c.json({ error: "not_found" }, 404);
-  await adminLog(c, "settlement.confirmed", { type: "settlement", id }, { ...r });
+  await adminLog(c, "settlement.confirmed", { type: "settlement", label: id }, { date: id, ...r });
   return c.json(r);
 });
 

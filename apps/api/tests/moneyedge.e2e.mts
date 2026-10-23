@@ -53,7 +53,7 @@ const again = await send(ada, wb, 2500, "s-ok");
 eq("send: a retry with the same key and body replays (200, same id, charged once)", [again.status, again.json.transaction.id === s1.json.transaction.id, await bal(ada.account_id)], [200, true, 7500]);
 eq("send: the same key with a different amount or recipient is a 409", [(await send(ada, wb, 999, "s-ok")).json.error, (await send(ada, wc, 2500, "s-ok")).json.error], ["idempotency_mismatch", "idempotency_mismatch"]);
 const poor = await send(bob, wa, 99999, "s-poor");
-eq("send: too little money is a recorded decline and moves nothing", [poor.status, poor.json.status_code, (await q("select status, status_code from transactions where idempotency_key='s-poor'"))[0], await bal(bob.account_id)], [422, "insufficient_balance", { status: "failed", status_code: "insufficient_balance" }, 3500]);
+eq("send: too little money is a recorded decline and moves nothing", [poor.status, poor.json.status_code, (await q("select status, status_code from txn where idempotency_key like '%:s-poor'"))[0], await bal(bob.account_id)], [422, "insufficient_balance", { status: "failed", status_code: "insufficient_balance" }, 3500]);
 const replayDecl = await send(bob, wa, 99999, "s-poor");
 eq("send: a declined attempt replays as the same decline", [replayDecl.status, replayDecl.json.status_code], [422, "insufficient_balance"]);
 eq("send: the exact balance goes, then the next cent fails", [(await send(bob, wa, 3500, "s-all")).status, await bal(bob.account_id), (await send(bob, wa, 1, "s-more")).json.status_code], [201, 0, "insufficient_balance"]);
@@ -107,7 +107,7 @@ eq("pay: too little money is a recorded decline; nothing moves", [dec.status, de
 // credit: balance first, then approved credit, journaled on the payment
 await q("update balances set credit_limit = 5000 where account_id=$1", [payer.account_id]);
 const pc = await pay(payer, { terminal_id: term, amount: 6000 }, "pay-credit");
-eq("pay: funded balance is used first, then approved credit, and the ledger records both", [pc.status, await bal(payer.account_id), await credit(payer.account_id), (await q("select le.bucket, le.direction, le.amount::int a from ledger_entries le join transactions t on t.id = le.transaction_id where t.idempotency_key like '%pay-credit' order by le.line_no")).map((r: any) => `${r.bucket}:${r.direction}:${r.a}`)], [201, 0, 2200, ["funded_balance:debit:3800", "credit_receivable:debit:2200", "funded_balance:credit:6000"]]);
+eq("pay: funded balance is used first, then approved credit, and the transaction records the credit part", [pc.status, await bal(payer.account_id), await credit(payer.account_id), (await q("select amount::int a, credit_amount::int c from transactions where idem like '%pay-credit'"))[0]], [201, 0, 2200, { a: 6000, c: 2200 }]);
 eq("pay: credit beyond the limit is declined", (await pay(payer, { terminal_id: term, amount: 4000 }, "pay-over")).json.status_code, "insufficient_balance");
 await q("update balances set credit_limit = 0 where account_id=$1", [payer.account_id]);
 eq("pay: an account over its credit limit is restricted", (await pay(payer, { terminal_id: term, amount: 5 }, "pay-restricted")).json.status_code, "account_restricted");

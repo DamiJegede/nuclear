@@ -6,6 +6,8 @@ import app from "../src/index.ts";
 
 psql(["-c", "drop schema public cascade; create schema public;"]);
 migrate();
+// transactions are immutable; this suite moves rows between days, so the trigger is lifted for it
+psql(["-c", "alter table transactions disable trigger transactions_no_update"]);
 const adm = postgres("postgres://postgres@127.0.0.1:54340/nuclear", { max: 2, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 
@@ -94,7 +96,7 @@ eq("books reconcile", s.reconciliation, { balances_match_ledger: true, balance_d
 eq("scheme balance equals total ever loaded (no credit, no fees)", s.scheme.balance, s.payments.loaded.volume);
 
 // older activity is lifetime but not "today"
-await q("update transactions set completed_at = completed_at - interval '3 days' where type='send'");
+await q("update transactions set created_at = created_at - interval '3 days' where type='send'");
 const s2 = await stats();
 eq("a send from three days ago is lifetime, not today", [s2.payments.sent, s2.payments.today.sent], [{ count: 1, volume: 1500 }, { count: 0, volume: 0 }]);
 

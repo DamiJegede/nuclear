@@ -92,7 +92,7 @@ await expire("agent:");
 eq("when the minute is over the key works again", (await call("GET", "/v1/balance", { token: a1.key })).status, 200);
 eq("an agent's sends: thirty a minute, the thirty-first is refused before any money logic runs", await (async () => {
   const rs = []; for (let i = 0; i < 31; i++) rs.push((await call("POST", "/v1/transfers", { token: a2.key, key: "m" + i, body: { to_wallet_id: carolWallet, amount: 1 } })).status);
-  return [rs.slice(0, 30).every((s) => s === 201), rs[30], (await q("select count(*)::int n from transactions where idempotency_key = 'm30'"))[0].n];
+  return [rs.slice(0, 30).every((s) => s === 201), rs[30], (await q("select count(*)::int n from transactions where idem like '%:m30'"))[0].n];
 })(), [true, 429, 0]);
 eq("payments by an agent key share the same money limit; the owner's own sends are not limited", await (async () => {
   const term = (await call("POST", "/v1/auth/signup", { body: { type: "B", name: "Shop", email: "shop@example.com", password: GOOD } })).json;
@@ -115,5 +115,5 @@ memoryLimiter.windows.age("login:", 3 * 86_400_000);
 memoryLimiter.windows.set("fresh-key", { count: 1, start: Date.now() });
 const before = memoryLimiter.windows.size();
 const job = await dailyJobs(Date.UTC(2026, 6, 1, 6, 0), env);   // 06:00 UTC: not midnight in New York, but the sweep always runs
-eq("the daily job removes counters older than a day and keeps recent ones, even on a run that does not reset", [job.reset, job.swept > 0, memoryLimiter.windows.get("fresh-key")?.count ?? 0, memoryLimiter.windows.size() === before - job.swept], [false, true, 1, true]);
+eq("the daily job removes counters older than a day and keeps recent ones, even on a run that does not reset", [job.swept > 0, memoryLimiter.windows.get("fresh-key")?.count ?? 0, memoryLimiter.windows.size() === before - job.swept], [true, 1, true]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

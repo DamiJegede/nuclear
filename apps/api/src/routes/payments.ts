@@ -9,7 +9,7 @@ import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
 import { decryptTagUrl } from "../lib/tagproof";
 import { consumeCounter, isFresh, loadTag } from "../lib/tap";
-import { findPay, PAY_COLS, type PayOutcome, type PayRow } from "../lib/pay";
+import { findPay, PAY_COLS, payIdem, type PayOutcome, type PayRow } from "../lib/pay";
 import { checkStock, quoteCart, type CartLine } from "../lib/catalog";
 import { getCheckout, getItems, itemJson, payCheckout } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
@@ -93,12 +93,11 @@ async function plan(
   if (b.checkout_id) {
     const co = await getCheckout(sql, merchantId, b.checkout_id);
     if (!co) return { error: "checkout_not_found", status: 404 };
+    if (co.status === "expired") return { error: "checkout_expired", status: 409 };
     if (co.status !== "open") return { error: co.status === "paid" ? "checkout_paid" : "checkout_not_open", status: 409 };
-    if (co.expires_at && co.expires_at.getTime() <= Date.now()) return { error: "checkout_expired", status: 409 };
-    const its = await getItems(sql, co.id);
     const bad = await checkStock(
       sql, merchantId,
-      its.filter((x) => x.product_id).map((x) => ({ productId: x.product_id!, quantity: x.quantity })),
+      co.items.filter((x) => x.product_id).map((x) => ({ productId: x.product_id!, quantity: x.quantity })),
     );
     if (bad) return { error: bad, status: 422 };
     return { checkoutId: co.id, create: null, total: co.total };
@@ -174,6 +173,7 @@ payments.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("aut
     payCheckout(tx, {
       payerWalletId: wallet.id,
       payerAccountId: accountId,
+      actorAccountId: accountId,
       merchantAccountId: merchantId!,
       terminalId,
       tagId: null,
@@ -195,7 +195,7 @@ payments.get("/:id", async (c) => {
   const { accountId, walletId } = c.get("auth");
   const sql = c.get("sql");
   const [r] = await sql<PayRow[]>`
-    select ${sql.unsafe(PAY_COLS)} from transactions
+    select ${sql.unsafe(PAY_COLS)} from txn
      where id = ${id.data} and type = 'pay' and from_account_id = ${accountId}
        ${walletId ? sql`and from_wallet_id = ${walletId}` : sql``}`;
   if (!r) return c.json({ error: "not_found" }, 404);
@@ -267,6 +267,7 @@ terminalPayments.post("/", async (c) => {
     const out = await payCheckout(tx, {
       payerWalletId: tag.wallet_id,
       payerAccountId: tag.account_id,
+      actorAccountId: accountId,
       merchantAccountId: accountId,
       terminalId,
       tagId: tag.id,
@@ -298,8 +299,8 @@ terminalPayments.get("/:attempt", async (c) => {
   const { accountId } = c.get("terminal");
   const sql = c.get("sql");
   const [r] = await sql<PayRow[]>`
-    select ${sql.unsafe(PAY_COLS)} from transactions
-     where type = 'pay' and to_account_id = ${accountId} and idempotency_key = ${`t:${attempt}`}`;
+    select ${sql.unsafe(PAY_COLS)} from txn
+     where type = 'pay' and idempotency_key = ${payIdem(accountId, `t:${attempt}`)}`;
   if (!r) return c.json({ error: "not_found" }, 404);
   // Staff see who paid (member attribution) but never wallet balances.
   const payer = await payerView(sql, { kind: "ok", row: r, replayed: true });

@@ -4,7 +4,7 @@ import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amount } from "../lib/money";
 import { quoteCart, type CartLine } from "../lib/catalog";
-import { checkoutJson, getCheckout, getItems, insertCheckout, listCheckouts } from "../lib/checkout";
+import { checkoutJson, getCheckout, insertCheckout, itemsOf, listCheckouts } from "../lib/checkout";
 import { requireSession, requireTerminal } from "../session";
 
 
@@ -56,7 +56,7 @@ terminalCheckouts.post("/", async (c) => {
       expiresInSeconds: b.expires_in ?? null,
     }),
   );
-  return c.json({ checkout: checkoutJson(co as never, await getItems(sql, (co as { id: string }).id)) }, 201);
+  return c.json({ checkout: checkoutJson(co, await itemsOf(sql, co)) }, 201);
 });
 
 terminalCheckouts.get("/", async (c) => {
@@ -74,13 +74,13 @@ terminalCheckouts.get("/:id", async (c) => {
   if (!co) return c.json({ error: "not_found" }, 404);
   const [paid] = co.status === "paid"
     ? await sql<{ id: string; idempotency_key: string }[]>`
-        select id, idempotency_key from transactions
+        select id, idem as idempotency_key from transactions
          where checkout_id = ${co.id} and type = 'pay' and status = 'completed'`
     : [];
   return c.json({
-    checkout: checkoutJson(co, await getItems(sql, co.id)),
+    checkout: checkoutJson(co, await itemsOf(sql, co)),
     payment: paid
-      ? { id: paid.id, attempt: paid.idempotency_key.startsWith("t:") ? paid.idempotency_key.slice(2) : null }
+      ? { id: paid.id, attempt: paid.idempotency_key.startsWith(`pay:${co.account_id}:t:`) ? paid.idempotency_key.slice(`pay:${co.account_id}:t:`.length) : null }
       : null,
   });
 });
@@ -102,7 +102,7 @@ terminalCheckouts.post("/:id/cancel", async (c) => {
   if (result === "not_found") return c.json({ error: "not_found" }, 404);
   if (result === "paid") return c.json({ error: "checkout_paid" }, 409);
   const co = await getCheckout(sql, accountId, id.data);
-  return c.json({ checkout: checkoutJson(co!, await getItems(sql, id.data)) });
+  return c.json({ checkout: checkoutJson(co!, await itemsOf(sql, co!)) });
 });
 
 // ---- Customer view: /v1/checkouts/:id ---------------------------------------------------------
@@ -121,12 +121,11 @@ checkouts.get("/:id", async (c) => {
   const [m] = await sql<{ name: string }[]>`
     select coalesce(b.display_name, a.name) as name
       from accounts a left join businesses b on b.account_id = a.id where a.id = ${co.account_id}`;
-  const expired = co.status === "open" && co.expires_at !== null && co.expires_at.getTime() <= Date.now();
-  if (co.status !== "open" || expired) {
+  if (co.status !== "open") {
     // Only the outcome is shown for an order that can no longer be paid.
-    return c.json({ checkout: { id: co.id, status: expired ? "expired" : co.status, merchant: { display_name: m?.name ?? "" } } });
+    return c.json({ checkout: { id: co.id, status: co.status, merchant: { display_name: m?.name ?? "" } } });
   }
-  const items = await getItems(sql, co.id);
+  const items = await itemsOf(sql, co);
   return c.json({
     checkout: {
       id: co.id,

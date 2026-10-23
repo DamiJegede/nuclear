@@ -16,9 +16,19 @@ export const applyMigration = (file: string) => psql(["-f", ROOT + "migrations/"
 /** Applies every migration in order (or up to and including `upTo`). */
 export const migrate = (upTo?: string) => { for (const f of migrationFiles()) { if (upTo && f > upTo) break; applyMigration(f); } };
 
-/** Zeroes wallets.spent_today and products.sold_today (what the midnight reset does), for tests that move the day by hand. */
+/**
+ * Moves every daily counter one program day into the past, as if all of them were last written yesterday: from then on a wallet's spent_today,
+ * a product's sold_today and an account's daily-cap numbers count as a new day (they roll themselves on the next read or write).
+ */
+export async function newDay(sql: any): Promise<void> {
+  await sql`update wallets set spent_day = spent_day - 1`;
+  await sql`update products set sold_day = sold_day - 1`;
+  await sql`update balances set opening_day = opening_day - 1`;
+}
+
+/** The midnight reset for tests that only care about the wallet and product counters: how many had something to reset. */
 export async function resetDailyCounters(sql: any): Promise<{ wallets: number; products: number }> {
-  const w = await sql`update wallets set spent_today = 0 where spent_today <> 0 returning id`;
-  const p = await sql`update products set sold_today = 0 where sold_today <> 0 returning id`;
+  const w = await sql`update wallets set spent_day = program_today() - 1 where spent_day = program_today() and spent_today <> 0 returning id`;
+  const p = await sql`update products set sold_day = program_today() - 1 where sold_day = program_today() and sold_today <> 0 returning id`;
   return { wallets: w.length, products: p.length };
 }

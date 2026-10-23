@@ -55,6 +55,11 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
       const [wallet] = await tx<{ id: string }[]>`
         insert into wallets (account_id, display_name, type)
         values (${accountId}, ${b.name}, 'default') returning id`;
+      // An organization also gets its escrow wallet: where the credit held for employees who have not claimed it waits.
+      if (b.type === "O") {
+        await tx`insert into wallets (account_id, display_name, type, balance, allow_pay, allow_send)
+                 values (${accountId}, ${`${b.name} escrow`.slice(0, 80)}, 'escrow', 0, false, false)`;
+      }
       const [dev] = await tx<{ id: string; session_expires_at: Date }[]>`
         insert into devices (account_id, platform, push_token, session_token_hash,
                              session_expires_at, last_accessed_at)

@@ -2,6 +2,7 @@ import { earmarkLog } from "./audit";
 import type { TransactionSql } from "postgres";
 import type { Sql } from "../db";
 import { CAP_COLS, capApplies, capHeadroom, capToday, type CapRow } from "./cap";
+import { insertTx, type NewTx } from "./txn";
 
 type Tx = TransactionSql<{ bigint: bigint }>;
 
@@ -56,27 +57,21 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
     if (from.type !== "benefits") return { kind: "error", status: 422, error: "source_must_be_benefits" };
     if (to.type === "benefits") return { kind: "error", status: 422, error: "destination_not_allowed" };
 
-    const ins = await tx<{ id: string }[]>`
-      insert into transactions (type, from_account_id, to_account_id, from_wallet_id, to_wallet_id, amount, status, idempotency_key)
-      values ('move', ${i.accountId}, ${i.accountId}, ${i.fromWalletId}, ${i.toWalletId}, ${i.amount.toString()}, 'pending', ${i.idempotencyKey})
-      on conflict (type, from_account_id, idempotency_key) where from_account_id is not null and type <> 'pay' do nothing
-      returning id`;
-    if (!ins[0]) {
-      const [prev] = await tx<MoveRow[]>`
-        select ${tx.unsafe(M_COLS)} from transactions where type = 'move' and from_account_id = ${i.accountId} and idempotency_key = ${i.idempotencyKey}`;
-      if (!prev || prev.from_wallet_id !== i.fromWalletId || prev.to_wallet_id !== i.toWalletId || prev.amount !== i.amount) return { kind: "error", status: 409, error: "idempotency_mismatch" };
-      return { kind: prev.status === "completed" ? "ok" : "declined", tx: prev, replayed: true };
-    }
-    const txId = ins[0].id;
-
-    // One round trip, run in this order: the balances lock, both wallets (by id), then the plain reads taken while the lock is held.
-    const [[bal], ws, [acct]] = await Promise.all([
+    const idem = `move:${i.accountId}:${i.idempotencyKey}`;
+    // One round trip, run in this order: the balances lock, both wallets (by id), then the plain reads taken while the lock is held
+    // (the account's status and the earlier attempt for this key, so a concurrent retry waits and replays).
+    const [[bal], ws, [acct], [prev]] = await Promise.all([
       tx<({ credit_limit: bigint; credit_spent: bigint } & CapRow)[]>`
         select b.balance, b.credit_limit, b.credit_spent, ${tx.unsafe(CAP_COLS)}
           from balances b join accounts a on a.id = b.account_id where b.account_id = ${i.accountId} for no key update of b`,
       tx<{ id: string; status: string; balance: bigint | null }[]>`select id, status, balance from wallets where id in (${i.fromWalletId}, ${i.toWalletId}) order by id for no key update`,
       tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
+      tx<MoveRow[]>`select ${tx.unsafe(M_COLS)} from txn where idempotency_key = ${idem}`,
     ]);
+    if (prev) {
+      if (prev.from_wallet_id !== i.fromWalletId || prev.to_wallet_id !== i.toWalletId || prev.amount !== i.amount) return { kind: "error", status: 409, error: "idempotency_mismatch" };
+      return { kind: prev.status === "completed" ? "ok" : "declined", tx: prev, replayed: true };
+    }
     const sw = ws.find((w) => w.id === i.fromWalletId);
     const dw = ws.find((w) => w.id === i.toWalletId);
     if (!bal || !sw || !dw) throw new Error("rows missing");
@@ -88,9 +83,14 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
     else if (sw.status !== "active" || dw.status !== "active") code = "wallet_unavailable";
     else if ((sw.balance ?? 0n) < i.amount) code = "wallet_balance_exceeded";
     else if (i.amount > room) code = "daily_value_limit_exceeded";
+    const t: NewTx = { type: "move", declined: code, from: i.fromWalletId, to: i.toWalletId, amount: i.amount, account: i.accountId, idem };
+    const rowOf2 = (w: { id: string; created_at: Date }): MoveRow => ({
+      id: w.id, status: code ? "failed" : "completed", status_code: code, amount: i.amount, from_wallet_id: i.fromWalletId, to_wallet_id: i.toWalletId,
+      timestamp: w.created_at, completed_at: code ? null : w.created_at,
+    });
     if (code) {
-      const [t] = await tx<MoveRow[]>`update transactions set status = 'failed', status_code = ${code} where id = ${txId} returning ${tx.unsafe(M_COLS)}`;
-      return { kind: "declined", tx: t!, replayed: false, headroom: room };
+      const [w] = await insertTx(tx, t);
+      return { kind: "declined", tx: rowOf2(w!), replayed: false, headroom: room };
     }
 
     const amt = i.amount.toString();
@@ -103,12 +103,9 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
       earmarkLog(tx, i.accountId, i.fromWalletId, -i.amount, (sw.balance ?? 0n) - i.amount, i.deviceId),
       destEarmarked ? earmarkLog(tx, i.accountId, i.toWalletId, i.amount, (dw.balance ?? 0n) + i.amount, i.deviceId) : tx`select 1`,
       // Net zero for the account: the Benefits compartment goes down, the ordinary compartment goes up.
-      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
-         values (${txId}, 'move', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}, ${i.fromWalletId}),
-                (${txId}, 'move', 2, ${i.accountId}, 'funded_balance', 'credit', ${amt}, null)`,
-      tx<MoveRow[]>`update transactions set status = 'completed', completed_at = now() where id = ${txId} returning ${tx.unsafe(M_COLS)}`,
+      insertTx(tx, t),
     ];
     const results = await Promise.all(writes);
-    return { kind: "ok", tx: (results[results.length - 1] as unknown as MoveRow[])[0]!, replayed: false };
+    return { kind: "ok", tx: rowOf2((results[results.length - 1] as unknown as { id: string; created_at: Date }[])[0]!), replayed: false };
   });
 }

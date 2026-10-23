@@ -12,7 +12,7 @@ import { MAX_BATCH_ROWS, MAX_CREDIT, claimCredit, runBenefitRun } from "../lib/o
 import { sendCreditEmails } from "../lib/orgMail";
 import { keyStatus, revokeKey, rotateKey } from "../lib/orgApiKey";
 import { fixedTotals, getProgram, setProgram, type ProgramInput } from "../lib/programs";
-import { easternDate } from "../lib/dailyReset";
+import { easternDate } from "../lib/dates";
 import { bulkEmployees, upsertEmployees } from "../lib/org";
 import { requireOwner, requireSession } from "../session";
 
@@ -44,7 +44,7 @@ org.get("/overview", async (c) => {
   const sql = c.get("sql");
   const id = c.get("auth").accountId;
   const [bal, emp, last] = await Promise.all([
-    sql<{ balance: bigint }[]>`select balance from balances where account_id = ${id}`,
+    sql<{ balance: bigint }[]>`select shared_funds(${id}) as balance`,
     // Counts are for active employees; `held` is ALL credit still held, including for employees who were removed (it is still theirs).
     sql<{ total: number; claimed: number; unclaimed: number; held: bigint }[]>`
       select (count(*) filter (where status = 'active'))::int as total,
@@ -142,7 +142,7 @@ const programBody = z.union([
 
 async function programAnswer(c: { get: (k: "sql") => import("../db").Sql }, orgId: string) {
   const sql = c.get("sql");
-  const [p, f, [b]] = await Promise.all([getProgram(sql, orgId), fixedTotals(sql, orgId), sql<{ balance: bigint }[]>`select balance from balances where account_id = ${orgId}`]);
+  const [p, f, [b]] = await Promise.all([getProgram(sql, orgId), fixedTotals(sql, orgId), sql<{ balance: bigint }[]>`select shared_funds(${orgId}) as balance`]);
   const bal = b && b.balance > 0n ? b.balance : 0n;
   return {
     program: {

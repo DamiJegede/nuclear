@@ -179,7 +179,7 @@ await fund(A, 10000, "fa");
 const adaTag = await newTag(ada.default_wallet_id);
 eq("tag payment 201", await (async () => { const r = await tpay(T1d, urlFor(adaTag.uid, 5), 2500, "att-1", { reference: "ORDER-77" }); return [r.status, r.json.payment.status, r.json.payment.amount, r.json.payment.reference, r.json.payment.via, r.json.payment.terminal_id === t1id, r.json.payment.payer.display_name]; })(), [201, "completed", 2500, "ORDER-77", "tag", true, "Ada"]);
 eq("payer debited / merchant credited", [(await bal(A)).balance, (await bal(S)).balance], [7500, 2500]);
-const first = (await q("select id from transactions where idempotency_key='t:att-1'"))[0].id;
+const first = (await q("select id from txn where idempotency_key like '%:t:att-1'"))[0].id;
 const rep = await tpay(T1d, urlFor(adaTag.uid, 5), 2500, "att-1");
 eq("same attempt replay 200, same tx, no 2nd debit", [rep.status, rep.json.payment.id, (await bal(A)).balance], [200, first, 7500]);
 eq("same attempt, different amount 409", (await tpay(T1d, urlFor(adaTag.uid, 5), 9, "att-1")).status, 409);
@@ -206,7 +206,7 @@ eq("tag limit declined + recorded", [lim.status, lim.json.status_code, lim.json.
 eq("declined attempt consumed proof", (await tpay(T1d, urlFor(limTag.uid, 1), 100, "g-8")).json.error, "proof_replayed");
 eq("within tag limit ok", (await tpay(T1d, urlFor(limTag.uid, 2), 500, "g-9")).status, 201);
 const big = await tpay(T1d, urlFor(adaTag.uid, 30), 99999, "g-10");
-eq("insufficient funds declined + recorded", [big.status, big.json.status_code, (await q("select status from transactions where idempotency_key='t:g-10'"))[0].status], [422, "insufficient_balance", "failed"]);
+eq("insufficient funds declined + recorded", [big.status, big.json.status_code, (await q("select status from txn where idempotency_key like '%:t:g-10'"))[0].status], [422, "insufficient_balance", "failed"]);
 eq("decline moved nothing", (await bal(A)).balance, 6900);
 const bobTag = await newTag(bob.default_wallet_id);
 eq("zero-balance payer declined", (await tpay(T1d, urlFor(bobTag.uid, 1), 100, "g-11")).json.status_code, "insufficient_balance");
@@ -235,8 +235,7 @@ eq("available_to_pay includes credit", (await bal(cy.session_token)).available_t
 eq("available_to_send excludes credit", (await bal(cy.session_token)).available_to_send, 1000);
 const cp = await tpay(T1d, urlFor(cyTag.uid, 1), 2500, "c-1");
 eq("balance first then credit", [cp.status, (await q("select balance::int b, credit_spent::int c from balances where account_id=$1", [cy.account_id]))[0]], [201, { b: 0, c: 1500 }]);
-eq("credit portion journaled on the payment", (await q("select bucket, direction, amount::int a from ledger_entries where transaction_id=$1 order by line_no", [cp.json.payment.id])), [
-  { bucket: "funded_balance", direction: "debit", a: 1000 }, { bucket: "credit_receivable", direction: "debit", a: 1500 }, { bucket: "funded_balance", direction: "credit", a: 2500 }]);
+eq("credit portion recorded on the payment", (await q("select amount::int a, credit_amount::int c from transactions where id=$1", [cp.json.payment.id])), [{ a: 2500, c: 1500 }]);
 eq("credit exhausted declines", (await tpay(T1d, urlFor(cyTag.uid, 2), 1600, "c-2")).json.status_code, "insufficient_balance");
 eq("cannot send from credit", (await call("POST", "/v1/transfers", { token: cy.session_token, key: "cs", body: { to_wallet_id: bob.default_wallet_id, amount: 1 } })).json.status_code, "insufficient_balance");
 const fr = await fund(cy.session_token, 2000, "fc2");
@@ -325,7 +324,7 @@ eq("other merchant sees none", (await call("GET", "/v1/staff", { token: O })).js
 eq("other merchant cannot patch/delete", [(await call("PATCH", `/v1/staff/${staffList[0].id}`, { token: O, body: { role: "read" } })).status, (await call("DELETE", `/v1/staff/${staffList[0].id}`, { token: O })).status], [404, 404]);
 
 // ============ refunds: direct (allow_refunds = true) ============
-const adaPay = (await q("select id from transactions where idempotency_key='t:att-1'"))[0].id; // 2500 tag payment
+const adaPay = (await q("select id from txn where idempotency_key like '%:t:att-1'"))[0].id; // 2500 tag payment
 const adaB0 = (await bal(A)).balance, shopB0 = (await bal(S)).balance;
 eq("terminal required", (await call("POST", "/v1/terminal/refunds", { token: A, key: "r0", body: { attempt: "att-1", mode: "full" } })).status, 401);
 eq("key required", (await call("POST", "/v1/terminal/refunds", { token: T1d, body: { attempt: "att-1", mode: "full" } })).status, 400);
@@ -340,12 +339,12 @@ const full = await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-f1
 eq("full refunds what is left", [full.status, full.json.refund.amount, full.json.refund.remaining_refundable], [201, 1500, 0]);
 eq("nothing left to refund", (await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-f2", body: { payment_id: adaPay, mode: "full" } })).json.error, "already_refunded");
 const over = await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-x1", body: { payment_id: adaPay, mode: "partial", amount: 1 } });
-eq("partial beyond remaining declined + recorded", [over.status, over.json.status_code, (await q("select status from transactions where idempotency_key='r-x1'"))[0].status], [422, "exceeds_refundable", "failed"]);
+eq("partial beyond remaining declined + recorded", [over.status, over.json.status_code, (await q("select status from txn where idempotency_key like '%:r-x1'"))[0].status], [422, "exceeds_refundable", "failed"]);
 eq("unknown payment 404", (await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-n", body: { attempt: "nope", mode: "full" } })).status, 404);
 eq("other merchant's payment 404", (await call("POST", "/v1/terminal/refunds", { token: otherT0, key: "r-o", body: { payment_id: adaPay, mode: "full" } })).status, 404);
 eq("failed/declined payment not refundable", (await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-d", body: { attempt: "g-10", mode: "full" } })).json.error, "payment_not_refundable");
 eq("reused key for another payment 409", (await call("POST", "/v1/terminal/refunds", { token: T1d, key: "r-p1", body: { attempt: "att-4", mode: "full" } })).status, 409);
-eq("refund rows carry terminal + related payment", (await q("select terminal_id=$1 as t, related_transaction_id=$2 as r, to_wallet_id=$3 as w, from_wallet_id is null as nf from transactions where idempotency_key='r-p1' and type='refund'", [t1id, adaPay, ada.default_wallet_id]))[0], { t: true, r: true, w: true, nf: true });
+eq("refund rows carry terminal + related payment", (await q("select terminal_id=$1 as t, related_transaction_id=$2 as r, to_wallet_id=$3 as w, from_wallet_id is not null as nf from txn where idempotency_key like '%:r-p1' and type='refund'", [t1id, adaPay, ada.default_wallet_id]))[0], { t: true, r: true, w: true, nf: true });
 
 // credit restored first, bounded by what is still owed
 const dee = await signup("Dee", "dee@example.com");
@@ -359,8 +358,7 @@ await call("POST", "/v1/terminal/refunds", { token: T1d, key: "dee-r1", body: { 
 eq("first 1000 restores credit before balance", await deeState(), { b: 0, c: 500 });
 await call("POST", "/v1/terminal/refunds", { token: T1d, key: "dee-r2", body: { attempt: "dee-1", mode: "full" } });
 eq("rest: 500 credit then 1000 to balance", await deeState(), { b: 1000, c: 0 });
-eq("refund ledger shows credit_receivable restore", (await q("select l.bucket, l.direction, l.amount::int a from ledger_entries l join transactions t on t.id=l.transaction_id where t.idempotency_key='dee-r2' and t.type='refund' order by l.line_no")), [
-  { bucket: "funded_balance", direction: "debit", a: 1500 }, { bucket: "funded_balance", direction: "credit", a: 1000 }, { bucket: "credit_receivable", direction: "credit", a: 500 }]);
+eq("refund restores credit first", (await q("select amount::int a, credit_amount::int c from transactions where idem like '%:dee-r2' and type='refund'")), [{ a: 1500, c: 500 }]);
 // credit already repaid: refund goes to balance, never below zero credit
 const eli = await signup("Eli", "eli@example.com");
 await fund(eli.session_token, 500, "fe");
@@ -386,9 +384,9 @@ eq("merchant balance goes negative; customer paid back immediately", [(await bal
 // parallel partial refunds can never exceed the payment
 const bigPay = await tpay(T1d, urlFor((await newTag(ada.default_wallet_id)).uid, 1), 1000, "par-pay");
 const pres = await Promise.all(Array.from({ length: 6 }, (_, i) => call("POST", "/v1/terminal/refunds", { token: T1d, key: `par-r-${i}`, body: { attempt: "par-pay", mode: "partial", amount: 300 } })));
-eq("parallel partial refunds: 3 succeed, total <= payment", [pres.filter((r) => r.status === 201).length, pres.filter((r) => r.status === 422).length, (await q("select coalesce(sum(amount),0)::int s from transactions where related_transaction_id=$1 and status='completed'", [bigPay.json.payment.id]))[0].s], [3, 3, 900]);
+eq("parallel partial refunds: 3 succeed, total <= payment", [pres.filter((r) => r.status === 201).length, pres.filter((r) => r.status === 422).length, (await q("select coalesce(sum(amount),0)::int s from transactions where related_id=$1 and status='completed'", [bigPay.json.payment.id]))[0].s], [3, 3, 900]);
 const dupR = await Promise.all(Array.from({ length: 5 }, () => call("POST", "/v1/terminal/refunds", { token: T1d, key: "par-r-dup", body: { attempt: "par-pay", mode: "partial", amount: 100 } })));
-eq("parallel duplicate refund: one refund", [new Set(dupR.map((r) => r.json.refund?.id)).size, (await q("select count(*)::int n from transactions where type='refund' and idempotency_key='par-r-dup'"))[0].n], [1, 1]);
+eq("parallel duplicate refund: one refund", [new Set(dupR.map((r) => r.json.refund?.id)).size, (await q("select count(*)::int n from transactions where type='refund' and idem like '%:par-r-dup'"))[0].n], [1, 1]);
 
 // ============ refunds: approval-required terminal ============
 await call("PATCH", `/v1/terminals/${t1id}`, { token: S, body: { allow_refunds: false } });
@@ -402,7 +400,7 @@ const refund = (key: string, body: object, tap?: { uid: string }, token = T1d) =
 const act = (id: string, verb: "approve" | "reject", tap?: { uid: string }, token = T1d) =>
   call("POST", `/v1/terminal/refunds/${id}/${verb}`, { token, body: { approval: { credential: tap ? { type: "tag", url: tapUrl(tap) } : { type: "tag", url: "x" } } } });
 const adaBal = async () => (await bal(A)).balance;
-const ledgerLines = async (id: string) => (await q("select count(*)::int n from ledger_entries where transaction_id=$1", [id]))[0].n;
+const ledgerLines = async (id: string) => (await q("select count(*)::int n from transactions where id=$1 and status='completed'", [id]))[0].n;
 
 // -- missing approver => pending request, nothing moves
 const pA = await mkPay("rp-A", 1000);
@@ -424,11 +422,11 @@ eq("nothing left to request", (await refund("rq-4", { attempt: "rp-A", mode: "fu
 eq("approve needs a tap body", (await call("POST", `/v1/terminal/refunds/${rq.json.refund.id}/approve`, { token: T1d, body: {} })).status, 400);
 eq("non-staff tap cannot approve", (await act(rq.json.refund.id, "approve", nobodyTag)).json.error, "approver_not_authorized");
 eq("read-only staff cannot approve", (await act(rq.json.refund.id, "approve", raeTag)).json.error, "approver_not_authorized");
-eq("still pending after refused approvals", (await q("select status from transactions where id=$1", [rq.json.refund.id]))[0].status, "pending");
+eq("still pending after refused approvals", (await q("select status from refunds where id=$1", [rq.json.refund.id]))[0].status, "pending");
 const ap = await act(rq.json.refund.id, "approve", samTag);
 eq("write staff tap approves the pending refund", [ap.status, ap.json.refund.status, ap.json.refund.approver_account_id, ap.json.refund.amount], [201, "completed", sam.account_id, 400]);
 eq("approval moved the money", [await adaBal(), (await bal(S)).balance], [a0 + 400, s0 - 400]);
-eq("approval posted a balanced ledger", (await q("select coalesce(sum(case direction when 'debit' then amount else -amount end),0)::int n, count(*)::int c from ledger_entries where transaction_id=$1", [rq.json.refund.id]))[0], { n: 0, c: 2 });
+eq("approval wrote the refund transaction under the request's id", (await q("select count(*)::int c, bool_and(account_id = $2) by_approver from transactions where id=$1 and type='refund'", [rq.json.refund.id, sam.account_id]))[0], { c: 1, by_approver: true });
 eq("approve replay returns recorded, no tap needed, no 2nd credit", [(await act(rq.json.refund.id, "approve")).status, await adaBal()], [200, a0 + 400]);
 eq("cannot reject a completed refund", (await act(rq.json.refund.id, "reject", samTag)).json.error, "refund_not_pending");
 eq("no longer in the pending list", (await call("GET", "/v1/terminal/refunds?status=pending", { token: T1d })).json.refunds.some((r: any) => r.id === rq.json.refund.id), false);
@@ -448,7 +446,7 @@ eq("pass approval not yet verifiable", (await call("POST", "/v1/terminal/refunds
 // -- reject via terminal tap releases the reservation
 const rj = await act(un.json.refund.id, "reject", samTag);
 eq("write staff tap rejects", [rj.status, rj.json.refund.status, rj.json.refund.status_code], [200, "failed", "rejected"]);
-eq("rejected moved nothing", [await ledgerLines(un.json.refund.id), (await q("select count(*)::int n from transactions where id=$1 and approved_by_account_id is null", [un.json.refund.id]))[0].n], [0, 1]);
+eq("rejected moved nothing", [await ledgerLines(un.json.refund.id), (await q("select count(*)::int n from refunds where id=$1 and status='rejected' and approved_by_account_id is null", [un.json.refund.id]))[0].n], [0, 1]);
 eq("reject is idempotent", (await act(un.json.refund.id, "reject")).status, 200);
 eq("cannot approve a rejected refund", (await act(un.json.refund.id, "approve", samTag)).json.error, "refund_not_pending");
 eq("reservation released after reject", (await refund("un-6", { attempt: "rp-B", mode: "full" })).json.refund.amount, 500);
@@ -457,7 +455,7 @@ eq("reject by non-staff 403", (await act((await refund("un-7", { attempt: "att-4
 // -- no expiry: an old request is still listed and approvable
 const pC = await mkPay("rp-C", 300);
 const old = await refund("old-1", { attempt: "rp-C", mode: "full" });
-await q("update transactions set \"timestamp\" = now() - interval '90 days' where id=$1", [old.json.refund.id]);
+await q("update refunds set created_at = now() - interval '90 days' where id=$1", [old.json.refund.id]);
 eq("90-day-old request is still pending and listed", (await call("GET", "/v1/terminal/refunds?status=pending&limit=100", { token: T1d })).json.refunds.some((r: any) => r.id === old.json.refund.id), true);
 eq("and still approvable", (await act(old.json.refund.id, "approve", samTag)).json.refund.status, "completed");
 
@@ -483,11 +481,11 @@ eq("bad status filter 400", (await call("GET", "/v1/refunds?status=weird", { tok
 const pE = await mkPay("rp-E", 1000);
 const par = await Promise.all(Array.from({ length: 6 }, (_, i) => refund(`rq-par-${i}`, { attempt: "rp-E", mode: "partial", amount: 300 })));
 eq("parallel requests: 3 reserve, 3 declined, never over the payment", [par.filter((r) => r.status === 202).length, par.filter((r) => r.status === 422).length,
-  (await q("select coalesce(sum(amount),0)::int s from transactions where related_transaction_id=$1 and status in ('pending','completed')", [pE]))[0].s], [3, 3, 900]);
+  (await q("select (coalesce((select sum(amount) from transactions where related_id=$1 and status='completed'),0) + coalesce((select sum(amount) from refunds where pay_transaction_id=$1 and status='pending'),0))::int s", [pE]))[0].s], [3, 3, 900]);
 const parIds = par.filter((r) => r.status === 202).map((r) => r.json.refund.id);
 const pa = await Promise.all([...parIds, ...parIds].map((id) => call("POST", `/v1/refunds/${id}/approve`, { token: S })));
-eq("parallel duplicate approvals: each refund paid exactly once", [(await q("select count(*)::int n from transactions where related_transaction_id=$1 and status='completed'", [pE]))[0].n,
-  (await q("select coalesce(sum(l.amount) filter (where l.direction='debit'),0)::int d from ledger_entries l join transactions t on t.id=l.transaction_id where t.related_transaction_id=$1", [pE]))[0].d, pa.every((r) => [200, 201].includes(r.status))], [3, 900, true]);
+eq("parallel duplicate approvals: each refund paid exactly once", [(await q("select count(*)::int n from transactions where related_id=$1 and status='completed'", [pE]))[0].n,
+  (await q("select coalesce(sum(amount),0)::int d from transactions where related_id=$1 and status='completed'", [pE]))[0].d, pa.every((r) => [200, 201].includes(r.status))], [3, 900, true]);
 
 // -- removed staff cannot approve
 const pF = await mkPay("rp-F", 100);
@@ -520,7 +518,7 @@ import { resetDailyCounters } from "./db.ts";
 const mkProduct = async (acct: string, name: string, price: number, o: { stock?: number | null; discount?: number; active?: boolean; status?: string; currency?: string } = {}) =>
   (await q("insert into products(account_id,name,price,discount,stock,active,status,currency) values($1,$2,$3,$4,$5,$6,$7,$8) returning id",
     [acct, name, price, o.discount ?? 0, o.stock === undefined ? null : o.stock, o.active ?? true, o.status ?? "available", o.currency ?? "USD"]))[0].id as string;
-const prod = async (id: string) => (await q("select stock, status, active, total_sold::int total_sold, sold_today from products where id=$1", [id]))[0];
+const prod = async (id: string) => (await q("select stock, status, active, total_sold::int total_sold, (case when sold_day = program_today() then sold_today else 0 end) sold_today from products where id=$1", [id]))[0];
 const buyer = await signup("Buyer", "buyer@example.com");
 await fund(buyer.session_token, 50000, "fbuy");
 const buyTag = async () => newTag(buyer.default_wallet_id);
@@ -584,7 +582,7 @@ const hotTags = await Promise.all(Array.from({ length: 6 }, () => buyTag()));
 const hr = await Promise.all(hotTags.map((t, i) => sale([{ product_id: hot, quantity: 1 }], `hot-${i}`, t)));
 const stockOut = (r: any) => r.status === 422 && (["out_of_stock", "product_unavailable"].includes(r.json.error) || ["out_of_stock", "product_unavailable"].includes(r.json.status_code));
 eq("parallel sales never oversell: exactly 3 succeed, the rest are turned away", [hr.filter((r) => r.status === 201).length, hr.filter(stockOut).length, await prod(hot)], [3, 3, { stock: 0, status: "sold_out", active: true, total_sold: 3, sold_today: 3 }]);
-eq("any recorded out_of_stock decline moved no money", (await q("select count(*)::int n from transactions t where t.idempotency_key like 't:hot-%' and t.status='failed' and exists (select 1 from ledger_entries l where l.transaction_id=t.id)"))[0].n, 0);
+eq("any recorded out_of_stock decline moved no money", (await q("select count(*)::int n from transactions t where t.idem like '%:t:hot-%' and t.status='declined' and exists (select 1 from account_effects e where e.tx_id=t.id)"))[0].n, 0);
 // force the in-transaction path: all six pass pricing (stock 3), then race for the lock
 const hot2 = await mkProduct(shop.account_id, "Hot item 2", 100, { stock: 1 });
 const lockTags = await Promise.all(Array.from({ length: 4 }, () => buyTag()));
@@ -626,7 +624,7 @@ await q("update products set status = 'available' where id=$1", [water]);
 const beforeReset = await prod(hot);
 const reset = await resetDailyCounters(connect(env));
 eq("daily reset zeroes sold_today, keeps total_sold", [(await prod(hot)).sold_today, (await prod(hot)).total_sold, reset.products >= 1], [0, beforeReset.total_sold, true]);
-eq("reset also cleared wallet counters", (await q("select count(*)::int n from wallets where spent_today <> 0"))[0].n, 0);
+eq("reset also cleared wallet counters", (await q("select count(*)::int n from wallets where spent_today <> 0 and spent_day = program_today()"))[0].n, 0);
 
 // ============ checkouts (orders) ============
 const mkCo = (body: object, token = T1d) => call("POST", "/v1/terminal/checkouts", { token, body });
@@ -716,10 +714,11 @@ const view = (await call("GET", "/v1/terminal/payments/ir-pay", { token: T1d }))
 const wi = view.items.find((i: any) => i.name === "Widget"), gi = view.items.find((i: any) => i.name === "Gadget");
 eq("payment lookup lists items with refundable quantities", [wi.quantity, wi.refundable_quantity, gi.net_price], [3, 3, 200]);
 const w0 = await stockOf(widget), g0 = await stockOf(gadget);
+const lineCounts = async (id: string) => { const it = (await call("GET", "/v1/terminal/payments/ir-pay", { token: T1d })).json.items.find((i: any) => i.id === id); return { r: it.refunded_quantity, p: it.pending_refund_quantity }; };
 const ir1 = await refund("ir-1", { attempt: "ir-pay", mode: "items", restock: true, items: [{ checkout_item_id: wi.id, quantity: 1 }] });
 eq("item refund with restock:true: amount from the snapshot, restocked", [ir1.status, ir1.json.refund.amount, ir1.json.refund.items.map((x: any) => [x.checkout_item_id === wi.id, x.quantity, x.restock]), await stockOf(widget)], [201, 500, [[true, 1, true]], w0 + 1]);
-eq("line counters: 1 refunded, none pending", (await q("select refunded_quantity r, refund_pending_quantity p from checkout_items where id=$1", [wi.id]))[0], { r: 1, p: 0 });
-eq("item refund row points at the checkout and the pay", (await q("select checkout_id=$1 as co, related_transaction_id is not null as rel from transactions where idempotency_key='ir-1' and type='refund'", [itemCoId]))[0], { co: true, rel: true });
+eq("line counters: 1 refunded, none pending", await lineCounts(wi.id), { r: 1, p: 0 });
+eq("item refund row points at the checkout and the pay", (await q("select checkout_id=$1 as co, related_id is not null as rel from transactions where idem like '%:ir-1' and type='refund'", [itemCoId]))[0], { co: true, rel: true });
 eq("refundable quantity drops", (await call("GET", "/v1/terminal/payments/ir-pay", { token: T1d })).json.items.find((i: any) => i.name === "Widget").refundable_quantity, 2);
 eq("more than what is left refused", (await refund("ir-2", { attempt: "ir-pay", mode: "items", items: [{ checkout_item_id: wi.id, quantity: 3 }] })).json.error, "item_quantity_exceeded");
 eq("item from another order refused", (await refund("ir-3", { attempt: "ir-pay", mode: "items", items: [{ checkout_item_id: co1.json.checkout.items[0].id, quantity: 1 }] })).json.error, "item_not_found");
@@ -746,16 +745,16 @@ await call("PATCH", `/v1/terminals/${t1id}`, { token: S, body: { allow_refunds: 
 const w1 = await stockOf(widget);
 const pIr = await refund("ir-p1", { attempt: "ir-pay", mode: "items", restock: true, items: [{ checkout_item_id: wi.id, quantity: 2 }] });
 eq("item refund without approval is pending, nothing moves", [pIr.status, pIr.json.refund.status, await stockOf(widget)], [202, "pending", w1]);
-eq("pending units sit in refund_pending_quantity", (await q("select refunded_quantity r, refund_pending_quantity p from checkout_items where id=$1", [wi.id]))[0], { r: 1, p: 2 });
+eq("pending units sit in refund_pending_quantity", await lineCounts(wi.id), { r: 1, p: 2 });
 eq("pending units are reserved", (await call("GET", "/v1/terminal/payments/ir-pay", { token: T1d })).json.items.find((i: any) => i.name === "Widget").refundable_quantity, 0);
 eq("no more can be requested", (await refund("ir-p2", { attempt: "ir-pay", mode: "items", items: [{ checkout_item_id: wi.id, quantity: 1 }] })).json.error, "item_quantity_exceeded");
 eq("pending list shows item names", (await call("GET", "/v1/terminal/refunds?status=pending", { token: T1d })).json.refunds.find((r: any) => r.id === pIr.json.refund.id).items[0].name, "Widget");
 eq("approval restocks", [(await act(pIr.json.refund.id, "approve", samTag)).json.refund.status, await stockOf(widget)], ["completed", w1 + 2]);
-eq("approval moves pending units to refunded", (await q("select refunded_quantity r, refund_pending_quantity p from checkout_items where id=$1", [wi.id]))[0], { r: 3, p: 0 });
-const gBefore = (await q("select refunded_quantity r, refund_pending_quantity p from checkout_items where id=$1", [gi.id]))[0];
+eq("approval moves pending units to refunded", await lineCounts(wi.id), { r: 3, p: 0 });
+const gBefore = await lineCounts(gi.id);
 const pIr2 = await refund("ir-p3", { attempt: "ir-pay", mode: "items", restock: true, items: [{ checkout_item_id: gi.id, quantity: 1 }] });
 eq("reject releases the reserved units, restocks nothing", [(await act(pIr2.json.refund.id, "reject", samTag)).json.refund.status_code, await stockOf(gadget), (await call("GET", "/v1/terminal/payments/ir-pay", { token: T1d })).json.items.find((i: any) => i.name === "Gadget").refundable_quantity], ["rejected", g0, 1]);
-eq("reject puts the reserved units back", (await q("select refunded_quantity r, refund_pending_quantity p from checkout_items where id=$1", [gi.id]))[0], gBefore);
+eq("reject puts the reserved units back", await lineCounts(gi.id), gBefore);
 await call("PATCH", `/v1/terminals/${t1id}`, { token: S, body: { allow_refunds: true } });
 
 // parallel item refunds of one line can never exceed what was bought
@@ -767,21 +766,11 @@ const itemPar = await Promise.all(Array.from({ length: 5 }, (_, i) => refund(`ir
 eq("parallel item refunds: exactly 3 succeed, stock back by 3", [itemPar.filter((r) => r.status === 201).length, itemPar.filter((r) => r.status === 422).length, await stockOf(widget)], [3, 2, w2 + 3]);
 
 // database invariants
-let e1 = "none"; try { await q("insert into transactions(type,from_account_id,to_account_id,to_wallet_id,related_transaction_id,amount,status,idempotency_key,items) select 'refund', $1, $2, $3, id, 1, 'pending', 'bad-1', '{}'::jsonb from transactions where idempotency_key='t:ir-pay' limit 1", [shop.account_id, buyer.account_id, buyer.default_wallet_id]); } catch (e: any) { e1 = e.constraint_name ?? e.code; }
-eq("items must be a JSON array", e1, "transactions_items_refund_only");
-let e2 = "none"; try { await q("update transactions set items = '[]'::jsonb where idempotency_key='t:ir-pay' and type='pay'"); } catch (e: any) { e2 = e.constraint_name ?? e.code; }
-eq("items only on refunds", e2, "transactions_items_refund_only");
-let e3 = "none"; try { await q("insert into transactions(type,from_account_id,to_account_id,from_wallet_id,checkout_id,amount,status,idempotency_key,completed_at) select 'pay', $1, $2, $3, $4, 1, 'completed', 'dup-pay', now()", [buyer.account_id, shop.account_id, buyer.default_wallet_id, itemCoId]); } catch (e: any) { e3 = e.constraint_name ?? e.code; }
-eq("a checkout can be settled by only one completed payment", e3, "transactions_checkout_paid_key");
-let e5 = "none"; try { await q("update checkout_items set refunded_quantity = quantity + 1 where id=$1", [wi.id]); } catch (e: any) { e5 = e.constraint_name ?? e.code; }
-eq("refunded + pending can never exceed the line quantity", e5, "checkout_items_check1");
-let e6 = "none"; try { await q("update checkout_items set refund_pending_quantity = -1 where id=$1", [wi.id]); } catch (e: any) { e6 = e.constraint_name ?? e.code; }
-eq("counters cannot go negative", e6, "checkout_items_refund_pending_quantity_check");
-let e7 = "none"; try { await q("insert into transactions(type,from_account_id,to_account_id,to_wallet_id,related_transaction_id,checkout_id,amount,status,idempotency_key) select 'refund', $1, $2, $3, t.id, $4, 1, 'pending', 'bad-co' from transactions t where t.idempotency_key='t:ir-pay'", [other.account_id, buyer.account_id, buyer.default_wallet_id, itemCoId]); } catch (e: any) { e7 = e.code; }
-eq("a refund cannot point at another merchant's checkout", e7, "23514");
-eq("amount refunds of an order also carry its checkout_id", (await q("select checkout_id=$1 as co from transactions where idempotency_key='ir-10' and type='refund'", [keyed.json.payment.checkout_id]))[0].co, true);
-let e4 = "none"; try { await q("insert into checkout_items(checkout_id,product_id,name,unit_price,quantity) values($1,$2,'x',1,1)", [itemCoId, otherProd]); } catch (e: any) { e4 = e.code; }
-eq("checkout item product must belong to the merchant", e4, "23514");
+const pErr = async (sqlText: string, params: unknown[] = []) => { try { await q(sqlText, params); return "none"; } catch (e: any) { return e.constraint_name ?? e.code; } };
+eq("a checkout can be settled by only one completed payment", await pErr("insert into transactions(type,status,from_wallet_id,to_wallet_id,amount,checkout_id,account_id,idem) values ('pay','completed',$1,$2,1,$3,$4,'dup-pay')", [buyer.default_wallet_id, shop.default_wallet_id, itemCoId, shop.account_id]), "transactions_checkout_paid_key");
+eq("a refund cannot point at another merchant's checkout", await pErr("insert into transactions(type,status,from_wallet_id,to_wallet_id,amount,related_id,checkout_id,account_id,idem) select 'refund','completed',$1,$2,1,t.id,$3,$4,'bad-co' from transactions t where t.idem like '%:t:ir-pay'", [other.default_wallet_id, buyer.default_wallet_id, itemCoId, other.account_id]), "23514");
+eq("a transaction is immutable: no update, no delete", [await pErr("update transactions set amount = amount + 1 where idem like '%:t:ir-pay'"), await pErr("delete from transactions where idem like '%:t:ir-pay'")], ["P0001", "P0001"]);
+eq("an amount-only payment has no checkout, and neither has its refund", [keyed.json.payment.checkout_id, (await q("select checkout_id from transactions where idem like '%:ir-10' and type='refund'"))[0].checkout_id], [null, null]);
 
 // ============ tags: claim, assign, lock, reset ============
 const claimTag = (token: string, url: string, body: object = {}) => call("POST", "/v1/tags/claim", { token, body: { url, ...body } });
@@ -878,29 +867,23 @@ eq("parallel taps: exactly floor(funds/amount) succeed, never overdrawn", [ok, (
 const dupTag = await newTag(racer.default_wallet_id);
 const before = (await bal(racer.session_token)).balance;
 const dups = await Promise.all(Array.from({ length: 6 }, () => tpay(T1d, urlFor(dupTag.uid, 1), 100, "dup-att")));
-eq("parallel duplicate attempt: one debit, one tx", [(await bal(racer.session_token)).balance, new Set(dups.filter((d) => d.json.payment).map((d) => d.json.payment.id)).size, (await q("select count(*)::int n from transactions where idempotency_key='t:dup-att'"))[0].n], [before - 100, 1, 1]);
+eq("parallel duplicate attempt: one debit, one tx", [(await bal(racer.session_token)).balance, new Set(dups.filter((d) => d.json.payment).map((d) => d.json.payment.id)).size, (await q("select count(*)::int n from transactions where idem like '%:t:dup-att'"))[0].n], [before - 100, 1, 1]);
 const dupCust = await Promise.all(Array.from({ length: 6 }, () => call("POST", "/v1/payments", { token: racer.session_token, key: "dup-c", body: { amount: 10, terminal_id: t1id } })));
-eq("parallel duplicate customer payment: one tx", [new Set(dupCust.map((d) => d.json.payment.id)).size, (await q("select count(*)::int n from transactions where idempotency_key like 'c:%:dup-c'"))[0].n], [1, 1]);
+eq("parallel duplicate customer payment: one tx", [new Set(dupCust.map((d) => d.json.payment.id)).size, (await q("select count(*)::int n from transactions where idem like '%:c:%:dup-c'"))[0].n], [1, 1]);
 const sameProof = await newTag(racer.default_wallet_id);
 const sp = await Promise.all([1, 2, 3, 4].map((i) => tpay(T1d, urlFor(sameProof.uid, 7), 5, `sp-${i}`)));
 eq("same proof across parallel attempts: exactly one wins", sp.filter((r) => r.status === 201).length, 1);
 
 // ============ ledger integrity ============
-eq("ledger nets to zero", (await q("select coalesce(sum(case direction when 'debit' then amount else -amount end),0)::int n from ledger_entries"))[0].n, 0);
-eq("balances == ledger funded_balance (all accounts except the simulated-payout merchant)", (await q(`
-  select count(*)::int n from balances b where b.balance <> coalesce((select sum(case direction when 'credit' then amount else -amount end)
-    from ledger_entries l where l.account_id=b.account_id and l.bucket='funded_balance'),0)
-    and b.account_id <> $1`, [neg.account_id]))[0].n, 0);
-eq("credit_spent == ledger credit_receivable (all accounts)", (await q(`
-  select count(*)::int n from balances b where b.credit_spent <> coalesce((select sum(case direction when 'debit' then amount else -amount end)
-    from ledger_entries l where l.account_id=b.account_id and l.bucket='credit_receivable'),0)
-    and b.account_id <> $1`, [cy.account_id]))[0].n, 0);
-eq("every completed pay has balanced ledger lines", (await q(`
-  select count(*)::int n from transactions t where t.type='pay' and t.status='completed'
-   and (select coalesce(sum(case direction when 'debit' then amount else -amount end),0) from ledger_entries l where l.transaction_id=t.id) <> 0`))[0].n, 0);
-eq("failed pays have no ledger lines", (await q("select count(*)::int n from ledger_entries l join transactions t on t.id=l.transaction_id where t.status='failed'"))[0].n, 0);
-eq("no pending pay left behind", (await q("select count(*)::int n from transactions where status='pending' and type <> 'refund'"))[0].n, 0);
-eq("pending refunds have no ledger lines", (await q("select count(*)::int n from ledger_entries l join transactions t on t.id=l.transaction_id where t.type='refund' and t.status in ('pending','failed')"))[0].n, 0);
+eq("balances == the sum of what the transactions did (all accounts except the simulated-payout merchant)", (await q(`
+  select count(*)::int n from balances b where b.balance <> coalesce((select sum(delta) from account_effects e where e.account_id=b.account_id),0)
+    and b.account_id not in ($1, '00000000-0000-7000-8000-000000000001')`, [neg.account_id]))[0].n, 0);
+eq("credit_spent == the credit drawn minus repaid by transactions (all accounts)", (await q(`
+  select count(*)::int n from balances b where b.credit_spent <> coalesce((select sum(credit_delta) from account_effects e where e.account_id=b.account_id),0)
+    and b.account_id not in ($1, '00000000-0000-7000-8000-000000000001')`, [cy.account_id]))[0].n, 0);
+eq("a declined row has no effect on any balance", (await q("select count(*)::int n from account_effects e join transactions t on t.id=e.tx_id where t.status='declined'"))[0].n, 0);
+eq("no transaction is left half done: every row is completed or declined", (await q("select count(*)::int n from transactions where status not in ('completed','declined')"))[0].n, 0);
+eq("pending refund requests have not moved money (no transaction yet)", (await q("select count(*)::int n from transactions t join refunds r on r.id = t.id where r.status in ('pending','rejected')"))[0].n, 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end();

@@ -37,5 +37,5 @@ eq("most succeed (these payers are well funded)", res.filter((r) => r.status ===
 eq("money is conserved: the sum of all balances is unchanged", Number((await q("select sum(balance)::bigint t from balances"))[0].t), total0);
 eq("no balance went negative and the ledger balances", [(await q("select count(*)::int n from balances where balance < 0"))[0].n, (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation.ledger_balanced, (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation.balances_match_ledger], [0, true, true]);
 const dup = await Promise.all([1, 2, 3, 4, 5].map(() => call("POST", "/v1/payments", { token: payers[0].session_token, key: "same-key", body: { amount: 777, terminal_id: shops[0].term } })));
-eq("five simultaneous retries of one payment charge it once", [dup.filter((r) => r.status === 201).length >= 1, Number((await q("select count(*) n from transactions where idempotency_key like '%same-key'"))[0].n)], [true, 1]);
+eq("five simultaneous retries of one payment charge it once", [dup.filter((r) => r.status === 201).length >= 1, Number((await q("select count(*) n from transactions where idem like '%same-key'"))[0].n)], [true, 1]);
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

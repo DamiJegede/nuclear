@@ -1,6 +1,6 @@
 import type { Sql } from "../db";
 import { imageUrl } from "./images";
-import { PROGRAM_TZ } from "./ledger";
+import { PROGRAM_TZ } from "./dates";
 import { n } from "./money";
 import { DEFAULT_PAGE, encodePair } from "./paging";
 import { party, type DayRange } from "./adminLists";
@@ -39,7 +39,7 @@ export async function merchantDetail(sql: Sql, id: string) {
       coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'pending'), 0) as pend_v,
       (count(distinct x.from_account_id) filter (where x.type = 'pay' and x.status = 'completed'))::int as customers,
       max(x.completed_at) filter (where x.type = 'pay' and x.status = 'completed') as last_payment_at
-      from transactions x, start
+      from txn x, start
      where (x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')`;
   const [c] = await sql<{ terminals: number; staff: number; products: number }[]>`
     select (select count(*) from terminals where account_id = ${id})::int as terminals,
@@ -70,9 +70,9 @@ export async function merchantTerminals(sql: Sql, id: string) {
   }[]>`
     select t.id, t.name, t.allow_refunds, t.created_at, (t.session_token_hash is not null) as signed_in,
            t.orb_uid, t.orb_model, t.orb_software,
-           (select count(*) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed')::int as payments,
-           (select coalesce(sum(x.amount), 0) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as volume,
-           (select max(x.completed_at) from transactions x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as last_payment_at
+           (select count(*) from txn x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed')::int as payments,
+           (select coalesce(sum(x.amount), 0) from txn x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as volume,
+           (select max(x.completed_at) from txn x where x.terminal_id = t.id and x.type = 'pay' and x.status = 'completed') as last_payment_at
       from terminals t
      where t.account_id = ${id}
      order by t.created_at, t.id`;
@@ -103,7 +103,7 @@ export async function merchantProducts(sql: Sql, id: string, limit: number = DEF
     id: string; name: string; category: string | null; price: bigint; discount: bigint; stock: number | null; active: boolean;
     status: string; total_sold: bigint; sold_today: number; ts_key: string;
   }[]>`
-    select p.id, p.name, c.name as category, p.price, p.discount, p.stock, p.active, p.status, p.total_sold, p.sold_today, p.created_at::text as ts_key
+    select p.id, p.name, c.name as category, p.price, p.discount, p.stock, p.active, p.status, p.total_sold, (case when p.sold_day = program_today() then p.sold_today else 0 end) as sold_today, p.created_at::text as ts_key
       from products p left join categories c on c.id = p.category_id and c.account_id = p.account_id
      where p.account_id = ${id}
        ${cursor ? sql`and (p.created_at, p.id) > (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
@@ -144,11 +144,11 @@ export async function merchantTransactions(
            case when t.type = 'pay' and t.tag_id is not null then 'tap' when t.type = 'pay' and t.pass_id is not null then 'pass' when t.type = 'pay' then 'app' end as via,
            t.reference, tm.name as terminal,
            case when t.type = 'pay' then fa.name else ta.name end as customer,
-           coalesce(ap.name, case when t.provider_reference like 'admin:%' then 'Admin ' || substr(t.provider_reference, 7) when t.provider_reference = 'operator' then 'Operator' end) as approver,
+           coalesce(case when t.provider_reference like 'admin:%' then 'Admin ' || substr(t.provider_reference, 7) when t.provider_reference = 'operator' then 'Operator' end, ap.name) as approver,
            t.related_transaction_id as related,
            fa.name as from_name, ta.name as to_name,
            fa.id as from_id, fa.type as from_type, fa.photo as from_photo, ta.id as to_id, ta.type as to_type, ta.photo as to_photo
-      from transactions t
+      from txn t
       left join terminals tm on tm.id = t.terminal_id
       left join accounts fa on fa.id = t.from_account_id
       left join accounts ta on ta.id = t.to_account_id
@@ -165,11 +165,11 @@ export async function merchantTransactions(
            (count(*) filter (where t.type = 'pay'))::int as payments,
            (count(*) filter (where t.type = 'refund' and t.status <> 'pending'))::int as refunds,
            (count(*) filter (where t.type = 'refund' and t.status = 'pending'))::int as pending
-      from transactions t where ${mine} ${inRange}`;
+      from txn t where ${mine} ${inRange}`;
   const [tot] = await sql<{ pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint }[]>`
     select (count(*) filter (where t.type = 'pay'))::int as pay_n, coalesce(sum(t.amount) filter (where t.type = 'pay'), 0) as pay_v,
            (count(*) filter (where t.type = 'refund'))::int as ref_n, coalesce(sum(t.amount) filter (where t.type = 'refund'), 0) as ref_v
-      from transactions t where t.status = 'completed' and ${mine} ${inRange}`;
+      from txn t where t.status = 'completed' and ${mine} ${inRange}`;
   return {
     counts: c!,
     totals: { payments: { count: tot!.pay_n, volume: n(tot!.pay_v) }, refunds: { count: tot!.ref_n, volume: n(tot!.ref_v) } },

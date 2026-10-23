@@ -1,6 +1,6 @@
 import type { Sql } from "../db";
 import { imageUrl } from "./images";
-import { PROGRAM_TZ } from "./ledger";
+import { PROGRAM_TZ } from "./dates";
 import { n } from "./money";
 
 /** Escapes LIKE wildcards so a typed filter is matched literally. */
@@ -14,8 +14,8 @@ export async function merchantList(sql: Sql, q: string | null) {
     select a.id, coalesce(b.display_name, a.name) as name, a.handle, a.status, a.created_at,
            coalesce(bal.balance, 0) as balance,
            (select count(*) from terminals t where t.account_id = a.id)::int as terminals,
-           (select count(*) from transactions x where x.to_account_id = a.id and x.type = 'pay' and x.status = 'completed')::int as payments,
-           (select coalesce(sum(x.amount), 0) from transactions x where x.to_account_id = a.id and x.type = 'pay' and x.status = 'completed') as volume
+           (select count(*) from txn x where x.to_account_id = a.id and x.type = 'pay' and x.status = 'completed')::int as payments,
+           (select coalesce(sum(x.amount), 0) from txn x where x.to_account_id = a.id and x.type = 'pay' and x.status = 'completed') as volume
       from accounts a
       left join businesses b on b.account_id = a.id
       left join balances bal on bal.account_id = a.id
@@ -83,7 +83,7 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
            tw.display_name as to_wallet,
            case when t.type = 'fund' then null else fa.id end as from_id, fa.type as from_type, fa.photo as from_photo,
            case when t.type = 'purchase' then null else ta.id end as to_id, ta.type as to_type, ta.photo as to_photo
-      from transactions t
+      from txn t
       left join accounts fa on fa.id = t.from_account_id
       left join businesses fb on fb.account_id = t.from_account_id
       left join wallets fw on fw.id = t.from_wallet_id
@@ -103,13 +103,13 @@ export async function transactionFeed(sql: Sql, kind: TxKind, limit: number, cur
            (count(*) filter (where t.type = 'pay' and (t.tag_id is not null or t.pass_id is not null)))::int as taps,
            (count(*) filter (where t.type = 'fund'))::int as funds,
            (count(*) filter (where fw.type = 'agent' and t.type in ('send', 'pay')))::int as agents
-      from transactions t left join wallets fw on fw.id = t.from_wallet_id
+      from txn t left join wallets fw on fw.id = t.from_wallet_id
      where true ${inRange}`;
 
   // Money moved by the completed transactions of the chosen filter and period.
   const [tot] = await sql<{ n: number; v: bigint }[]>`
     select count(*)::int as n, coalesce(sum(t.amount), 0) as v
-      from transactions t left join wallets fw on fw.id = t.from_wallet_id
+      from txn t left join wallets fw on fw.id = t.from_wallet_id
      where t.status = 'completed' ${filter} ${inRange}`;
   return {
     counts: c!,
@@ -128,8 +128,8 @@ export async function agentActivity(sql: Sql) {
   const [r] = await sql<{ n: number; v: bigint; tn: number; tv: bigint }[]>`
     with start as (select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t)
     select count(*)::int as n, coalesce(sum(x.amount), 0) as v,
-           (count(*) filter (where x.completed_at >= start.t))::int as tn,
-           coalesce(sum(x.amount) filter (where x.completed_at >= start.t), 0) as tv
+           (count(*) filter (where x.created_at >= start.t))::int as tn,
+           coalesce(sum(x.amount) filter (where x.created_at >= start.t), 0) as tv
       from transactions x join wallets w on w.id = x.from_wallet_id and w.type = 'agent', start
      where x.status = 'completed' and x.type in ('send', 'pay')`;
   return {

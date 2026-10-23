@@ -30,23 +30,22 @@ const batch = (o: any, rows: any[], key: string) => call("POST", "/v1/org/benefi
 const claim = (p: any, token: string) => call("POST", "/v1/employee/claims", { token: p.session_token, body: { token } });
 const tokenOf = (to: string) => decodeURIComponent(mails.filter((m) => m.to === to).at(-1)!.text.match(/claim\?token=([^\s]+)/)![1]);
 const reconciled = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation;
-// Make everything an account has done so far belong to an earlier program day (the ledger is append-only, so its triggers are lifted for the test).
+// Make everything an account has done so far belong to an earlier program day (transactions are immutable, so the trigger is lifted for the test).
 const earlier = async (accountId: string, days = 2) => {
-  await q("alter table ledger_entries disable trigger ledger_entries_no_update");
-  await q(`update ledger_entries set created_at = created_at - interval '${days} days' where account_id = $1`, [accountId]);
-  await q("alter table ledger_entries enable trigger ledger_entries_no_update");
-  await q(`update transactions set "timestamp" = "timestamp" - interval '${days} days', completed_at = completed_at - interval '${days} days' where from_account_id = $1 or to_account_id = $1`, [accountId]);
+  await q("alter table transactions disable trigger transactions_no_update");
+  await q(`update transactions set created_at = created_at - interval '${days} days' where from_wallet_id in (select id from wallets where account_id = $1) or to_wallet_id in (select id from wallets where account_id = $1)`, [accountId]);
+  await q("alter table transactions enable trigger transactions_no_update");
   await q(`update fundings set created_at = created_at - interval '${days} days', released_at = released_at - interval '${days} days' where account_id = $1`, [accountId]);
-  // ... and it is a new program day: what the account holds now is its opening value, with nothing added yet (what ensureDay does for everyone)
+  // ... and it is a new program day: what the account holds now is its opening value, with nothing added yet (what the next write would roll it to)
   await q("update balances set ordinary_opening = balance - coalesce((select sum(balance) from wallets where account_id = $1 and type = 'benefits'), 0), added_today = 0, opening_day = (now() at time zone 'America/New_York')::date where account_id = $1", [accountId]);
 };
 
-const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
+const bankroll = async (accountId: string, cents: number) => q(`do $$ declare bank uuid; fid uuid; tid uuid; w uuid; begin
   insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${accountId}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
   insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${accountId}', bank, ${cents}, 'bk-' || gen_random_uuid(), 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${accountId}', '${accountId}', bank, ${cents}, 'completed', 'bk-' || gen_random_uuid(), now()) returning id into tid;
+  select id into w from wallets where account_id = '${accountId}' and type = 'default';
+  insert into transactions (type, status, from_wallet_id, to_wallet_id, amount, funding_id, account_id, idem) values ('fund', 'completed', '00000000-0000-7000-8000-000000000002', w, ${cents}, fid, '${accountId}', 'fund:' || 'bk-' || gen_random_uuid()) returning id into tid;
   update balances set balance = balance + ${cents} where account_id = '${accountId}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', ${cents}), (fid, 'release', 2, '${accountId}', 'funded_balance', 'credit', ${cents});
   update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 const acme = await sign("Acme", "hr@acme.test", "O");
 const other = await sign("Globex", "hr@globex.test", "O");
@@ -130,7 +129,7 @@ await pay(hana, { terminal_id: termId, amount: 100_000, from_wallet_id: hdw }, "
 const hh = (await balance(hana));
 eq("headroom: opening $1,500, $1,000 spent -> $500 of room (spending does not restore it)", [hh.ordinary, hh.daily_headroom], [50_000, 50_000]);
 const over = await move(hana, hb.id, hdw, 50_001, "h-over");
-eq("headroom: one cent over is declined, recorded, and moves nothing", [over.status, over.json.status_code, (await benefitsWallets(hana))[0].balance, (await q("select status, status_code from transactions where type='move' and idempotency_key='h-over'"))[0]], [422, "daily_value_limit_exceeded", 900_000, { status: "failed", status_code: "daily_value_limit_exceeded" }]);
+eq("headroom: one cent over is declined, recorded, and moves nothing", [over.status, over.json.status_code, (await benefitsWallets(hana))[0].balance, (await q("select status, status_code from txn where type='move' and idempotency_key like '%:h-over'"))[0]], [422, "daily_value_limit_exceeded", 900_000, { status: "failed", status_code: "daily_value_limit_exceeded" }]);
 const [a, b] = await Promise.all([move(hana, hb.id, hdw, 40_000, "h-sim-1"), move(hana, hb.id, hdw, 40_000, "h-sim-2")]);
 eq("headroom: two simultaneous $400 moves cannot both succeed", [[a.status, b.status].sort(), (await balance(hana)).daily_headroom], [[201, 422], 10_000]);
 const hkid = (await call("POST", "/v1/wallets", { token: hana.session_token, body: { display_name: "K2", type: "person", balance: 0 } })).json.wallet;

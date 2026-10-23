@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { Env } from "../env";
-import { easternDate } from "./dailyReset";
+import { easternDate } from "./dates";
 import type { Days, Deltas } from "./counters";
 
 /**

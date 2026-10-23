@@ -1,8 +1,8 @@
 import type { Env } from "../env";
 
-/** One bank movement in a settlement batch. `credit` pays the merchant's bank; `debit` collects from it. */
-export type AchItem = { transactionId: string; direction: "credit" | "debit"; amountCents: bigint; bankAccountId: string; accountId: string };
-export type AchOutcome = { transactionId: string; outcome: "settled" | "returned"; code?: string };
+/** One bank movement in a settlement batch (`itemId` is the `settlements` row). `credit` pays the merchant's bank; `debit` collects from it. */
+export type AchItem = { itemId: string; direction: "credit" | "debit"; amountCents: bigint; bankAccountId: string; accountId: string };
+export type AchOutcome = { itemId: string; outcome: "settled" | "returned"; code?: string };
 
 /**
  * The bank rail behind settlement. No ACH provider is chosen yet, so this is the seam: a real adapter reads the account numbers it
@@ -20,7 +20,7 @@ export interface AchProvider {
 export const sandboxAch: AchProvider = {
   name: "sandbox",
   submit: async (batchKey) => ({ reference: `sandbox-${batchKey}` }),
-  outcomes: async (_ref, items) => items.map((i) => ({ transactionId: i.transactionId, outcome: "settled" as const })),
+  outcomes: async (_ref, items) => items.map((i) => ({ itemId: i.itemId, outcome: "settled" as const })),
 };
 
 /** The provider for this deployment, or null when none is configured (settlement then does nothing rather than pretending to pay). */

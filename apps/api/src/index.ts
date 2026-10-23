@@ -4,7 +4,6 @@ import type { AppContext, Env } from "./env";
 import { connect } from "./db";
 import { dailyJobs } from "./lib/cron";
 import { setPublicBase } from "./lib/images";
-import { programDay } from "./lib/dailyReset";
 import { withDb } from "./session";
 import { account } from "./routes/account";
 import { business } from "./routes/business";
@@ -57,9 +56,6 @@ v1.use("*", async (c, next) => {
   })(c, next);
 });
 v1.use("*", withDb);
-// Anything that reads or changes spent_today / sold_today first makes sure the day's reset has happened
-// (the cron usually did it; this is the backstop if a run was missed).
-for (const path of ["/transfers", "/transfers/*", "/payments", "/payments/*", "/terminal/payments", "/terminal/payments/*", "/terminal/products", "/terminal/products/*", "/shop/orders", "/wallets", "/wallets/*", "/business/overview", "/business/products", "/benefits-api/credits", "/org/benefit-runs", "/sandbox/fundings", "/employee/claims", "/terminal/refunds", "/terminal/refunds/*", "/refunds", "/refunds/*"]) v1.use(path, programDay);
 v1.route("/admin", admin);
 v1.route("/auth", auth);
 v1.route("/devices", devices);

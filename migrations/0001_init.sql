@@ -1,64 +1,3 @@
--- Nuclear schema v2, step 0: the consolidated v1 schema (pg_dump of migrations 0001-0041) as the single initial migration.
--- The rebuild evolves THIS file in place (nothing here has been applied to nuclear-dev; the dev database is dropped and rebuilt at cutover).
--- See docs/SCHEME-V2.md. The archived v1 migrations are in migrations-v1/.
---
--- PostgreSQL database dump
---
-
--- Dumped from database version 18.6 (Homebrew)
--- Dumped by pg_dump version 18.6 (Homebrew)
-
---
--- Name: checkout_item_same_merchant(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.checkout_item_same_merchant() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF NEW.product_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM checkouts c JOIN products p ON p.account_id = c.account_id
-        WHERE c.id = NEW.checkout_id AND p.id = NEW.product_id) THEN
-    RAISE EXCEPTION 'product does not belong to the checkout merchant' USING ERRCODE = 'check_violation';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
---
--- Name: ledger_check_balanced(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.ledger_check_balanced() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-  net bigint;
-BEGIN
-  SELECT COALESCE(SUM(CASE direction WHEN 'debit' THEN amount ELSE -amount END), 0)
-    INTO net
-    FROM ledger_entries
-   WHERE posting_key = NEW.posting_key
-     AND transaction_id IS NOT DISTINCT FROM NEW.transaction_id
-     AND funding_id IS NOT DISTINCT FROM NEW.funding_id;
-  IF net <> 0 THEN
-    RAISE EXCEPTION 'unbalanced ledger posting % (net %)', NEW.posting_key, net;
-  END IF;
-  RETURN NULL;
-END;
-$$;
-
---
--- Name: ledger_entries_immutable(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.ledger_entries_immutable() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  RAISE EXCEPTION 'ledger_entries is append-only; post a reversing entry instead';
-END;
-$$;
 
 --
 -- Name: logs_immutable(); Type: FUNCTION; Schema: public; Owner: -
@@ -159,46 +98,6 @@ END;
 $$;
 
 --
--- Name: transactions_checkout_owner(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.transactions_checkout_owner() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF NEW.checkout_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM checkouts c
-        WHERE c.id = NEW.checkout_id
-          AND c.account_id = CASE NEW.type WHEN 'pay' THEN NEW.to_account_id
-                                           WHEN 'refund' THEN NEW.from_account_id END) THEN
-    RAISE EXCEPTION 'checkout does not belong to the merchant account'
-      USING ERRCODE = 'check_violation';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
---
--- Name: transactions_terminal_owner(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.transactions_terminal_owner() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF NEW.terminal_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM terminals t
-        WHERE t.id = NEW.terminal_id
-          AND t.account_id = CASE NEW.type WHEN 'pay' THEN NEW.to_account_id
-                                           WHEN 'refund' THEN NEW.from_account_id END) THEN
-    RAISE EXCEPTION 'terminal does not belong to the merchant account'
-      USING ERRCODE = 'check_violation';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
---
 -- Name: wallets_benefits_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -237,7 +136,7 @@ CREATE TABLE public.accounts (
     CONSTRAINT accounts_photo_key CHECK (((photo IS NULL) OR (photo ~ '^accounts/[0-9a-f-]{36}-[0-9]+\.(png|jpg)$'::text))),
     CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'pending'::text, 'declined'::text, 'suspended'::text, 'closed'::text]))),
     CONSTRAINT accounts_tier_check CHECK ((tier = ANY (ARRAY['free'::text, 'plus'::text, 'insider'::text]))),
-    CONSTRAINT accounts_type_check CHECK ((type = ANY (ARRAY['C'::bpchar, 'B'::bpchar, 'O'::bpchar])))
+    CONSTRAINT accounts_type_check CHECK ((type = ANY (ARRAY['C'::bpchar, 'B'::bpchar, 'O'::bpchar, 'S'::bpchar])))
 );
 
 --
@@ -429,50 +328,6 @@ CREATE TABLE public.categories (
 );
 
 --
--- Name: checkout_items; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.checkout_items (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    checkout_id uuid NOT NULL,
-    product_id uuid,
-    name text NOT NULL,
-    unit_price bigint NOT NULL,
-    discount bigint DEFAULT 0 NOT NULL,
-    quantity integer NOT NULL,
-    refunded_quantity integer DEFAULT 0 NOT NULL,
-    refund_pending_quantity integer DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT checkout_items_check CHECK (((discount >= 0) AND (discount <= unit_price))),
-    CONSTRAINT checkout_items_check1 CHECK (((refunded_quantity + refund_pending_quantity) <= quantity)),
-    CONSTRAINT checkout_items_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 120))),
-    CONSTRAINT checkout_items_quantity_check CHECK ((quantity > 0)),
-    CONSTRAINT checkout_items_refund_pending_quantity_check CHECK ((refund_pending_quantity >= 0)),
-    CONSTRAINT checkout_items_refunded_quantity_check CHECK ((refunded_quantity >= 0)),
-    CONSTRAINT checkout_items_unit_price_check CHECK ((unit_price >= 0))
-);
-
---
--- Name: checkouts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.checkouts (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    account_id uuid NOT NULL,
-    terminal_id uuid,
-    reference text,
-    currency character(3) DEFAULT 'USD'::bpchar NOT NULL,
-    total bigint NOT NULL,
-    status text DEFAULT 'open'::text NOT NULL,
-    expires_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT checkouts_reference_check CHECK (((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 64)))),
-    CONSTRAINT checkouts_status_check CHECK ((status = ANY (ARRAY['open'::text, 'paid'::text, 'canceled'::text, 'expired'::text]))),
-    CONSTRAINT checkouts_total_check CHECK ((total > 0))
-);
-
---
 -- Name: devices; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -541,42 +396,6 @@ CREATE TABLE public.fundings (
     CONSTRAINT fundings_check CHECK (((transaction_id IS NULL) OR (released_at IS NOT NULL))),
     CONSTRAINT fundings_check1 CHECK (((returned_at IS NULL) OR (released_at IS NOT NULL))),
     CONSTRAINT fundings_status_check CHECK ((status = ANY (ARRAY['created'::text, 'pending'::text, 'completed'::text, 'failed'::text, 'canceled'::text, 'returned'::text])))
-);
-
---
--- Name: ledger_entries; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.ledger_entries (
-    id bigint NOT NULL,
-    transaction_id uuid,
-    funding_id uuid,
-    posting_key text NOT NULL,
-    line_no smallint NOT NULL,
-    account_id uuid,
-    bucket text NOT NULL,
-    direction text NOT NULL,
-    amount bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    wallet_id uuid,
-    CONSTRAINT ledger_entries_amount_check CHECK ((amount > 0)),
-    CONSTRAINT ledger_entries_bucket_check CHECK ((bucket = ANY (ARRAY['funded_balance'::text, 'credit_receivable'::text, 'pending_funding'::text, 'bank_settlement'::text, 'platform_clearing'::text, 'employee_escrow'::text]))),
-    CONSTRAINT ledger_entries_check CHECK ((num_nonnulls(transaction_id, funding_id) = 1)),
-    CONSTRAINT ledger_entries_direction_check CHECK ((direction = ANY (ARRAY['debit'::text, 'credit'::text]))),
-    CONSTRAINT ledger_entries_line_no_check CHECK ((line_no > 0))
-);
-
---
--- Name: ledger_entries_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-ALTER TABLE public.ledger_entries ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.ledger_entries_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
 );
 
 --
@@ -670,6 +489,7 @@ CREATE TABLE public.products (
     status text DEFAULT 'available'::text NOT NULL,
     total_sold bigint DEFAULT 0 NOT NULL,
     sold_today integer DEFAULT 0 NOT NULL,
+    sold_day date,
     discount bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -682,30 +502,6 @@ CREATE TABLE public.products (
     CONSTRAINT products_status_check CHECK ((status = ANY (ARRAY['available'::text, 'sold_out'::text]))),
     CONSTRAINT products_stock_check CHECK ((stock >= 0)),
     CONSTRAINT products_total_sold_check CHECK ((total_sold >= 0))
-);
-
---
--- Name: settlements; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.settlements (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    cutoff_date date NOT NULL,
-    cutoff_at timestamp with time zone NOT NULL,
-    status text DEFAULT 'running'::text NOT NULL,
-    merchants integer DEFAULT 0 NOT NULL,
-    payout_total bigint DEFAULT 0 NOT NULL,
-    collection_total bigint DEFAULT 0 NOT NULL,
-    provider_reference text,
-    failure_code text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT settlements_check CHECK (((status <> 'completed'::text) OR (completed_at IS NOT NULL))),
-    CONSTRAINT settlements_collection_total_check CHECK ((collection_total >= 0)),
-    CONSTRAINT settlements_merchants_check CHECK ((merchants >= 0)),
-    CONSTRAINT settlements_payout_total_check CHECK ((payout_total >= 0)),
-    CONSTRAINT settlements_status_check CHECK ((status = ANY (ARRAY['running'::text, 'submitted'::text, 'completed'::text, 'failed'::text])))
 );
 
 --
@@ -924,63 +720,6 @@ CREATE TABLE public.terminals (
 );
 
 --
--- Name: transactions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.transactions (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    type text NOT NULL,
-    from_account_id uuid,
-    to_account_id uuid,
-    from_wallet_id uuid,
-    to_wallet_id uuid,
-    from_bank_account_id uuid,
-    to_bank_account_id uuid,
-    amount bigint NOT NULL,
-    related_transaction_id uuid,
-    terminal_id uuid,
-    reference text,
-    approved_by_account_id uuid,
-    checkout_id uuid,
-    items jsonb,
-    tag_id uuid,
-    pass_id uuid,
-    status text NOT NULL,
-    status_code text,
-    idempotency_key text NOT NULL,
-    provider_reference text,
-    "timestamp" timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    settlement_id uuid,
-    CONSTRAINT transactions_amount_check CHECK ((amount > 0)),
-    CONSTRAINT transactions_approval_refund_only CHECK (((approved_by_account_id IS NULL) OR (type = 'refund'::text))),
-    CONSTRAINT transactions_check CHECK (((tag_id IS NULL) OR (pass_id IS NULL))),
-    CONSTRAINT transactions_check1 CHECK ((((tag_id IS NULL) AND (pass_id IS NULL)) OR (type = 'pay'::text))),
-    CONSTRAINT transactions_check2 CHECK (((related_transaction_id IS NULL) OR (type = ANY (ARRAY['refund'::text, 'adjustment'::text])))),
-    CONSTRAINT transactions_check4 CHECK (((status <> 'completed'::text) OR (completed_at IS NOT NULL))),
-    CONSTRAINT transactions_checkout_scope CHECK (((checkout_id IS NULL) OR (type = ANY (ARRAY['pay'::text, 'refund'::text])))),
-    CONSTRAINT transactions_endpoints_check CHECK (
-CASE type
-    WHEN 'fund'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id IS NOT NULL) AND (from_bank_account_id IS NOT NULL) AND (to_bank_account_id IS NULL) AND (from_wallet_id IS NULL) AND (to_wallet_id IS NULL))
-    WHEN 'send'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id IS NOT NULL) AND (from_wallet_id IS NOT NULL) AND (to_wallet_id IS NOT NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    WHEN 'pay'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id IS NOT NULL) AND (from_wallet_id IS NOT NULL) AND (to_wallet_id IS NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    WHEN 'settle'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id IS NOT NULL) AND (from_wallet_id IS NULL) AND (to_wallet_id IS NULL) AND (num_nonnulls(from_bank_account_id, to_bank_account_id) = 1))
-    WHEN 'refund'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id IS NOT NULL) AND (from_wallet_id IS NULL) AND (to_wallet_id IS NOT NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL) AND (related_transaction_id IS NOT NULL))
-    WHEN 'purchase'::text THEN ((from_account_id IS NOT NULL) AND (from_wallet_id IS NOT NULL) AND (to_account_id IS NULL) AND (to_wallet_id IS NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    WHEN 'allocate'::text THEN ((from_account_id IS NOT NULL) AND (from_wallet_id IS NOT NULL) AND (to_account_id IS NULL) AND (to_wallet_id IS NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    WHEN 'claim'::text THEN ((to_account_id IS NOT NULL) AND (to_wallet_id IS NOT NULL) AND (from_account_id IS NULL) AND (from_wallet_id IS NULL) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    WHEN 'move'::text THEN ((from_account_id IS NOT NULL) AND (to_account_id = from_account_id) AND (from_wallet_id IS NOT NULL) AND (to_wallet_id IS NOT NULL) AND (from_wallet_id <> to_wallet_id) AND (from_bank_account_id IS NULL) AND (to_bank_account_id IS NULL))
-    ELSE true
-END),
-    CONSTRAINT transactions_items_refund_only CHECK (((items IS NULL) OR ((type = 'refund'::text) AND (jsonb_typeof(items) = 'array'::text)))),
-    CONSTRAINT transactions_reference_pay_only CHECK (((reference IS NULL) OR ((type = 'pay'::text) AND ((length(reference) >= 1) AND (length(reference) <= 64))))),
-    CONSTRAINT transactions_settlement_only CHECK (((settlement_id IS NULL) OR (type = 'settle'::text))),
-    CONSTRAINT transactions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text, 'returned'::text]))),
-    CONSTRAINT transactions_terminal_scope CHECK (((terminal_id IS NULL) OR (type = ANY (ARRAY['pay'::text, 'refund'::text])))),
-    CONSTRAINT transactions_type_check CHECK ((type = ANY (ARRAY['fund'::text, 'send'::text, 'pay'::text, 'settle'::text, 'refund'::text, 'adjustment'::text, 'purchase'::text, 'allocate'::text, 'claim'::text, 'move'::text])))
-);
-
---
 -- Name: uploads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1006,6 +745,7 @@ CREATE TABLE public.wallets (
     type text NOT NULL,
     daily_limit bigint,
     spent_today bigint DEFAULT 0 NOT NULL,
+    spent_day date,
     allow_pay boolean DEFAULT true NOT NULL,
     allow_send boolean DEFAULT true NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
@@ -1025,7 +765,7 @@ CREATE TABLE public.wallets (
     CONSTRAINT wallets_photo_key CHECK (((photo IS NULL) OR (photo ~ '^wallets/[0-9a-f-]{36}-[0-9]+\.(png|jpg)$'::text))),
     CONSTRAINT wallets_spent_today_check CHECK ((spent_today >= 0)),
     CONSTRAINT wallets_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text, 'closed'::text]))),
-    CONSTRAINT wallets_type_check CHECK ((type = ANY (ARRAY['default'::text, 'agent'::text, 'person'::text, 'benefits'::text])))
+    CONSTRAINT wallets_type_check CHECK ((type = ANY (ARRAY['default'::text, 'agent'::text, 'person'::text, 'benefits'::text, 'escrow'::text, 'system'::text])))
 );
 
 --
@@ -1148,27 +888,6 @@ ALTER TABLE ONLY public.categories
     ADD CONSTRAINT categories_pkey PRIMARY KEY (id);
 
 --
--- Name: checkout_items checkout_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkout_items
-    ADD CONSTRAINT checkout_items_pkey PRIMARY KEY (id);
-
---
--- Name: checkouts checkouts_id_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkouts
-    ADD CONSTRAINT checkouts_id_account_id_key UNIQUE (id, account_id);
-
---
--- Name: checkouts checkouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkouts
-    ADD CONSTRAINT checkouts_pkey PRIMARY KEY (id);
-
---
 -- Name: devices devices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1218,13 +937,6 @@ ALTER TABLE ONLY public.fundings
     ADD CONSTRAINT fundings_transaction_id_key UNIQUE (transaction_id);
 
 --
--- Name: ledger_entries ledger_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ledger_entries
-    ADD CONSTRAINT ledger_entries_pkey PRIMARY KEY (id);
-
---
 -- Name: logs logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1258,20 +970,6 @@ ALTER TABLE ONLY public.passes
 
 ALTER TABLE ONLY public.products
     ADD CONSTRAINT products_pkey PRIMARY KEY (id);
-
---
--- Name: settlements settlements_cutoff_date_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.settlements
-    ADD CONSTRAINT settlements_cutoff_date_key UNIQUE (cutoff_date);
-
---
--- Name: settlements settlements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.settlements
-    ADD CONSTRAINT settlements_pkey PRIMARY KEY (id);
 
 --
 -- Name: shop shop_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -1356,13 +1054,6 @@ ALTER TABLE ONLY public.terminals
 
 ALTER TABLE ONLY public.terminals
     ADD CONSTRAINT terminals_session_token_hash_key UNIQUE (session_token_hash);
-
---
--- Name: transactions transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_pkey PRIMARY KEY (id);
 
 --
 -- Name: uploads uploads_path_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -1454,30 +1145,6 @@ CREATE INDEX benefit_runs_org_idx ON public.benefit_runs USING btree (org_accoun
 CREATE INDEX categories_account_id_idx ON public.categories USING btree (account_id);
 
 --
--- Name: checkout_items_checkout_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX checkout_items_checkout_idx ON public.checkout_items USING btree (checkout_id);
-
---
--- Name: checkout_items_product_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX checkout_items_product_idx ON public.checkout_items USING btree (product_id) WHERE (product_id IS NOT NULL);
-
---
--- Name: checkouts_account_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX checkouts_account_idx ON public.checkouts USING btree (account_id, created_at DESC, id DESC);
-
---
--- Name: checkouts_open_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX checkouts_open_idx ON public.checkouts USING btree (account_id) WHERE (status = 'open'::text);
-
---
 -- Name: devices_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1554,30 +1221,6 @@ CREATE INDEX fundings_open_idx ON public.fundings USING btree (status) WHERE (st
 --
 
 CREATE INDEX fundings_provider_ref_idx ON public.fundings USING btree (provider_reference) WHERE (provider_reference IS NOT NULL);
-
---
--- Name: ledger_entries_account_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ledger_entries_account_idx ON public.ledger_entries USING btree (account_id, id DESC) WHERE (account_id IS NOT NULL);
-
---
--- Name: ledger_entries_funding_line_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX ledger_entries_funding_line_key ON public.ledger_entries USING btree (funding_id, posting_key, line_no) WHERE (funding_id IS NOT NULL);
-
---
--- Name: ledger_entries_txn_line_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX ledger_entries_txn_line_key ON public.ledger_entries USING btree (transaction_id, posting_key, line_no) WHERE (transaction_id IS NOT NULL);
-
---
--- Name: ledger_entries_wallet_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ledger_entries_wallet_idx ON public.ledger_entries USING btree (wallet_id, id DESC) WHERE (wallet_id IS NOT NULL);
 
 --
 -- Name: logs_action_idx; Type: INDEX; Schema: public; Owner: -
@@ -1670,96 +1313,6 @@ CREATE INDEX tags_wallet_id_idx ON public.tags USING btree (wallet_id) WHERE (wa
 CREATE INDEX terminals_account_id_idx ON public.terminals USING btree (account_id);
 
 --
--- Name: transactions_checkout_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_checkout_idx ON public.transactions USING btree (checkout_id) WHERE (checkout_id IS NOT NULL);
-
---
--- Name: transactions_checkout_paid_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX transactions_checkout_paid_key ON public.transactions USING btree (checkout_id) WHERE ((type = 'pay'::text) AND (status = 'completed'::text));
-
---
--- Name: transactions_completed_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_completed_at_idx ON public.transactions USING btree (completed_at) WHERE (status = 'completed'::text);
-
---
--- Name: transactions_from_account_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_from_account_idx ON public.transactions USING btree (from_account_id, "timestamp" DESC, id DESC);
-
---
--- Name: transactions_from_wallet_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_from_wallet_idx ON public.transactions USING btree (from_wallet_id) WHERE (from_wallet_id IS NOT NULL);
-
---
--- Name: transactions_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX transactions_idempotency_key ON public.transactions USING btree (type, from_account_id, idempotency_key) WHERE ((from_account_id IS NOT NULL) AND (type <> 'pay'::text));
-
---
--- Name: transactions_pass_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_pass_idx ON public.transactions USING btree (pass_id) WHERE (pass_id IS NOT NULL);
-
---
--- Name: transactions_pay_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX transactions_pay_idempotency_key ON public.transactions USING btree (to_account_id, idempotency_key) WHERE (type = 'pay'::text);
-
---
--- Name: transactions_provider_ref_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_provider_ref_idx ON public.transactions USING btree (provider_reference) WHERE (provider_reference IS NOT NULL);
-
---
--- Name: transactions_related_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_related_idx ON public.transactions USING btree (related_transaction_id) WHERE (related_transaction_id IS NOT NULL);
-
---
--- Name: transactions_settlement_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_settlement_idx ON public.transactions USING btree (settlement_id) WHERE (settlement_id IS NOT NULL);
-
---
--- Name: transactions_tag_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_tag_idx ON public.transactions USING btree (tag_id) WHERE (tag_id IS NOT NULL);
-
---
--- Name: transactions_terminal_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_terminal_idx ON public.transactions USING btree (terminal_id, "timestamp" DESC, id DESC) WHERE (terminal_id IS NOT NULL);
-
---
--- Name: transactions_to_account_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_to_account_idx ON public.transactions USING btree (to_account_id, "timestamp" DESC, id DESC);
-
---
--- Name: transactions_to_wallet_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX transactions_to_wallet_idx ON public.transactions USING btree (to_wallet_id) WHERE (to_wallet_id IS NOT NULL);
-
---
 -- Name: uploads_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1838,24 +1391,6 @@ CREATE TRIGGER categories_business_only BEFORE INSERT OR UPDATE OF account_id ON
 CREATE TRIGGER categories_updated_at BEFORE UPDATE ON public.categories FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 --
--- Name: checkout_items checkout_items_same_merchant; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER checkout_items_same_merchant BEFORE INSERT OR UPDATE OF product_id, checkout_id ON public.checkout_items FOR EACH ROW EXECUTE FUNCTION public.checkout_item_same_merchant();
-
---
--- Name: checkouts checkouts_business_only; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER checkouts_business_only BEFORE INSERT OR UPDATE OF account_id ON public.checkouts FOR EACH ROW EXECUTE FUNCTION public.require_business_account();
-
---
--- Name: checkouts checkouts_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER checkouts_updated_at BEFORE UPDATE ON public.checkouts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
 -- Name: employees employees_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1866,24 +1401,6 @@ CREATE TRIGGER employees_updated_at BEFORE UPDATE ON public.employees FOR EACH R
 --
 
 CREATE TRIGGER fundings_updated_at BEFORE UPDATE ON public.fundings FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
--- Name: ledger_entries ledger_entries_balanced; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE CONSTRAINT TRIGGER ledger_entries_balanced AFTER INSERT ON public.ledger_entries DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.ledger_check_balanced();
-
---
--- Name: ledger_entries ledger_entries_no_truncate; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER ledger_entries_no_truncate BEFORE TRUNCATE ON public.ledger_entries FOR EACH STATEMENT EXECUTE FUNCTION public.ledger_entries_immutable();
-
---
--- Name: ledger_entries ledger_entries_no_update; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER ledger_entries_no_update BEFORE DELETE OR UPDATE ON public.ledger_entries FOR EACH ROW EXECUTE FUNCTION public.ledger_entries_immutable();
 
 --
 -- Name: logs logs_no_truncate; Type: TRIGGER; Schema: public; Owner: -
@@ -1926,12 +1443,6 @@ CREATE TRIGGER products_sync_status BEFORE INSERT OR UPDATE OF stock, status ON 
 --
 
 CREATE TRIGGER products_updated_at BEFORE UPDATE ON public.products FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
--- Name: settlements settlements_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER settlements_updated_at BEFORE UPDATE ON public.settlements FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 --
 -- Name: shop shop_updated_at; Type: TRIGGER; Schema: public; Owner: -
@@ -1980,18 +1491,6 @@ CREATE TRIGGER terminals_business_only BEFORE INSERT OR UPDATE OF account_id ON 
 --
 
 CREATE TRIGGER terminals_updated_at BEFORE UPDATE ON public.terminals FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
---
--- Name: transactions transactions_checkout_owner; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER transactions_checkout_owner BEFORE INSERT OR UPDATE OF checkout_id ON public.transactions FOR EACH ROW EXECUTE FUNCTION public.transactions_checkout_owner();
-
---
--- Name: transactions transactions_terminal_owner; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER transactions_terminal_owner BEFORE INSERT OR UPDATE OF terminal_id ON public.transactions FOR EACH ROW EXECUTE FUNCTION public.transactions_terminal_owner();
 
 --
 -- Name: wallets wallets_benefits_immutable; Type: TRIGGER; Schema: public; Owner: -
@@ -2048,13 +1547,6 @@ ALTER TABLE ONLY public.benefit_run_rows
     ADD CONSTRAINT benefit_run_rows_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.benefit_runs(id) ON DELETE RESTRICT;
 
 --
--- Name: benefit_run_rows benefit_run_rows_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.benefit_run_rows
-    ADD CONSTRAINT benefit_run_rows_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
-
---
 -- Name: benefit_runs benefit_runs_org_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2081,34 +1573,6 @@ ALTER TABLE ONLY public.businesses
 
 ALTER TABLE ONLY public.categories
     ADD CONSTRAINT categories_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: checkout_items checkout_items_checkout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkout_items
-    ADD CONSTRAINT checkout_items_checkout_id_fkey FOREIGN KEY (checkout_id) REFERENCES public.checkouts(id) ON DELETE RESTRICT;
-
---
--- Name: checkout_items checkout_items_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkout_items
-    ADD CONSTRAINT checkout_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id) ON DELETE RESTRICT;
-
---
--- Name: checkouts checkouts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkouts
-    ADD CONSTRAINT checkouts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: checkouts checkouts_terminal_id_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.checkouts
-    ADD CONSTRAINT checkouts_terminal_id_account_id_fkey FOREIGN KEY (terminal_id, account_id) REFERENCES public.terminals(id, account_id) ON DELETE RESTRICT;
 
 --
 -- Name: devices devices_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -2153,41 +1617,6 @@ ALTER TABLE ONLY public.fundings
     ADD CONSTRAINT fundings_bank_account_id_account_id_fkey FOREIGN KEY (bank_account_id, account_id) REFERENCES public.bank_accounts(id, account_id) ON DELETE RESTRICT;
 
 --
--- Name: fundings fundings_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.fundings
-    ADD CONSTRAINT fundings_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
-
---
--- Name: ledger_entries ledger_entries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ledger_entries
-    ADD CONSTRAINT ledger_entries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: ledger_entries ledger_entries_funding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ledger_entries
-    ADD CONSTRAINT ledger_entries_funding_id_fkey FOREIGN KEY (funding_id) REFERENCES public.fundings(id) ON DELETE RESTRICT;
-
---
--- Name: ledger_entries ledger_entries_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ledger_entries
-    ADD CONSTRAINT ledger_entries_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
-
---
--- Name: ledger_entries ledger_entries_wallet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ledger_entries
-    ADD CONSTRAINT ledger_entries_wallet_id_fkey FOREIGN KEY (wallet_id) REFERENCES public.wallets(id) ON DELETE RESTRICT;
-
---
 -- Name: orders orders_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2207,13 +1636,6 @@ ALTER TABLE ONLY public.orders
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_shop_id_fkey FOREIGN KEY (shop_id) REFERENCES public.shop(id) ON DELETE RESTRICT;
-
---
--- Name: orders orders_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.orders
-    ADD CONSTRAINT orders_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
 
 --
 -- Name: orders orders_wallet_id_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -2286,97 +1708,6 @@ ALTER TABLE ONLY public.terminals
     ADD CONSTRAINT terminals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
 
 --
--- Name: transactions transactions_approved_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_approved_by_account_id_fkey FOREIGN KEY (approved_by_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_checkout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_checkout_id_fkey FOREIGN KEY (checkout_id) REFERENCES public.checkouts(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_from_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_from_account_id_fkey FOREIGN KEY (from_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_from_bank_account_id_from_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_from_bank_account_id_from_account_id_fkey FOREIGN KEY (from_bank_account_id, from_account_id) REFERENCES public.bank_accounts(id, account_id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_from_wallet_id_from_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_from_wallet_id_from_account_id_fkey FOREIGN KEY (from_wallet_id, from_account_id) REFERENCES public.wallets(id, account_id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_pass_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_pass_id_fkey FOREIGN KEY (pass_id) REFERENCES public.passes(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_related_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_related_transaction_id_fkey FOREIGN KEY (related_transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_settlement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_settlement_id_fkey FOREIGN KEY (settlement_id) REFERENCES public.settlements(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_tag_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_tag_id_fkey FOREIGN KEY (tag_id) REFERENCES public.tags(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_terminal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_terminal_id_fkey FOREIGN KEY (terminal_id) REFERENCES public.terminals(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_to_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_to_account_id_fkey FOREIGN KEY (to_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_to_bank_account_id_to_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_to_bank_account_id_to_account_id_fkey FOREIGN KEY (to_bank_account_id, to_account_id) REFERENCES public.bank_accounts(id, account_id) ON DELETE RESTRICT;
-
---
--- Name: transactions transactions_to_wallet_id_to_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transactions
-    ADD CONSTRAINT transactions_to_wallet_id_to_account_id_fkey FOREIGN KEY (to_wallet_id, to_account_id) REFERENCES public.wallets(id, account_id) ON DELETE RESTRICT;
-
---
 -- Name: uploads uploads_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2397,17 +1728,284 @@ ALTER TABLE ONLY public.wallets
 ALTER TABLE ONLY public.wallets
     ADD CONSTRAINT wallets_org_account_id_fkey FOREIGN KEY (org_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
 
---
--- PostgreSQL database dump complete
---
-
-
--- Seed: the program day the daily counters were last reset (removed when the daily reset machinery goes away).
-INSERT INTO system (key, value) VALUES ('daily_reset_day', ((now() AT TIME ZONE 'America/New_York')::date)::text);
-
 -- Organization (type O) settings live on the business row: the Benefits program (Fixed or Flexible, created with the organization) and its one live Benefits API key.
 CREATE UNIQUE INDEX businesses_api_key_hash_key ON public.businesses USING btree (api_key_hash) WHERE (api_key_hash IS NOT NULL);
 CREATE INDEX businesses_program_due_idx ON public.businesses USING btree (program_next_run_date) WHERE (program_mode = 'fixed'::text);
 
 -- A terminal holds at most one Orb, and an Orb (its MAC address) is on at most one terminal: freeing it clears these columns.
 CREATE UNIQUE INDEX terminals_orb_uid_key ON public.terminals USING btree (orb_uid) WHERE (orb_uid IS NOT NULL);
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Scheme v2 core (docs/SCHEME-V2.md): the system account and wallets, immutable wallet-to-wallet transactions,
+-- and the workflow tables around them (checkouts, settlements, refunds). There is no ledger table.
+-- ---------------------------------------------------------------------------------------------------------------
+
+-- The program day (America/New_York). Daily counters roll themselves: a row whose day is not today counts as zero, and the
+-- next write starts the new day (docs/SCHEME-V2.md, section 4). There is no daily reset job.
+CREATE FUNCTION public.program_today() RETURNS date
+    LANGUAGE sql STABLE
+    AS $$ SELECT (now() AT TIME ZONE 'America/New_York')::date $$;
+ALTER TABLE public.wallets ALTER COLUMN spent_day SET DEFAULT program_today(), ALTER COLUMN spent_day SET NOT NULL;
+ALTER TABLE public.products ALTER COLUMN sold_day SET DEFAULT program_today(), ALTER COLUMN sold_day SET NOT NULL;
+
+-- What an account can spend from its shared funds: the balance less everything set aside in earmarked wallets. For an organization that is
+-- its balance less the escrow wallet (credit held for employees who have not claimed it yet).
+CREATE FUNCTION public.shared_funds(acct uuid) RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$ SELECT coalesce((SELECT balance FROM balances WHERE account_id = acct), 0) - coalesce((SELECT sum(balance) FROM wallets WHERE account_id = acct AND balance IS NOT NULL), 0) $$;
+CREATE UNIQUE INDEX wallets_escrow_key ON public.wallets USING btree (account_id) WHERE (type = 'escrow');
+
+ALTER TABLE ONLY public.wallets
+    ADD CONSTRAINT wallets_escrow_earmarked CHECK (type <> 'escrow' OR balance IS NOT NULL),
+    ADD CONSTRAINT wallets_system_unearmarked CHECK (type <> 'system' OR balance IS NULL);
+
+-- The system account ("Nuclear") and its two system wallets have fixed ids (constants in lib/system.ts): nothing is looked up.
+INSERT INTO accounts (id, type, name, status) VALUES ('00000000-0000-7000-8000-000000000001', 'S', 'Nuclear', 'active');
+INSERT INTO balances (account_id) VALUES ('00000000-0000-7000-8000-000000000001');
+INSERT INTO wallets (id, account_id, display_name, type) VALUES
+  ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000001', 'Nuclear Bank', 'system'),
+  ('00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000001', 'Nuclear Shop', 'system');
+
+-- A merchant's order: an open payment request a customer can pay (by tap or in the app). Items are a snapshot.
+-- Expired is derived from expires_at; the status is written once at the end (paid or canceled).
+CREATE TABLE public.checkouts (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    account_id uuid NOT NULL,
+    terminal_id uuid,
+    reference text,
+    currency character(3) DEFAULT 'USD'::bpchar NOT NULL,
+    total bigint NOT NULL,
+    items jsonb DEFAULT '[]'::jsonb NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT checkouts_pkey PRIMARY KEY (id),
+    CONSTRAINT checkouts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT,
+    CONSTRAINT checkouts_terminal_id_fkey FOREIGN KEY (terminal_id) REFERENCES public.terminals(id) ON DELETE RESTRICT,
+    CONSTRAINT checkouts_items_array CHECK (jsonb_typeof(items) = 'array'),
+    CONSTRAINT checkouts_reference_check CHECK (((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 64)))),
+    CONSTRAINT checkouts_status_check CHECK ((status = ANY (ARRAY['open'::text, 'paid'::text, 'canceled'::text]))),
+    CONSTRAINT checkouts_total_check CHECK ((total > 0))
+);
+CREATE INDEX checkouts_account_idx ON public.checkouts USING btree (account_id, status, created_at DESC, id DESC);
+CREATE TRIGGER checkouts_updated_at BEFORE UPDATE ON public.checkouts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- One row per merchant per day: the payout (credit) or collection (debit) sent to the bank. Run totals are a group by on settle_date.
+CREATE TABLE public.settlements (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    settle_date date NOT NULL,
+    merchant_account_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    direction text NOT NULL,
+    amount bigint NOT NULL,
+    status text DEFAULT 'submitted'::text NOT NULL,
+    provider_reference text,
+    failure_code text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT settlements_pkey PRIMARY KEY (id),
+    CONSTRAINT settlements_day_merchant_key UNIQUE (settle_date, merchant_account_id),
+    CONSTRAINT settlements_merchant_fkey FOREIGN KEY (merchant_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT,
+    CONSTRAINT settlements_bank_fkey FOREIGN KEY (bank_account_id, merchant_account_id) REFERENCES public.bank_accounts(id, account_id) ON DELETE RESTRICT,
+    CONSTRAINT settlements_amount_check CHECK (amount > 0),
+    CONSTRAINT settlements_direction_check CHECK (direction IN ('credit', 'debit')),
+    CONSTRAINT settlements_status_check CHECK (status IN ('submitted', 'settled', 'returned', 'failed')),
+    CONSTRAINT settlements_resolved_check CHECK ((status = 'submitted') = (resolved_at IS NULL))
+);
+CREATE INDEX settlements_open_idx ON public.settlements USING btree (status) WHERE (status = 'submitted');
+CREATE INDEX settlements_merchant_idx ON public.settlements USING btree (merchant_account_id, settle_date DESC);
+CREATE TRIGGER settlements_updated_at BEFORE UPDATE ON public.settlements FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Every transaction is from one wallet to one wallet and is written once with its final outcome. A correction is a new row.
+CREATE TABLE public.transactions (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    type text NOT NULL,
+    status text NOT NULL,
+    status_code text,
+    from_wallet_id uuid NOT NULL,
+    to_wallet_id uuid NOT NULL,
+    amount bigint NOT NULL,
+    credit_amount bigint DEFAULT 0 NOT NULL,
+    related_id uuid,
+    tag_id uuid,
+    pass_id uuid,
+    terminal_id uuid,
+    checkout_id uuid,
+    funding_id uuid,
+    settlement_id uuid,
+    account_id uuid NOT NULL,
+    reference text,
+    idem text NOT NULL,
+    meta jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT transactions_pkey PRIMARY KEY (id),
+    CONSTRAINT transactions_idem_key UNIQUE (idem),
+    CONSTRAINT transactions_type_check CHECK (type IN ('fund', 'fund_return', 'send', 'pay', 'refund', 'purchase', 'allocate', 'claim', 'move', 'settle', 'settle_return', 'collect', 'adjustment')),
+    CONSTRAINT transactions_status_check CHECK (status IN ('completed', 'declined')),
+    CONSTRAINT transactions_status_code_check CHECK ((status = 'declined') = (status_code IS NOT NULL)),
+    CONSTRAINT transactions_amount_check CHECK (amount > 0),
+    CONSTRAINT transactions_credit_check CHECK (credit_amount >= 0 AND credit_amount <= amount),
+    CONSTRAINT transactions_credit_types CHECK (credit_amount = 0 OR type IN ('pay', 'fund', 'refund')),
+    CONSTRAINT transactions_sides_check CHECK (type = 'move' OR from_wallet_id <> to_wallet_id),
+    CONSTRAINT transactions_tag_pass_check CHECK (tag_id IS NULL OR pass_id IS NULL),
+    CONSTRAINT transactions_credential_pay_only CHECK ((tag_id IS NULL AND pass_id IS NULL) OR type = 'pay'),
+    CONSTRAINT transactions_related_types CHECK (related_id IS NULL OR type IN ('refund', 'fund_return', 'settle_return', 'adjustment')),
+    CONSTRAINT transactions_terminal_scope CHECK (terminal_id IS NULL OR type IN ('pay', 'refund')),
+    CONSTRAINT transactions_checkout_scope CHECK (checkout_id IS NULL OR type IN ('pay', 'refund')),
+    CONSTRAINT transactions_funding_scope CHECK (funding_id IS NULL OR type IN ('fund', 'fund_return')),
+    CONSTRAINT transactions_settlement_scope CHECK (settlement_id IS NULL OR type IN ('settle', 'settle_return', 'collect')),
+    CONSTRAINT transactions_reference_check CHECK (reference IS NULL OR (type IN ('pay', 'refund') AND length(reference) BETWEEN 1 AND 64)),
+    CONSTRAINT transactions_meta_object CHECK (jsonb_typeof(meta) = 'object'),
+    CONSTRAINT transactions_from_wallet_fkey FOREIGN KEY (from_wallet_id) REFERENCES public.wallets(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_to_wallet_fkey FOREIGN KEY (to_wallet_id) REFERENCES public.wallets(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_account_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_related_fkey FOREIGN KEY (related_id) REFERENCES public.transactions(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_tag_fkey FOREIGN KEY (tag_id) REFERENCES public.tags(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_pass_fkey FOREIGN KEY (pass_id) REFERENCES public.passes(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_terminal_fkey FOREIGN KEY (terminal_id) REFERENCES public.terminals(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_checkout_fkey FOREIGN KEY (checkout_id) REFERENCES public.checkouts(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_funding_fkey FOREIGN KEY (funding_id) REFERENCES public.fundings(id) ON DELETE RESTRICT,
+    CONSTRAINT transactions_settlement_fkey FOREIGN KEY (settlement_id) REFERENCES public.settlements(id) ON DELETE RESTRICT
+);
+CREATE INDEX transactions_from_wallet_idx ON public.transactions USING btree (from_wallet_id, created_at DESC, id DESC);
+CREATE INDEX transactions_to_wallet_idx ON public.transactions USING btree (to_wallet_id, created_at DESC, id DESC);
+CREATE INDEX transactions_created_idx ON public.transactions USING btree (created_at DESC, id DESC);
+CREATE UNIQUE INDEX transactions_checkout_paid_key ON public.transactions USING btree (checkout_id) WHERE (type = 'pay' AND status = 'completed');
+CREATE INDEX transactions_related_idx ON public.transactions USING btree (related_id) WHERE (related_id IS NOT NULL);
+CREATE INDEX transactions_terminal_idx ON public.transactions USING btree (terminal_id, created_at DESC) WHERE (terminal_id IS NOT NULL);
+
+-- Immutable: no update, no truncate; the only permitted delete is a declined row older than 90 days (the retention job).
+CREATE FUNCTION public.transactions_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND OLD.status = 'declined' AND OLD.created_at < now() - interval '90 days' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'transactions are immutable; write a new transaction to correct one';
+END;
+$$;
+CREATE TRIGGER transactions_no_update BEFORE DELETE OR UPDATE ON public.transactions FOR EACH ROW EXECUTE FUNCTION public.transactions_immutable();
+CREATE TRIGGER transactions_no_truncate BEFORE TRUNCATE ON public.transactions FOR EACH STATEMENT EXECUTE FUNCTION public.transactions_immutable();
+
+-- A terminal or checkout named on a payment or refund belongs to the merchant that is the receiving (pay) or sending (refund) side.
+CREATE FUNCTION public.transactions_merchant_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  merchant uuid;
+BEGIN
+  IF NEW.terminal_id IS NULL AND NEW.checkout_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT account_id INTO merchant FROM wallets WHERE id = CASE NEW.type WHEN 'pay' THEN NEW.to_wallet_id ELSE NEW.from_wallet_id END;
+  IF NEW.terminal_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM terminals t WHERE t.id = NEW.terminal_id AND t.account_id = merchant) THEN
+    RAISE EXCEPTION 'terminal does not belong to the merchant account' USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.checkout_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM checkouts c WHERE c.id = NEW.checkout_id AND c.account_id = merchant) THEN
+    RAISE EXCEPTION 'checkout does not belong to the merchant account' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER transactions_merchant_scope BEFORE INSERT ON public.transactions FOR EACH ROW EXECUTE FUNCTION public.transactions_merchant_scope();
+
+-- Refund requests. A pending request reserves its amount (and item quantities); approving writes the refund transaction
+-- with this row's id as its own id, and rejecting just closes it. A refund that needs no approval is written directly.
+CREATE TABLE public.refunds (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    merchant_account_id uuid NOT NULL,
+    pay_transaction_id uuid NOT NULL,
+    terminal_id uuid,
+    amount bigint NOT NULL,
+    mode text NOT NULL,
+    items jsonb,
+    reference text,
+    status text DEFAULT 'pending'::text NOT NULL,
+    idem text NOT NULL,
+    approved_by_account_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT refunds_pkey PRIMARY KEY (id),
+    CONSTRAINT refunds_idem_key UNIQUE (idem),
+    CONSTRAINT refunds_amount_check CHECK (amount > 0),
+    CONSTRAINT refunds_mode_check CHECK (mode IN ('full', 'partial', 'items')),
+    CONSTRAINT refunds_status_check CHECK (status IN ('pending', 'approved', 'rejected')),
+    CONSTRAINT refunds_items_check CHECK ((mode = 'items') = (items IS NOT NULL)),
+    CONSTRAINT refunds_resolved_check CHECK ((status = 'pending') = (resolved_at IS NULL)),
+    CONSTRAINT refunds_merchant_fkey FOREIGN KEY (merchant_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT,
+    CONSTRAINT refunds_pay_fkey FOREIGN KEY (pay_transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT,
+    CONSTRAINT refunds_terminal_fkey FOREIGN KEY (terminal_id) REFERENCES public.terminals(id) ON DELETE RESTRICT,
+    CONSTRAINT refunds_approver_fkey FOREIGN KEY (approved_by_account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT
+);
+CREATE INDEX refunds_pending_idx ON public.refunds USING btree (merchant_account_id, created_at DESC, id DESC) WHERE (status = 'pending');
+CREATE INDEX refunds_pay_idx ON public.refunds USING btree (pay_transaction_id);
+
+-- Links from the workflow tables to the transactions they produced.
+ALTER TABLE ONLY public.benefit_run_rows ADD CONSTRAINT benefit_run_rows_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.fundings ADD CONSTRAINT fundings_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.transactions(id) ON DELETE RESTRICT;
+
+-- The account-level read view used by activity feeds, admin lists and support pages: the old column names, with the system wallets
+-- (the bank, the shop) shown as no account (null side), a declined row reported as `failed`, and each pending refund request
+-- (workflow row, not a transaction) listed as a pending refund, and a rejected one as a failed refund.
+CREATE VIEW public.txn AS
+SELECT t.id, t.type,
+       CASE t.status WHEN 'declined' THEN 'failed' ELSE t.status END AS status,
+       t.status_code,
+       CASE WHEN fw.type = 'system' THEN NULL ELSE fw.account_id END AS from_account_id,
+       CASE WHEN tw.type = 'system' THEN NULL ELSE tw.account_id END AS to_account_id,
+       CASE WHEN fw.type = 'system' THEN NULL ELSE t.from_wallet_id END AS from_wallet_id,
+       CASE WHEN tw.type = 'system' THEN NULL ELSE t.to_wallet_id END AS to_wallet_id,
+       t.amount, t.credit_amount, t.related_id AS related_transaction_id, t.terminal_id, t.reference,
+       CASE WHEN t.type = 'refund' AND t.meta ? 'approved' THEN t.account_id END AS approved_by_account_id,
+       t.checkout_id, t.meta -> 'items' AS items, t.tag_id, t.pass_id, t.idem AS idempotency_key,
+       t.meta ->> 'provider_reference' AS provider_reference,
+       t.created_at AS "timestamp",
+       CASE WHEN t.status = 'completed' THEN t.created_at END AS completed_at,
+       t.settlement_id, t.funding_id, t.account_id AS actor_account_id, t.meta
+  FROM public.transactions t
+  JOIN public.wallets fw ON fw.id = t.from_wallet_id
+  JOIN public.wallets tw ON tw.id = t.to_wallet_id
+UNION ALL
+SELECT r.id, 'refund', CASE r.status WHEN 'pending' THEN 'pending' ELSE 'failed' END,
+       CASE r.status WHEN 'pending' THEN 'awaiting_approval' ELSE 'rejected' END,
+       r.merchant_account_id, pw.account_id, pay.to_wallet_id, pay.from_wallet_id,
+       r.amount, 0::bigint, r.pay_transaction_id, r.terminal_id, r.reference,
+       NULL::uuid, pay.checkout_id, r.items, NULL::uuid, NULL::uuid, r.idem,
+       NULL::text, r.created_at, NULL::timestamptz, NULL::uuid, NULL::uuid, r.merchant_account_id, '{}'::jsonb
+  FROM public.refunds r
+  JOIN public.transactions pay ON pay.id = r.pay_transaction_id
+  JOIN public.wallets pw ON pw.id = pay.from_wallet_id
+ WHERE r.status IN ('pending', 'rejected');
+
+-- What each completed transaction did to each account, for reconciliation (docs/SCHEME-V2.md, section 8): `delta` is the change to the
+-- account's balance, `credit_delta` the change to its credit drawn, and `wdelta` the change to the wallet's own balance for the wallets
+-- whose balance can be checked exactly (Benefits and escrow wallets). Declined rows and the system wallets have no effect. A balance
+-- equals the sum of its effects; earmarks of ordinary wallets are checked only as a bound.
+CREATE VIEW public.account_effects AS
+SELECT t.id AS tx_id, t.created_at, fw.account_id, t.from_wallet_id AS wallet_id,
+       CASE t.type WHEN 'send' THEN -t.amount WHEN 'pay' THEN -(t.amount - t.credit_amount) WHEN 'refund' THEN -t.amount
+                   WHEN 'purchase' THEN -t.amount WHEN 'claim' THEN -t.amount WHEN 'settle' THEN -t.amount
+                   WHEN 'fund_return' THEN -t.amount WHEN 'adjustment' THEN -t.amount ELSE 0 END AS delta,
+       CASE t.type WHEN 'pay' THEN t.credit_amount ELSE 0 END AS credit_delta,
+       CASE WHEN fw.type IN ('benefits', 'escrow') THEN
+         CASE t.type WHEN 'pay' THEN -(t.amount - t.credit_amount) WHEN 'purchase' THEN -t.amount WHEN 'claim' THEN -t.amount
+                     WHEN 'move' THEN -t.amount WHEN 'send' THEN -t.amount ELSE 0 END
+       ELSE 0 END AS wdelta
+  FROM public.transactions t JOIN public.wallets fw ON fw.id = t.from_wallet_id
+ WHERE t.status = 'completed' AND fw.type <> 'system'
+UNION ALL
+SELECT t.id, t.created_at, tw.account_id, t.to_wallet_id,
+       CASE t.type WHEN 'fund' THEN t.amount - t.credit_amount WHEN 'send' THEN t.amount WHEN 'pay' THEN t.amount
+                   WHEN 'refund' THEN t.amount - t.credit_amount WHEN 'claim' THEN t.amount WHEN 'settle_return' THEN t.amount
+                   WHEN 'collect' THEN t.amount WHEN 'adjustment' THEN t.amount ELSE 0 END,
+       CASE t.type WHEN 'fund' THEN -t.credit_amount WHEN 'refund' THEN -t.credit_amount ELSE 0 END,
+       CASE WHEN tw.type IN ('benefits', 'escrow') THEN
+         CASE t.type WHEN 'send' THEN t.amount WHEN 'refund' THEN t.amount - t.credit_amount WHEN 'claim' THEN t.amount
+                     WHEN 'allocate' THEN t.amount WHEN 'move' THEN t.amount ELSE 0 END
+       ELSE 0 END
+  FROM public.transactions t JOIN public.wallets tw ON tw.id = t.to_wallet_id
+ WHERE t.status = 'completed' AND tw.type <> 'system';

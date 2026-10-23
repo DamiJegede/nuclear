@@ -2,6 +2,9 @@ import type { Sql } from "../db";
 import { earmarkedTotalQuery, spendableFrom } from "./walletFunds";
 import { n } from "./money";
 import { apiUrl, imageUrl } from "./images";
+import { insertTx, spentToday, type NewTx } from "./txn";
+import { SHOP_WALLET } from "./system";
+import { uuidv7 } from "./ids";
 
 export const MAX_PER_ORDER = 20;
 
@@ -95,28 +98,35 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
   if (!wallet) return { kind: "error", status: 404, error: "wallet_not_found" };
 
   class StockRace extends Error {}
+  const idem = `purchase:${i.accountId}:${i.idempotencyKey}`;
   try {
   return await (sql.begin(async (tx): Promise<PurchaseOutcome> => {
-    const replayQuery = () => tx<(OrderRow & { tx_status: string; tx_code: string | null; tx_id: string; oid: string | null }) []>`
-        select t.id as tx_id, t.status as tx_status, t.status_code as tx_code, o.id as oid,
-               ${tx.unsafe(ORDER_COLS.split(", ").filter((c) => c !== "id").map((c) => "o." + c).join(", "))}
-          from transactions t left join orders o on o.transaction_id = t.id
-         where t.type = 'purchase' and t.from_account_id = ${i.accountId} and t.idempotency_key = ${i.idempotencyKey}`;
-    const fromReplay = (prev: Awaited<ReturnType<typeof replayQuery>>[number] | undefined): PurchaseOutcome | null => {
+    type Replay = OrderRow & { tx_status: string; tx_code: string | null; tx_id: string; oid: string | null };
+    const fromReplay = (prev: Replay | undefined): PurchaseOutcome | null => {
       if (!prev) return null;
-      if (prev.tx_status === "failed") return { kind: "declined", transactionId: prev.tx_id, code: prev.tx_code ?? "declined", replayed: true };
+      if (prev.tx_status === "declined") return { kind: "declined", transactionId: prev.tx_id, code: prev.tx_code ?? "declined", replayed: true };
       const sameProduct = prev.type === i.kind && (i.kind === "tag" ? prev.model_id === i.productId : prev.shop_id === i.productId);
       if (!prev.oid || !sameProduct || prev.quantity !== i.quantity) return { kind: "error", status: 409, error: "idempotency_mismatch" };
       return { kind: "ok", order: { ...prev, id: prev.oid }, replayed: true };
     };
 
-    // The earlier attempt (a retry returns it) and the product, read together in one round trip. The product is read WITHOUT a lock:
-    // its stock is claimed by one conditional update right before commit, so a popular item is locked for milliseconds, not for the
-    // whole purchase.
+    // One round trip for the reads, run in this order on the server: the buyer's balance row and wallet are locked first, then the earlier
+    // attempt for this key (so a concurrent retry waits and replays) and the product. The product is read WITHOUT a lock: its stock is
+    // claimed by one conditional update right before commit, so a popular item is locked for milliseconds, not for the whole purchase.
     type TagRow = { type: string; name: string; currency: string; price: bigint; quantity: number; sold: number; status: string };
     type ItemRow2 = { name: string; currency: string; price: bigint; stock: number | null; status: string; kind: string; file: string | null };
-    const [[prev0], productRows] = await Promise.all([
-      replayQuery(),
+    const [[b], [w], [a], [em], [prev0], productRows] = await Promise.all([
+      tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
+        select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`,
+      tx<{ status: string; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
+        select status, daily_limit, ${tx.unsafe(spentToday)} as spent_today, balance from wallets where id = ${wallet.id} for no key update`,
+      tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
+      earmarkedTotalQuery(tx, i.accountId),
+      tx<Replay[]>`
+        select t.id as tx_id, t.status as tx_status, t.status_code as tx_code, o.id as oid,
+               ${tx.unsafe(ORDER_COLS.split(", ").filter((c) => c !== "id").map((c) => "o." + c).join(", "))}
+          from transactions t left join orders o on o.transaction_id = t.id
+         where t.type = 'purchase' and t.idem = ${idem}`,
       i.kind === "tag"
         ? tx<TagRow[]>`select type, name, currency, price, quantity, sold, status from tag_models where id = ${i.productId}`
         : tx<ItemRow2[]>`select name, currency, price, stock, status, kind, file from shop where id = ${i.productId}`,
@@ -144,47 +154,31 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
 
     const total = price * BigInt(i.quantity);
     const amt = total.toString();
-    // The attempt row and the reads that follow go out together. Lock order: balances, wallet (the product is claimed last).
-    const [ins, [b], [w], [a], [em]] = await Promise.all([
-      tx<{ id: string }[]>`
-        insert into transactions (type, from_account_id, from_wallet_id, amount, status, idempotency_key)
-        values ('purchase', ${i.accountId}, ${wallet.id}, ${amt}, 'pending', ${i.idempotencyKey})
-        on conflict (type, from_account_id, idempotency_key) where from_account_id is not null and type <> 'pay'
-        do nothing returning id`,
-      tx<{ balance: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
-        select balance, credit_limit, credit_spent from balances where account_id = ${i.accountId} for no key update`,
-      tx<{ status: string; daily_limit: bigint | null; spent_today: bigint; balance: bigint | null }[]>`
-        select status, daily_limit, spent_today, balance from wallets where id = ${wallet.id} for no key update`,
-      tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
-      earmarkedTotalQuery(tx, i.accountId),
-    ]);
-    if (!ins[0]) return fromReplay((await replayQuery())[0]) ?? { kind: "error", status: 409, error: "idempotency_mismatch" };
-    const txId = ins[0].id;
-
     const funds = spendableFrom(b ? b.balance : 0n, w ? w.balance : null, em!.total);
     let code: string | null = null;
     if (!a || a.status !== "active" || !w || w.status !== "active") code = "buyer_unavailable";
     else if (!b || b.balance < 0n || b.credit_spent > b.credit_limit) code = "account_restricted";
     else if (funds.funds < total) code = funds.earmarked ? "wallet_balance_exceeded" : "insufficient_balance"; // funded balance only, never credit
     else if (w.daily_limit !== null && w.spent_today + total > w.daily_limit) code = "spend_limit_exceeded";
+    const txId = uuidv7();
+    const t: NewTx = { id: txId, type: "purchase", declined: code, from: wallet.id, to: SHOP_WALLET, amount: total, account: i.accountId, idem, meta: { kind: i.kind, product_id: i.productId, quantity: i.quantity } };
     if (code) {
-      await tx`update transactions set status = 'failed', status_code = ${code} where id = ${txId}`;
+      await insertTx(tx, t);
       return { kind: "declined", transactionId: txId, code, replayed: false };
     }
 
     // Every write in one round trip. The stock claim is conditional: if another buyer took the last units meanwhile it changes no
-    // row, the whole purchase rolls back (nothing is recorded) and the buyer is told it sold out.
-    const [, , , claimed, [order]] = await Promise.all([
+    // row, the whole purchase rolls back (nothing is recorded) and the buyer is told it sold out. The money goes to the Nuclear Shop
+    // system wallet, whose balance row is never touched.
+    const [, , claimed, , [order]] = await Promise.all([
       tx`update balances set balance = balance - ${amt} where account_id = ${i.accountId}`,
-      tx`update wallets set spent_today = spent_today + ${amt}, balance = case when balance is not null then balance - ${amt} else balance end where id = ${wallet.id}`,
-      // A Benefits wallet buys like any other wallet; its debit is attributed to it in the ledger.
-      tx`insert into ledger_entries (transaction_id, posting_key, line_no, account_id, bucket, direction, amount, wallet_id)
-         values (${txId}, 'purchase', 1, ${i.accountId}, 'funded_balance', 'debit', ${amt}, ${wallet.type === "benefits" ? wallet.id : null}),
-                (${txId}, 'purchase', 2, null, 'platform_clearing', 'credit', ${amt}, null)`,
+      tx`update wallets set spent_today = case when spent_day = program_today() then spent_today + ${amt} else ${amt} end, spent_day = program_today(),
+                balance = case when balance is not null then balance - ${amt} else balance end where id = ${wallet.id}`,
       i.kind === "tag"
         ? tx<{ id: string }[]>`update tag_models set sold = sold + ${i.quantity} where id = ${i.productId} and quantity - sold >= ${i.quantity} returning id`
         : tx<{ id: string }[]>`update shop set sold = sold + ${i.quantity}, stock = case when stock is null then null else stock - ${i.quantity} end
                                 where id = ${i.productId} and (stock is null or stock >= ${i.quantity}) returning id`,
+      insertTx(tx, t),
       tx<OrderRow[]>`
         insert into orders (type, account_id, wallet_id, model_id, shop_id, name, model_type, quantity, unit_price, total, currency, shipping, delivery, transaction_id)
         values (${i.kind}, ${i.accountId}, ${wallet.id}, ${i.kind === "tag" ? i.productId : null}, ${i.kind === "shop" ? i.productId : null},
@@ -193,7 +187,6 @@ export async function purchase(sql: Sql, i: PurchaseInput): Promise<PurchaseOutc
         returning ${tx.unsafe(ORDER_COLS)}`,
     ]);
     if (claimed.length === 0) throw new StockRace();
-    await tx`update transactions set status = 'completed', completed_at = now() where id = ${txId}`;
     return { kind: "ok", order: order!, replayed: false };
   }) as Promise<PurchaseOutcome>);
   } catch (err) {

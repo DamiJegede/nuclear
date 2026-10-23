@@ -36,7 +36,7 @@ type WalletRow = {
   organization_name: string | null;
 };
 
-const COLS = `id, account_id, display_name, photo, type, daily_limit, spent_today,
+const COLS = `id, account_id, display_name, photo, type, daily_limit, (case when spent_day = program_today() then spent_today else 0 end) as spent_today,
   allow_pay, allow_send, status, balance, key_hint, key_last_used_at, created_at,
   org_account_id, (select o.name from accounts o where o.id = wallets.org_account_id) as organization_name`;
 
@@ -69,7 +69,7 @@ wallets.get("/", async (c) => {
   const sql = c.get("sql");
   const rows = await sql<WalletRow[]>`
     select ${sql.unsafe(COLS)} from wallets
-     where account_id = ${accountId} ${walletId ? sql`and id = ${walletId}` : sql``}
+     where account_id = ${accountId} and type <> 'escrow' ${walletId ? sql`and id = ${walletId}` : sql``}
      order by (type = 'default') desc, created_at, id`;
   return c.json({ wallets: rows.map(walletJson) });
 });

@@ -1,6 +1,6 @@
 import { agentActivity } from "./adminLists";
 import type { Sql } from "../db";
-import { PROGRAM_TZ } from "./ledger";
+import { PROGRAM_TZ } from "./dates";
 import { n } from "./money";
 
 type Vol = { count: number; volume: number };
@@ -46,22 +46,22 @@ export type LiveStats = {
 };
 
 
-/** The ledger checks. Each one scans the ledger or every account, so they are computed on a schedule (see statsCache.ts), never per request. */
+/** The reconciliation checks (docs/SCHEME-V2.md, section 8). Each one reads every effect or every account, so they are computed on a schedule (see statsCache.ts), never per request. */
 export type Reconciliation = {
-    /** Account balances equal the ledger's funded-balance postings. */
+    /** Account balances equal the sum of what the transactions did to them. */
     balances_match_ledger: boolean;
     balance_difference: number;
-    /** Outstanding credit equals the ledger's credit-receivable postings. */
+    /** Outstanding credit equals the sum of the credit drawn and repaid by transactions. */
     credit_matches_ledger: boolean;
     credit_difference: number;
-    /** Every posting event balances: total debits equal total credits. */
+    /** Conservation: the accounts' total change equals what crossed the edge of the scheme. */
     ledger_balanced: boolean;
     earmarks_within_balances: boolean;
-    /** Money held for employees who have not claimed (ledger bucket employee_escrow) equals the sum of employees.balance. */
+    /** Every organization's escrow wallet equals what its unclaimed employees are owed. */
     escrow_matches_employees: boolean;
-    /** Every Benefits wallet's balance equals the funded_balance postings attributed to it. */
+    /** Every Benefits and escrow wallet's balance equals the sum of its transactions. */
     benefits_match_ledger: boolean;
-    /** Every consumer account's opening value and added-today counter on the balances row equal what the ledger and transactions say for today. */
+    /** Every consumer account's opening value and added-today counter on the balances row equal what the transactions say for today. */
     daily_caps_match_ledger: boolean;
   };
 
@@ -76,34 +76,32 @@ export type SystemStats = LiveStats & {
 
 const v = (count: number, volume: bigint | number): Vol => ({ count, volume: n(BigInt(volume)) as number });
 
-/** The ledger checks. Heavy (full ledger scans): callers cache the result, see statsCache.ts. */
+/** The reconciliation checks. Heavy (they read every effect), so callers cache the result, see statsCache.ts. */
 export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
   const [bal] = await sql<Record<string, bigint>[]>`
-    select coalesce(sum(b.balance), 0)::bigint as total, coalesce(sum(b.credit_spent), 0)::bigint as credit_spent from balances b`;
+    select coalesce(sum(b.balance), 0)::bigint as total, coalesce(sum(b.credit_spent), 0)::bigint as credit_spent
+      from balances b join accounts a on a.id = b.account_id where a.type <> 'S'`;
 
-  const [led] = await sql<Record<string, bigint>[]>`
-    select coalesce(sum(case when bucket = 'funded_balance' and account_id is not null
-                             then case direction when 'credit' then amount else -amount end end), 0)::bigint as funded,
-           coalesce(sum(case when bucket = 'credit_receivable' and account_id is not null
-                             then case direction when 'debit' then amount else -amount end end), 0)::bigint as credit,
-           coalesce(sum(case direction when 'debit' then amount else -amount end), 0)::bigint as net,
-           coalesce(sum(case when bucket = 'employee_escrow' then case direction when 'credit' then amount else -amount end end), 0)::bigint as escrow,
-           (select coalesce(sum(balance), 0)::bigint from employees) as employees_held,
-           (select count(*)::int from wallets w where w.type = 'benefits'
-              and w.balance <> coalesce((select sum(case l.direction when 'credit' then l.amount else -l.amount end) from ledger_entries l
-                                          where l.wallet_id = w.id and l.bucket = 'funded_balance'), 0)) as benefits_off
-      from ledger_entries`;
+  const [eff] = await sql<Record<string, bigint>[]>`
+    select coalesce(sum(delta), 0)::bigint as funded, coalesce(sum(credit_delta), 0)::bigint as credit,
+           (select coalesce(sum(case type when 'fund' then amount when 'fund_return' then -amount when 'purchase' then -amount
+                                          when 'settle' then -amount when 'settle_return' then amount when 'collect' then amount else 0 end), 0)::bigint
+              from transactions where status = 'completed') as edge,
+           (select count(*)::int from wallets w where w.type in ('benefits', 'escrow')
+              and w.balance <> coalesce((select sum(e.wdelta) from account_effects e where e.wallet_id = w.id), 0)) as wallets_off,
+           (select count(*)::int from wallets w where w.type = 'escrow'
+              and w.balance <> coalesce((select sum(e.balance) from employees e where e.org_account_id = w.account_id and e.employee_account_id is null), 0)) as escrow_off
+      from account_effects`;
 
   const [caps] = await sql<{ n: number }[]>`
     with start as (select date_trunc('day', now() at time zone ${PROGRAM_TZ}) at time zone ${PROGRAM_TZ} as t),
     opened as (
-      select l.account_id, sum(case when l.wallet_id is null then (case l.direction when 'credit' then l.amount else -l.amount end) else 0 end) as v
-        from ledger_entries l, start where l.bucket = 'funded_balance' and l.created_at < start.t group by l.account_id),
+      select e.account_id, sum(e.delta - e.wdelta) as v from account_effects e, start where e.created_at < start.t group by e.account_id),
     added as (
       select account_id, sum(amount) as v from (
-        select t.to_account_id as account_id, t.amount from transactions t, start
-         where t.status = 'completed' and t.completed_at >= start.t
-           and ((t.type = 'send' and not exists (select 1 from wallets w where w.id = t.to_wallet_id and w.type = 'benefits')) or t.type = 'move')
+        select tw.account_id, t.amount from transactions t join wallets tw on tw.id = t.to_wallet_id, start
+         where t.status = 'completed' and t.created_at >= start.t
+           and ((t.type = 'send' and tw.type <> 'benefits') or t.type = 'move')
         union all
         select f.account_id, f.amount from fundings f, start where f.released_at >= start.t) x group by account_id)
     select count(*)::int as n
@@ -117,17 +115,18 @@ export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
       select w.account_id from wallets w join balances b on b.account_id = w.account_id
        where w.balance is not null group by w.account_id, b.balance having sum(w.balance) > b.balance) x`;
 
-  const balanceDiff = Number((bal!.total as bigint) - (led!.funded as bigint));
-  const creditDiff = Number((bal!.credit_spent as bigint) - (led!.credit as bigint));
+  const balanceDiff = Number((bal!.total as bigint) - (eff!.funded as bigint));
+  const creditDiff = Number((bal!.credit_spent as bigint) - (eff!.credit as bigint));
   return {
     balances_match_ledger: balanceDiff === 0,
     balance_difference: balanceDiff,
     credit_matches_ledger: creditDiff === 0,
     credit_difference: creditDiff,
-    ledger_balanced: Number(led!.net) === 0,
+    // Conservation: what the accounts gained in total, less the credit extended to them, is exactly what crossed the edge of the scheme (loads in, purchases, payouts and collections).
+    ledger_balanced: Number(eff!.funded) - Number(eff!.credit) === Number(eff!.edge),
     earmarks_within_balances: over!.n === 0,
-    escrow_matches_employees: Number(led!.escrow) === Number(led!.employees_held),
-    benefits_match_ledger: Number(led!.benefits_off) === 0,
+    escrow_matches_employees: Number(eff!.escrow_off) === 0,
+    benefits_match_ledger: Number(eff!.wallets_off) === 0,
     daily_caps_match_ledger: caps!.n === 0,
   };
 }
@@ -163,8 +162,8 @@ export async function liveStats(sql: Sql): Promise<LiveStats> {
       from accounts`;
 
   const [extra] = await sql<Record<string, number>[]>`
-    select (select count(distinct to_account_id) from transactions
-             where type = 'pay' and status = 'completed')::int as transacting,
+    select (select count(distinct w.account_id) from transactions t join wallets w on w.id = t.to_wallet_id
+             where t.type = 'pay' and t.status = 'completed')::int as transacting,
            (select count(*) from terminals)::int as terminals`;
 
   const [tx] = await sql<Record<string, bigint | number>[]>`
@@ -182,12 +181,12 @@ export async function liveStats(sql: Sql): Promise<LiveStats> {
       coalesce(sum(amount) filter (where type = 'refund'), 0)::bigint as ref_v,
       (count(*) filter (where type = 'fund'))::int as fund_n,
       coalesce(sum(amount) filter (where type = 'fund'), 0)::bigint as fund_v,
-      (count(*) filter (where type = 'send' and completed_at >= start.t))::int as t_sent_n,
-      coalesce(sum(amount) filter (where type = 'send' and completed_at >= start.t), 0)::bigint as t_sent_v,
-      (count(*) filter (where type = 'pay' and tag_id is not null and completed_at >= start.t))::int as t_tap_n,
-      coalesce(sum(amount) filter (where type = 'pay' and tag_id is not null and completed_at >= start.t), 0)::bigint as t_tap_v,
-      (count(*) filter (where type = 'pay' and tag_id is null and completed_at >= start.t))::int as t_app_n,
-      coalesce(sum(amount) filter (where type = 'pay' and tag_id is null and completed_at >= start.t), 0)::bigint as t_app_v
+      (count(*) filter (where type = 'send' and created_at >= start.t))::int as t_sent_n,
+      coalesce(sum(amount) filter (where type = 'send' and created_at >= start.t), 0)::bigint as t_sent_v,
+      (count(*) filter (where type = 'pay' and tag_id is not null and created_at >= start.t))::int as t_tap_n,
+      coalesce(sum(amount) filter (where type = 'pay' and tag_id is not null and created_at >= start.t), 0)::bigint as t_tap_v,
+      (count(*) filter (where type = 'pay' and tag_id is null and created_at >= start.t))::int as t_app_n,
+      coalesce(sum(amount) filter (where type = 'pay' and tag_id is null and created_at >= start.t), 0)::bigint as t_app_v
     from transactions, start
     where status = 'completed'`;
 

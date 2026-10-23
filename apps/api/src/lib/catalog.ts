@@ -115,6 +115,7 @@ export async function commitStock(tx: Tx, lines: StockLine[]): Promise<void> {
       update products
          set stock = case when stock is null then null else stock - ${qty} end,
              total_sold = total_sold + ${qty},
-             sold_today = sold_today + ${qty}
+             sold_today = case when sold_day = program_today() then sold_today + ${qty} else ${qty} end,
+             sold_day = program_today()
        where id = ${id}`));
 }

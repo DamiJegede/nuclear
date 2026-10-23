@@ -32,7 +32,7 @@ benefitsApi.get("/balance", async (c) => {
   const sql = c.get("sql");
   const { accountId } = c.get("orgKey");
   const [[b], [h]] = await Promise.all([
-    sql<{ balance: bigint }[]>`select balance from balances where account_id = ${accountId}`,
+    sql<{ balance: bigint }[]>`select shared_funds(${accountId}) as balance`,
     // held_for_unclaimed is ALL credit still held, including for removed employees (it is still theirs); employees counts the active ones.
     sql<{ held: bigint; employees: number }[]>`select coalesce(sum(balance), 0)::bigint as held, (count(*) filter (where status = 'active'))::int as employees from employees where org_account_id = ${accountId}`,
   ]);

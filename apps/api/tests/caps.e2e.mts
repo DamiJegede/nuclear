@@ -4,9 +4,8 @@ process.on("unhandledRejection", (e: any) => { writeFileSync("/tmp/caps.err", St
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
-import { migrate, resetSchema, PG_URL } from "./db.ts";
+import { migrate, newDay, resetSchema, PG_URL } from "./db.ts";
 import { connect } from "../src/db.ts";
-import { ensureDay } from "../src/lib/dailyReset.ts";
 resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 4, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
@@ -42,13 +41,12 @@ eq("spending and sending never give room back", [(await send(ada, wb, 100_000, "
 eq("incoming sends count for the recipient, not the sender", [(await cols(bob)).a, await room(bob)], [100_000, 100_000]);
 
 // ---- 3. a new program day: what you hold is the opening value, and it uses up room
-await ensureDay(sql, tomorrow);
-eq("daily roll: every consumer's opening value becomes what it actually holds and added-today restarts", [await cols(ada), await cols(bob)], [{ o: 100_000, a: 0, d: tomorrow }, { o: 100_000, a: 0, d: tomorrow }]);
+await newDay(adm);
+eq("daily roll: nothing runs at midnight, yet every consumer's opening value reads as what it actually holds and added-today restarts", [await room(ada), await room(bob)], [100_000, 100_000]);
 eq("uniform rule: a load is held to cap - opening: with $1,000 held, $1,000 of room", [await room(ada), (await fund(ada, 100_001, "m1")).json.status_code, (await fund(ada, 100_000, "m2")).status, await room(ada)], [100_000, "daily_value_limit_exceeded", 201, 0]);
 const cy = await sign("Cy", "cy@x.test");
 await fund(cy, 190_000, "cy-load");
-await ensureDay(sql, addDay(tomorrow));
-function addDay(d: string) { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); }
+await newDay(adm);
 eq("uniform rule: an incoming send is held to the same rule (recipient holds $1,900 -> $100 of room)", [(await send(bob, await wallet(cy), 10_001, "in1")).json.status_code, (await send(bob, await wallet(cy), 10_000, "in2")).status, (await send(bob, await wallet(cy), 1, "in3")).json.status_code, await room(cy)], ["recipient_limit_exceeded", 201, "recipient_limit_exceeded", 0]);
 
 // ---- 4. what is never counted
@@ -64,13 +62,7 @@ const pay = await call("POST", "/v1/payments", { token: dee.session_token, key: 
 const rf = await call("POST", "/v1/terminal/refunds", { token: term.session_token, key: "dee-rf", body: { payment_id: pay.json.payment.id, mode: "full" } });
 eq("refunds are never counted and never limited: spending then a refund leaves added-today where the load put it", [pay.status, rf.status, (await cols(dee)).a, before.a], [201, 201, before.a, 100_000]);
 // an employer credit into a Benefits wallet and the claim are not additions
-await q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
-  insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${org.account_id}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
-  insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${org.account_id}', bank, 500000, 'org-bk', 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${org.account_id}', '${org.account_id}', bank, 500000, 'completed', 'org-bk', now()) returning id into tid;
-  update balances set balance = balance + 500000 where account_id = '${org.account_id}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', 500000), (fid, 'release', 2, '${org.account_id}', 'funded_balance', 'credit', 500000);
-  update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
+await fund(org, 500_000, "org-bk");
 const key = (await call("POST", "/v1/org/api-key", { token: org.session_token })).json.token;
 const eve = await sign("Eve", "eve@x.test");
 await call("POST", "/v1/benefits-api/credits", { token: key, key: "c1", body: { credits: [{ employee_id: "E1", name: "Eve", email: "eve@x.test", amount: 400_000 }] } });
@@ -88,7 +80,9 @@ await fund(gus, 100_000, "gus-load");
 const race = await Promise.all([fund(fay, 120_000, "r1"), fund(fay, 120_000, "r2"), send(gus, await wallet(fay), 70_000, "r3")]);
 eq("race: simultaneous loads and an incoming send cannot together pass $2,000 of room", [race.filter((r) => r.status === 201).length >= 1, race.filter((r) => r.status === 201 && true).length <= 2, (await cols(fay)).a <= 200_000, (await cols(fay)).a === race.reduce((t, r, i) => t + (r.status === 201 ? [120_000, 120_000, 70_000][i]! : 0), 0)], [true, true, true, true]);
 
-eq("reconciliation: the counters on balances match the ledger for today (and a tampered counter is caught)", await (async () => {
+// the accounts that were rolled over by simulation above (no real midnight passed, so their history cannot show an opening value) are left out of the same-day check
+await q("update balances set opening_day = opening_day - 1 where account_id in ($1, $2, $3)", [ada.account_id, bob.account_id, cy.account_id]);
+eq("reconciliation: the counters on balances match the transactions for today (and a tampered counter is caught)", await (async () => {
   const ok = (await rec()).daily_caps_match_ledger;
   await q("update balances set added_today = added_today + 7 where account_id=$1", [fay.account_id]);
   const bad = (await rec()).daily_caps_match_ledger;

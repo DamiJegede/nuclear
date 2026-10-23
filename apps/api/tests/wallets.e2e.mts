@@ -2,7 +2,7 @@ import { ROOT, applyMigration, migrate, psql, resetSchema } from "./db.ts";
 import { readFileSync } from "node:fs";
 import app from "../src/index.ts";
 import { resetDailyCounters } from "./db.ts";
-import { easternDate } from "../src/lib/dailyReset.ts";
+import { easternDate } from "../src/lib/dates.ts";
 import { connect } from "../src/db.ts";
 
 import postgres from "postgres";
@@ -188,15 +188,11 @@ const dup = await Promise.all(Array.from({ length: 5 }, () =>
   call("POST", "/v1/transfers", { token: A, key: "dup-1", body: { to_wallet_id: bobDefault, amount: 100 } })));
 eq("parallel duplicate key: single debit", [(await call("GET", "/v1/balance", { token: A })).json.balance, new Set(dup.map((d) => d.json.transaction?.id)).size], [Math.max(b2 - 100, b2 - 100), 1]);
 
-// --- ledger integrity: every posting balances; ledger matches balances table
-const lg = await db.query(`select coalesce(sum(case direction when 'debit' then amount else -amount end),0)::int net from ledger_entries`);
-eq("ledger nets to zero overall", lg.rows[0].net, 0);
+// --- integrity: every account's balance equals the sum of what its transactions did to it
 const recon = await db.query(`
-  select b.account_id, b.balance,
-    coalesce((select sum(case direction when 'credit' then amount else -amount end)
-                from ledger_entries l where l.account_id = b.account_id and l.bucket = 'funded_balance'),0)::bigint as ledger
-  from balances b`);
-eq("balances == ledger funded_balance per account", recon.rows.filter((r: any) => BigInt(r.balance) !== BigInt(r.ledger)).length, 0);
+  select b.account_id, b.balance, coalesce((select sum(e.delta) from account_effects e where e.account_id = b.account_id),0)::bigint as effects
+  from balances b where b.account_id <> '00000000-0000-7000-8000-000000000001'`);
+eq("balances == the sum of their transaction effects per account", recon.rows.filter((r: any) => BigInt(r.balance) !== BigInt(r.effects)).length, 0);
 
 // --- activity + pagination
 const p1 = await call("GET", "/v1/activity?limit=3", { token: A });
@@ -208,7 +204,7 @@ while (cur && pages < 30) {
   for (const it of pn.json.items) { if (seen.has(it.id)) dupSeen = true; seen.add(it.id); }
   cur = pn.json.next_cursor; pages++;
 }
-const total = (await db.query(`select (select count(*) from transactions where from_account_id=$1 or to_account_id=$1)::int
+const total = (await db.query(`select (select count(*) from txn where (from_account_id=$1 or to_account_id=$1) and not (type='refund' and status='pending' and to_account_id=$1))::int
    + (select count(*) from fundings where account_id=$1 and transaction_id is null)::int n`, [ada.account_id])).rows[0].n;
 eq("pagination: no dupes, covers all", [dupSeen, seen.size], [false, total]);
 const all100 = (await call("GET", "/v1/activity?limit=100", { token: A })).json.items;

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { imageUrl } from "../lib/images";
 import { z } from "zod";
 import { uuid } from "../lib/validate";
+import { soldToday } from "../lib/txn";
 import type { AppContext } from "../env";
 import { hashToken, signTerminalJwt } from "../crypto";
 import { decryptTagUrl } from "../lib/tagproof";
@@ -344,7 +345,7 @@ const productJson = (p: ProductRow) => ({
   total_sold: Number(p.total_sold),
   sold_today: p.sold_today,
 });
-const PRODUCT_COLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, sold_today, discount`;
+const PRODUCT_COLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, ${soldToday} as sold_today, discount`;
 
 // The merchant's active products for the POS (sold-out ones included, so they can be restocked).
 terminalSelf.get("/products", async (c) => {

@@ -9,7 +9,8 @@ import { checkoutJson, getCheckout, getItems, listCheckouts } from "../lib/check
 import { imageUrl } from "../lib/images";
 import { MERCHANT_TX_KINDS, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { saveProfilePhoto } from "../lib/profilePhoto";
-import { PROGRAM_TZ } from "../lib/ledger";
+import { PROGRAM_TZ } from "../lib/dates";
+import { soldToday } from "../lib/txn";
 import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 
@@ -34,14 +35,14 @@ business.get("/overview", async (c) => {
   const [bal, term, pend, staff, orders, prof, cats, prods, best, tx] = await Promise.all([
     sql<{ balance: bigint; balance_pending: bigint }[]>`select balance, balance_pending from balances where account_id = ${id}`,
     sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where t.orb_uid is not null))::int as paired from terminals t where t.account_id = ${id}`,
-    sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from transactions where type = 'refund' and status = 'pending' and from_account_id = ${id}`,
+    sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from refunds where merchant_account_id = ${id} and status = 'pending'`,
     sql<{ n: number; writers: number }[]>`select count(*)::int as n, (count(*) filter (where role = 'write'))::int as writers from staff where account_id = ${id}`,
-    sql<{ n: number }[]>`select count(*)::int as n from checkouts where account_id = ${id} and status = 'open'`,
+    sql<{ n: number }[]>`select count(*)::int as n from checkouts where account_id = ${id} and status = 'open' and (expires_at is null or expires_at > now())`,
     sql<{ city: string | null; state: string | null }[]>`select city, state from businesses where account_id = ${id}`,
     sql<{ n: number }[]>`select count(*)::int as n from categories where account_id = ${id}`,
     sql<{ n: number }[]>`select count(*)::int as n from products where account_id = ${id}`,
     // Today's best seller: the product with the most units sold today (the counter resets at 00:00 New York); ties go to the bigger lifetime seller.
-    sql<{ name: string; sold_today: number }[]>`select name, sold_today from products where account_id = ${id} and sold_today > 0 order by sold_today desc, total_sold desc, name limit 1`,
+    sql<{ name: string; sold_today: number }[]>`select name, ${sql.unsafe(soldToday)} as sold_today from products where account_id = ${id} and ${sql.unsafe(soldToday)} > 0 order by 2 desc, total_sold desc, name limit 1`,
     // Today (since 00:00 New York) and yesterday, from the account's payments and refunds, read once.
     sql<{ today_n: number; y_pay: bigint; y_ref: bigint }[]>`
       with d as (select ((now() at time zone ${PROGRAM_TZ})::date)::timestamp at time zone ${PROGRAM_TZ} as t0,
@@ -49,7 +50,7 @@ business.get("/overview", async (c) => {
       select (count(*) filter (where x."timestamp" >= d.t0))::int as today_n,
              coalesce(sum(x.amount) filter (where x.type = 'pay' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_pay,
              coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_ref
-        from transactions x, d
+        from txn x, d
        where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= d.y0`,
   ]);
   return c.json({
@@ -167,17 +168,19 @@ business.put("/bank", async (c) => {
 });
 
 // Settlements to and from the payout bank: type 'settle' transactions (a positive daily net is a payout to the bank, a negative one a collection
-// from it). Written by the daily settlement job (lib/settlement.ts); the table is the transactions table, no separate payouts table.
+// from it). Written by the daily settlement job (lib/settlement.ts); one row per merchant per day in `settlements`.
 business.get("/payouts", async (c) => {
   const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
   const id = c.get("auth").accountId;
-  const rows = await c.get("sql")<{ id: string; amount: bigint; status: string; status_code: string | null; ts: Date; completed_at: Date | null; payout: boolean; last4: string | null }[]>`
-    select t.id, t.amount, t.status, t.status_code, t."timestamp" as ts, t.completed_at, (t.to_bank_account_id is not null) as payout, ba.last4
-      from transactions t left join bank_accounts ba on ba.id = coalesce(t.to_bank_account_id, t.from_bank_account_id)
-     where t.type = 'settle' and (t.from_account_id = ${id} or t.to_account_id = ${id})
-     order by t."timestamp" desc, t.id desc limit ${q.data.limit}`;
-  return c.json({ payouts: rows.map((r) => ({ id: r.id, kind: r.payout ? "payout" : "collection", amount: Number(r.amount), status: r.status, status_code: r.status_code, timestamp: r.ts, completed_at: r.completed_at, bank_last4: r.last4 })) });
+  const rows = await c.get("sql")<{ id: string; amount: bigint; status: string; failure_code: string | null; ts: Date; resolved_at: Date | null; direction: string; last4: string | null }[]>`
+    select s.id, s.amount, s.status, s.failure_code, s.created_at as ts, s.resolved_at, s.direction, ba.last4
+      from settlements s left join bank_accounts ba on ba.id = s.bank_account_id
+     where s.merchant_account_id = ${id}
+     order by s.settle_date desc, s.id desc limit ${q.data.limit}`;
+  // The merchant's view keeps its words: a payout or collection is completed once the bank has settled it.
+  const word = (s: string) => (s === "settled" ? "completed" : s === "submitted" ? "pending" : s);
+  return c.json({ payouts: rows.map((r) => ({ id: r.id, kind: r.direction === "credit" ? "payout" : "collection", amount: Number(r.amount), status: word(r.status), status_code: r.failure_code, timestamp: r.ts, completed_at: r.resolved_at, bank_last4: r.last4 })) });
 });
 
 business.delete("/bank", async (c) => {
@@ -241,7 +244,7 @@ type ProductRow = {
   id: string; category_id: string | null; name: string; currency: string; price: bigint; photo: string | null; stock: number | null; active: boolean;
   status: string; total_sold: bigint; sold_today: number; discount: bigint; created_at: Date;
 };
-const PCOLS = "id, category_id, name, currency, price, photo, stock, active, status, total_sold, sold_today, discount, created_at";
+const PCOLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, ${soldToday} as sold_today, discount, created_at`;
 const productJson = (p: ProductRow) => ({
   id: p.id, category_id: p.category_id, name: p.name, currency: p.currency, price: Number(p.price), discount: Number(p.discount), effective_price: Number(p.price - p.discount),
   photo: imageUrl(p.photo), stock: p.stock, active: p.active, status: p.status, total_sold: Number(p.total_sold), sold_today: p.sold_today, created_at: p.created_at,
@@ -323,7 +326,7 @@ business.delete("/products/:id", async (c) => {
   if (!id.success) return c.json({ error: "not_found" }, 404);
   const { accountId } = c.get("auth");
   const sql = c.get("sql");
-  const [p] = await sql<{ used: boolean }[]>`select exists (select 1 from checkout_items where product_id = ${id.data}) as used from products where id = ${id.data} and account_id = ${accountId}`;
+  const [p] = await sql<{ used: boolean }[]>`select exists (select 1 from checkouts c, jsonb_array_elements(c.items) i where c.account_id = ${accountId} and i ->> 'product_id' = ${id.data}) as used from products where id = ${id.data} and account_id = ${accountId}`;
   if (!p) return c.json({ error: "not_found" }, 404);
   if (p.used) return c.json({ error: "product_in_use" }, 409);
   await sql`delete from products where id = ${id.data} and account_id = ${accountId}`;

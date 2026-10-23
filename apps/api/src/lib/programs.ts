@@ -1,7 +1,7 @@
 import type { Sql } from "../db";
 import type { Env } from "../env";
 import { lowFundsEmail, runMissedEmail, sendMail } from "./email";
-import { easternDate } from "./dailyReset";
+import { easternDate } from "./dates";
 import { runBenefitRun } from "./org";
 import { trackNow } from "./tracker";
 import { sendCreditEmails } from "./orgMail";
@@ -116,7 +116,7 @@ export async function runDuePrograms(env: Env, sql: Sql, today: string = eastern
        and exists (select 1 from accounts a where a.id = businesses.account_id and a.status = 'active')`;
   for (const p of soon) {
     const f = await fixedTotals(sql, p.org_account_id);
-    const [o] = await sql<{ name: string; email: string | null; balance: bigint }[]>`select a.name, a.email, b.balance from accounts a join balances b on b.account_id = a.id where a.id = ${p.org_account_id}`;
+    const [o] = await sql<{ name: string; email: string | null; balance: bigint }[]>`select a.name, a.email, shared_funds(a.id) as balance from accounts a where a.id = ${p.org_account_id}`;
     if (f.total > 0n && o && o.balance < f.total && o.email) {
       await sendMail(env, { to: o.email, ...lowFundsEmail(o.name, p.next_run_date!, f.total, o.balance < 0n ? 0n : o.balance) });
       out.warned += 1;

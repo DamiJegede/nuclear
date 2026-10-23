@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppContext } from "../env";
 import { amount, n } from "../lib/money";
-import { sandboxFund } from "../lib/ledger";
+import { sandboxFund } from "../lib/fund";
 import { dailyHeadroom } from "../lib/benefits";
 import { dailyCap } from "../lib/config";
 import { handleSchema } from "../lib/handle";

@@ -31,7 +31,7 @@ const agent = (await call("POST", "/v1/wallets", { token: A, body: { display_nam
 const person = (await call("POST", "/v1/wallets", { token: A, body: { display_name: "Kid", type: "person", allow_send: true } })).json.wallet;
 eq("an agent wallet starts earmarked at 0, a person wallet shares the account's funds, the default wallet shares", [agent.balance, agent.earmarked, person.balance, person.earmarked, (await wallets(A))[0].balance], [0, true, null, false, null]);
 eq("an agent wallet with nothing set aside cannot spend", await (async () => { const r = await send(A, "a0", agent.id, bobDefault, 100); return [r.status, r.json.status_code]; })(), [422, "wallet_balance_exceeded"]);
-eq("and the decline is recorded as a failed transaction", (await q("select status, status_code from transactions where idempotency_key='a0'"))[0], { status: "failed", status_code: "wallet_balance_exceeded" });
+eq("and the decline is recorded as a failed transaction", (await q("select status, status_code from txn where idempotency_key like '%:a0'"))[0], { status: "failed", status_code: "wallet_balance_exceeded" });
 
 // ---- setting aside funds
 const set = (token: string, id: string, balance: number | null) => call("PUT", `/v1/wallets/${id}/balance`, { token, body: { balance } });

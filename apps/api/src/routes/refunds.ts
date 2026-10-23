@@ -86,13 +86,15 @@ const rowSelect = (sql: Sql) => sql`
          p.amount as payment_amount, p.reference, p.idempotency_key as payment_key,
          w.display_name as payer_name,
          (select json_agg(json_build_object('checkout_item_id', e.value ->> 'checkout_item_id',
-                                            'name', ci.name,
+                                            'name', ci.item ->> 'name',
                                             'quantity', (e.value ->> 'quantity')::int,
                                             'restock', (e.value ->> 'restock')::boolean))
             from jsonb_array_elements(r.items) e
-            join checkout_items ci on ci.id = (e.value ->> 'checkout_item_id')::uuid) as items
-    from transactions r
-    join transactions p on p.id = r.related_transaction_id
+            join checkouts co on co.id = p.checkout_id
+            cross join lateral jsonb_array_elements(co.items) ci(item)
+           where ci.item ->> 'id' = e.value ->> 'checkout_item_id') as items
+    from txn r
+    join txn p on p.id = r.related_transaction_id
     left join wallets w on w.id = p.from_wallet_id`;
 
 type ListRow = {
@@ -109,7 +111,7 @@ const listJson = (r: ListRow) => ({
   amount: n(r.amount),
   payment_id: r.related_transaction_id,
   payment_amount: n(r.payment_amount),
-  attempt: r.payment_key.startsWith("t:") ? r.payment_key.slice(2) : null,
+  attempt: /^pay:[0-9a-f-]{36}:t:(.*)$/.exec(r.payment_key)?.[1] ?? null,
   reference: r.reference,
   payer: r.payer_name ? { display_name: r.payer_name } : null,
   items: r.items,
@@ -216,7 +218,7 @@ async function resolveWithTap(c: any, action: "approve" | "reject") {
 
   // Already resolved (lost-response retry): return the recorded outcome. No tap is decoded or needed.
   const [cur] = await sql<{ status: string }[]>`
-    select status from transactions
+    select status from txn
      where id = ${id.data} and type = 'refund' and from_account_id = ${accountId}`;
   if (!cur) return c.json({ error: "refund_not_found" }, 404);
   if (cur.status !== "pending") {

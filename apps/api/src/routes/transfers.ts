@@ -6,7 +6,8 @@ import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import { amount, n } from "../lib/money";
 import { dailyCap } from "../lib/config";
-import { sendFunds, type TxRow } from "../lib/ledger";
+import { sendFunds } from "../lib/send";
+import type { TxRow } from "../lib/txn";
 import { requireSession } from "../session";
 
 export const transfers = new Hono<AppContext>();
@@ -72,7 +73,7 @@ transfers.get("/:id", async (c) => {
   const [t] = await sql<TxRow[]>`
     select id, type, status, status_code, amount, from_account_id, to_account_id,
            from_wallet_id, to_wallet_id, "timestamp", completed_at
-      from transactions
+      from txn
      where id = ${id.data} and type = 'send'
        and (from_account_id = ${accountId} or to_account_id = ${accountId})
        ${walletId ? sql`and (from_wallet_id = ${walletId} or to_wallet_id = ${walletId})` : sql``}`;

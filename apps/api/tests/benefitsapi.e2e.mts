@@ -25,12 +25,12 @@ const reconciled = async () => (await call("GET", "/v1/admin/stats", { token: OP
 const acme = await sign("Acme", "hr@acme.test", "O");
 const cus = await sign("Cus", "cus@x.test");
 const shop = await sign("Shop", "shop@x.test", "B");
-await q(`do $$ declare bank uuid; fid uuid; tid uuid; begin
+await q(`do $$ declare bank uuid; fid uuid; tid uuid; w uuid; begin
   insert into bank_accounts (account_id, routing_number, account_number, last4) values ('${acme.account_id}', 'SANDBOX', 'SANDBOX', '0000') returning id into bank;
-  insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${acme.account_id}', bank, 1000000, 'bankroll', 'created') returning id into fid;
-  insert into transactions (type, from_account_id, to_account_id, from_bank_account_id, amount, status, idempotency_key, completed_at) values ('fund', '${acme.account_id}', '${acme.account_id}', bank, 1000000, 'completed', 'bankroll', now()) returning id into tid;
-  update balances set balance = balance + 1000000 where account_id = '${acme.account_id}';
-  insert into ledger_entries (funding_id, posting_key, line_no, account_id, bucket, direction, amount) values (fid, 'release', 1, null, 'bank_settlement', 'debit', 1000000), (fid, 'release', 2, '${acme.account_id}', 'funded_balance', 'credit', 1000000);
+  insert into fundings (account_id, bank_account_id, amount, idempotency_key, status) values ('${acme.account_id}', bank, ${1000000}, 'bankroll', 'created') returning id into fid;
+  select id into w from wallets where account_id = '${acme.account_id}' and type = 'default';
+  insert into transactions (type, status, from_wallet_id, to_wallet_id, amount, funding_id, account_id, idem) values ('fund', 'completed', '00000000-0000-7000-8000-000000000002', w, ${1000000}, fid, '${acme.account_id}', 'fund:' || 'bankroll') returning id into tid;
+  update balances set balance = balance + ${1000000} where account_id = '${acme.account_id}';
   update fundings set status = 'completed', released_at = now(), transaction_id = tid where id = fid; end $$`);
 
 // ---- the key: shown once, one live key, rotating kills the old one
@@ -60,7 +60,7 @@ eq("employees: duplicate ids, empty arrays and the wrong shape are refused", [(a
 const cr = await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 2500 }, { employee_id: "A2", amount: 5000 }, { employee_id: "N1", name: "New One", email: "new1@x.test", amount: 1000 }] }, "cr-1");
 eq("credits: known employees need only an amount; a new one needs name and email; one call credits all", [cr.status, cr.json.run.count, cr.json.run.total, cr.json.run.held, cr.json.credits.map((x: any) => [x.employee_id, x.amount, x.credited_as])], [201, 3, 8500, 8500, [["A1", 2500, "held_until_claimed"], ["A2", 5000, "held_until_claimed"], ["N1", 1000, "held_until_claimed"]]]);
 eq("credits: each credit has a transaction id and employees are emailed a claim link", [cr.json.credits.every((x: any) => typeof x.transaction_id === "string"), cr.json.emails.sent, mails.length], [true, 3, 3]);
-eq("credits: a retry with the same key replays (200), credits and emails nothing more", [(await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 2500 }, { employee_id: "A2", amount: 5000 }, { employee_id: "N1", amount: 1000 }] }, "cr-1")).status, mails.length, (await q("select balance::int b from balances where account_id=$1", [acme.account_id]))[0].b], [200, 3, 1000000 - 8500]);
+eq("credits: a retry with the same key replays (200), credits and emails nothing more", [(await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 2500 }, { employee_id: "A2", amount: 5000 }, { employee_id: "N1", amount: 1000 }] }, "cr-1")).status, mails.length, (await q("select shared_funds($1)::int b", [acme.account_id]))[0].b], [200, 3, 1000000 - 8500]);
 eq("credits: the same key with different credits is a mismatch; a key is required", [(await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 1 }] }, "cr-1")).json.error, (await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 1 }] })).status], ["idempotency_mismatch", 400]);
 eq("credits: an unknown employee without name and email is refused whole, nothing credited", [(await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 100 }, { employee_id: "ZZ", amount: 100 }] }, "cr-2")).json, (await q("select count(*)::int n from benefit_runs"))[0].n], [{ error: "employee_details_required", employee_ids: ["ZZ"] }, 1]);
 eq("credits: bad amounts and duplicates are refused", [(await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 0 }] }, "cr-3")).status, (await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 10_000_001 }] }, "cr-4")).status, (await post(KEY, "/credits", { credits: [{ employee_id: "A1", amount: 5 }, { employee_id: "A1", amount: 5 }] }, "cr-5")).json.error], [400, 400, "duplicate_employee_id"]);
