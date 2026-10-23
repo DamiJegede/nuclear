@@ -105,7 +105,7 @@ eq("money held: the scheme balance is every balance, split by kind (an organizat
 eq("people gauges", [Number(s.users_total), Number(s.merchants_total), Number(s.merchants_active), Number(s.merchants_transacting), Number(s.organizations_total), Number(s.terminals)], [2, 1, 1, 1, 1, 1]);
 eq("lifetime starts from all history", [Number(s.lifetime_sends_count), Number(s.lifetime_in_app_volume), Number(s.lifetime_loads_volume), Number(s.lifetime_refunds_count), Number(s.lifetime_benefit_credited), Number(s.lifetime_benefit_runs_count)], [1, 3500, 150000, 1, 6000, 1]);
 eq("the same day is never snapshotted twice", [await takeSnapshot(sqlc, y), (await q("select count(*)::int n from snapshots"))[0].n], [false, 1]);
-eq("reconciliation is not part of taking the snapshot", s.reconciled, null);
+eq("the nightly conservation check is written with the snapshot (and is final with it)", s.reconciled, true);
 
 // ---- the Overview: that snapshot plus today's estimate, no history scan
 traced.length = 0;

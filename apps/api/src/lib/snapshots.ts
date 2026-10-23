@@ -5,6 +5,7 @@ import { easternDate } from "./dates";
 import { readCounters } from "./tracker";
 import type { Days, Deltas } from "./counters";
 import { liveStats, type LiveStats } from "./stats";
+import { nightlyCheck, type PrevDay } from "./nightly";
 
 /**
  * Daily snapshots (migration 0040, docs/TABLES.md "snapshots"). Once a night the cron records what happened on the program day that just ended,
@@ -114,8 +115,16 @@ export async function takeSnapshot(sql: Sql, date: string): Promise<boolean> {
              where t.type = 'pay' and t.created_at >= b.e - interval '30 days' and t.created_at < b.e)::bigint as merchants_transacting,
            (select count(*) from employees e, ${b} where e.created_at >= b.s and e.created_at < b.e)::bigint as employees_added`;
 
-  const row = { snapshot_date: date, ...day, ...lifetime, ...runs, ...people, ...gauges, ...more };
-  await sql`insert into snapshots ${sql(row as Record<string, string | bigint>)} on conflict (snapshot_date) do nothing`;
+  // The nightly conservation check (lib/nightly.ts) is written with the day and is final with it.
+  const check = await nightlyCheck(sql, date, prev as unknown as PrevDay);
+  const row = { snapshot_date: date, ...day, ...lifetime, ...runs, ...people, ...gauges, ...more, ...check.columns,
+                reconciled: check.reconciled, reconciliation: sql.json(check.reconciliation as never) };
+  const inserted = await sql`insert into snapshots ${sql(row as never)} on conflict (snapshot_date) do nothing returning id`;
+  // The Overview shows the latest night's result (Run Check replaces it with a full recompute).
+  if (inserted.length > 0) {
+    await sql`insert into system (key, value) values ('reconciliation_snapshot', ${JSON.stringify({ ...check.reconciliation, checked_at: new Date().toISOString() })})
+              on conflict (key) do update set value = excluded.value, updated_at = now()`;
+  }
   return true;
 }
 

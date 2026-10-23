@@ -6,7 +6,7 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  "triggers": { "crons": ["0 4 * * *", "0 5 * * *"] },
+  "triggers": { "crons": ["1 4 * * *", "1 5 * * *"] },
   "vars": {
     // Browser origins allowed to call /v1/admin/* (comma-separated). Add the admin portal's real URL
     // (the hosted one is already listed). The operator token is still required on every call.

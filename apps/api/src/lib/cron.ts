@@ -6,9 +6,7 @@ import { purge } from "./retention";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
-import { refreshReconciliation } from "./statsCache";
-import { reconciliationOk } from "./stats";
-import { catchUpSnapshots, addDays, saveReconciliation } from "./snapshots";
+import { catchUpSnapshots, addDays } from "./snapshots";
 import { pruneCounters } from "./tracker";
 
 /**
@@ -25,6 +23,13 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
     await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})
               on conflict (key) do update set value = excluded.value`;
+    // FIRST the day that just ended becomes an exact snapshot (and any missed day before it) with its conservation check (lib/nightly.ts): the
+    // reconciliation runs before anything below creates the new day's transactions. Never blocks the job.
+    const today = easternDate(new Date(scheduledTime));
+    const yesterday = addDays(today, -1);
+    const snapshots = await catchUpSnapshots(sql, yesterday).catch((err) => (console.error("snapshot failed", err), [] as string[]));
+    const [night] = await sql<{ reconciled: boolean | null }[]>`select reconciled from snapshots where snapshot_date = ${yesterday}::date`.catch(() => []);
+    const reconciled = night?.reconciled ?? null;
     // The monthly nudge to employees who have not claimed their employer credit (see lib/orgMail.ts); never blocks the reset.
     const reminders = await remindUnclaimed(env, sql).catch((err) => (console.error("reminders failed", err), null));
     // Fixed Benefits programs: credit what is due today (and retry or close what is waiting). Never blocks the reset.
@@ -33,16 +38,6 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     // an answer for. Never blocks the reset; the run claims its date, so the second cron of the day does nothing new.
     const settlement = await runSettlement(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("settlement failed", err), null));
     const polled = await pollSubmittedSettlements(env, sql).catch((err) => (console.error("settlement poll failed", err), null));
-    // The Overview's snapshots: the nightly ledger checks (the heavy scans), and a fresh set of live numbers. Never blocks the job.
-    // The day that just ended becomes an exact snapshot (and any missed day before it), then the ledger checks run and are recorded on it.
-    const today = easternDate(new Date(scheduledTime));
-    const yesterday = addDays(today, -1);
-    const snapshots = await catchUpSnapshots(sql, yesterday).catch((err) => (console.error("snapshot failed", err), [] as string[]));
-    const reconciled = await refreshReconciliation(env, sql, 0).then((s) => s.reconciliation, (err) => (console.error("reconciliation failed", err), null));
-    if (reconciled) {
-      const ok = reconciliationOk(reconciled);
-      await saveReconciliation(sql, yesterday, reconciled, ok).catch((err) => console.error("saving reconciliation failed", err));
-    }
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
     await pruneCounters(env, addDays(today, -3)).catch(() => null);
     return { swept, reminders, programs, settlement, polled, snapshots, reconciled, purged };

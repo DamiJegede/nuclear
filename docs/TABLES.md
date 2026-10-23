@@ -397,7 +397,7 @@ One row per program day (America/New_York), written by the nightly job from that
 | People (gauges) | `users_total/active/suspended/closed`, `wallets`, `merchants_total`, `merchants_active` (approved, not suspended), `merchants_transacting` (took a payment in the 30 days to the end of the day), `terminals`, `organizations_total/active`, `employees_total/claimed/unclaimed` |
 | That day | `users_new`, `merchants_new`, `organizations_new`, `employees_added`, `merchants_paid`; `<kind>_count` and `<kind>_volume` for `sends`, `taps` (pay with a tag or pass), `in_app` (customer-confirmed pay), `agents` (memo of agent-wallet sends and pays, already inside the others), `refunds`, `loads`, `purchases`, `payouts`, `collections`, `claims`; Benefits: `benefit_runs_count`, `benefit_credited`, `benefit_sent` (into Benefits wallets), `benefit_held` (for unclaimed employees), `benefit_runs_missed` |
 | Lifetime, to the end of the day | `lifetime_<kind>_count` / `_volume` for the same kinds (agents included), `lifetime_benefit_credited`, `lifetime_benefit_runs_count`. Each row is the previous day's plus the day; with no previous day it is summed from all history once |
-| Reconciliation | `reconciled` (NULL until the nightly check has run for the day) and `reconciliation` (jsonb of the checks) |
+| Reconciliation | `reconciled` and `reconciliation` (jsonb of the checks), written with the row: the nightly conservation check (see Reconciliation). `balance_midnight`, `credit_midnight`, `wallets_midnight` (the totals at the end of the day, derived), `effects_delta`, `effects_credit`, `effects_wallets` (what the day's transactions did), `edge_flows` (what crossed the edge of the scheme) and the running `drift`, `drift_credit`, `drift_wallets`, `drift_conservation` |
 
 The day's activity is a range read on `transactions_created_idx`.
 
@@ -578,11 +578,11 @@ There is no ledger table. The ledger's job (proving the numbers add up) is done 
 | Level | When | What |
 | --- | --- | --- |
 | R0 inline | every money move | immutability triggers, `UNIQUE (idem)`, CHECKs, the money functions' own rules |
-| R1 conservation | nightly | the accounts' total change, less the credit extended, equals what crossed the edge of the scheme (loads in; purchases, payouts, collections out); every organization's escrow wallet equals what its unclaimed employees are owed |
-| R2 counters | nightly | `wallets.spent_today` equals today's completed sends, payments and purchases from the wallet; the daily-cap numbers match the transactions; earmarks stay within balances |
+| R1 conservation | nightly, with the day's snapshot, at 00:01 New York, **before** settlement and the Fixed Benefits schedule | one calendar day of transactions (a `created_at` range, never history): the change in total balances between two midnights equals the day's effects, likewise credit drawn and the Benefits and escrow wallets' balances, and the day's effects less the credit extended equal what crossed the edge of the scheme (loads in; purchases, payouts, collections and bank adjustments out). A midnight balance is derived: balances now minus the effects created since that midnight. Each night's gap is added to a running drift, so an error stays red every night until the balance is corrected or an `adjustment` records the missing transaction; the first night is the baseline (drift starts at 0). Escrow wallets are also compared with their unclaimed employees' balances |
+| R2 counters | Run Check (the nightly result carries these as true) | `wallets.spent_today` equals today's completed sends, payments and purchases from the wallet; the daily-cap numbers match the transactions; earmarks stay within balances |
 | R3 per account | on demand (`GET /v1/admin/users|merchants|organizations/:id/check`) and in the nightly job | one account's balance and credit against all its effects, and its Benefits and escrow wallets against theirs |
 
-The nightly job and the admin Run Check compute the whole set and keep it in `system.reconciliation_snapshot` and on the day's snapshot row. Earmarks of ordinary wallets can only be checked as a bound (they are not transactions; their changes are in `logs`). An external check against the bank's statements waits for a real provider.
+The nightly result is stored on the day's snapshot row and in `system.reconciliation_snapshot` (what the Overview shows); the admin Run Check computes the whole set as a full recompute and replaces the latter. Earmarks of ordinary wallets can only be checked as a bound (they are not transactions; their changes are in `logs`). An external check against the bank's statements waits for a real provider.
 
 ## Query implementation
 
