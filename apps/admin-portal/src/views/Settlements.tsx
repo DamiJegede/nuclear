@@ -4,6 +4,7 @@ import { useList } from "./useList";
 import { Modal } from "./Modal";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
+import { payoutsCsv } from "../csv";
 
 const pill = (s: string) => <span className={`pill ${s === "completed" || s === "settled" ? "available" : s === "failed" || s === "returned" ? "closed" : "pending"}`}>{s}</span>;
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
@@ -90,6 +91,14 @@ function Day({ api, date, canAdmin, openMerchant, onBack, onError }: { api: Api;
   const items = d.data?.items ?? [];
   const total = (k: "payout" | "collection") => items.filter((i) => i.kind === k && i.status !== "failed" && i.status !== "returned").reduce((t, i) => t + i.amount, 0);
 
+  function download() {
+    const url = URL.createObjectURL(new Blob([payoutsCsv(date, items)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `payouts-${date}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async function ask() {
     setBusy(true); setError(null);
     try {
@@ -108,7 +117,10 @@ function Day({ api, date, canAdmin, openMerchant, onBack, onError }: { api: Api;
       <p><button type="button" className="link" onClick={onBack}>‹ Settlements</button></p>
       <div className="head">
         <h1>Settlement {date}</h1>
-        {canAdmin && d.data?.settlement.status === "submitted" && <div className="head-actions"><button type="button" onClick={() => { setError(null); setConfirm(true); }}>Confirm With Bank</button></div>}
+        <div className="head-actions">
+          <button type="button" className="ghost" onClick={download} disabled={!items.some((i) => i.kind === "payout")}>Download Payouts CSV</button>
+          {canAdmin && d.data?.settlement.status === "submitted" && <button type="button" onClick={() => { setError(null); setConfirm(true); }}>Confirm With Bank</button>}
+        </div>
       </div>
       {d.data && <p className="muted">{pill(d.data.settlement.status)} {items.length} merchants · payouts {money(total("payout"))} · collections {money(total("collection"))}</p>}
       {notice && <p role="status" className="hint">{notice}</p>}

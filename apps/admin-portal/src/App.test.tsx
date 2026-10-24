@@ -7,6 +7,8 @@ import type { Page } from "./roles";
 
 vi.mock("./image", () => ({ PHOTO_SIZE: 256, resizePhoto: vi.fn(async () => new Blob(["jpeg-bytes"], { type: "image/jpeg" })) }));
 
+/** A paged list answer, as the API sends it. */
+const pg = (key: string, items: unknown[]) => ({ [key]: items, next_cursor: null, total: items.length, counts: {} });
 const v = (count: number, volume: number) => ({ count, volume });
 
 const STATS: Stats = {
@@ -46,8 +48,8 @@ function fakeApi(over: Partial<Api> = {}): Api {
     changeAccessToken: vi.fn().mockResolvedValue(null),
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
-    merchants: vi.fn().mockResolvedValue([]),
-    users: vi.fn().mockResolvedValue([]),
+    merchants: vi.fn().mockResolvedValue(pg("merchants", [])),
+    users: vi.fn().mockResolvedValue(pg("users", [])),
     transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 0, completed_volume: 0 }, transactions: [], next_cursor: null }),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
     model: vi.fn().mockResolvedValue(undefined),
@@ -903,27 +905,41 @@ describe("merchants, users and transactions", () => {
   });
 
   it("lists merchants and filters them by name as you type", async () => {
-    const merchants = vi.fn().mockResolvedValue([M]);
+    const merchants = vi.fn().mockResolvedValue(pg("merchants", [M]));
     const user = await go(fakeApi({ merchants }), "Merchants");
     expect(window.location.pathname).toBe("/merchants");
     const row = await screen.findByRole("row", { name: /Cafe Nero/ });
     expect(row).toHaveTextContent("$125.00");
     expect(row).toHaveTextContent("@nero");
     await user.type(screen.getByLabelText("Filter merchants by name"), "caf");
-    await waitFor(() => expect(merchants).toHaveBeenLastCalledWith("caf"));
-    merchants.mockResolvedValueOnce([]);
+    await waitFor(() => expect(merchants).toHaveBeenLastCalledWith("caf", undefined));
+    merchants.mockResolvedValueOnce(pg("merchants", []));
     await user.type(screen.getByLabelText("Filter merchants by name"), "x");
     expect(await screen.findByText("No merchants match that name.")).toBeInTheDocument();
   });
 
+  it("pages the Users list: 20 at a time with Showing X of N and Load More, and starts over on a new filter", async () => {
+    const mk = (i: number) => ({ ...U, id: `u${i}`, name: `Person ${i}` });
+    const users = vi.fn()
+      .mockResolvedValueOnce({ users: [mk(1), mk(2)], next_cursor: "c1", total: 3 })
+      .mockResolvedValueOnce({ users: [mk(3)], next_cursor: null, total: 3 });
+    const user = await go(fakeApi({ users }), "Users");
+    expect(await screen.findByText("Showing 2 of 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load More" }));
+    expect(await screen.findByText("Showing 3 of 3")).toBeInTheDocument();
+    expect(users).toHaveBeenLastCalledWith(undefined, "c1");
+    expect(screen.getByRole("row", { name: /Person 3/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
+  });
+
   it("lists users with their balance, wallets and agents, and filters by name", async () => {
-    const users = vi.fn().mockResolvedValue([U]);
+    const users = vi.fn().mockResolvedValue(pg("users", [U]));
     const user = await go(fakeApi({ users }), "Users");
     const row = await screen.findByRole("row", { name: /Ada Lovelace/ });
     expect(row).toHaveTextContent("ada@example.com");
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toContain("$92.00");
     await user.type(screen.getByLabelText("Filter users by name"), "ada");
-    await waitFor(() => expect(users).toHaveBeenLastCalledWith("ada"));
+    await waitFor(() => expect(users).toHaveBeenLastCalledWith("ada", undefined));
   });
 
   it("shows transactions with ALL selected by default and a card per filter with its count", async () => {
@@ -1214,7 +1230,7 @@ describe("merchant support page", () => {
   const tx = (id: string, type: string, status: string, amount: number, extra: object = {}) => ({ id, type, status, status_code: null, amount, timestamp: "2026-10-16T12:00:00Z", via: type === "pay" ? "app" : null, reference: null, terminal: "Counter", customer: "Ada", approved_by: null, refund_of: null, ...extra });
   const TXPAGE = { counts: { all: 3, payments: 2, refunds: 1, pending: 0 }, totals: { payments: { count: 2, volume: 3500 }, refunds: { count: 1, volume: 400 } }, transactions: [tx("a", "pay", "completed", 2500), tx("b", "pay", "failed", 900, { status_code: "insufficient_balance", customer: "Poor" }), tx("c", "refund", "completed", 400, { approved_by: "Sam Staff" })], next_cursor: null };
   const api = (extra: Partial<Api> = {}) => fakeApi({
-    merchants: vi.fn().mockResolvedValue([ML]), merchant: vi.fn().mockResolvedValue(DETAIL), merchantTerminals: vi.fn().mockResolvedValue(TERMS),
+    merchants: vi.fn().mockResolvedValue(pg("merchants", [ML])), merchant: vi.fn().mockResolvedValue(DETAIL), merchantTerminals: vi.fn().mockResolvedValue(TERMS),
     merchantStaff: vi.fn().mockResolvedValue([{ id: "s1", staff_account_id: "x", name: "Sam Staff", email: "sam@example.com", handle: "sam", role: "write", bank_last4: "9876", created_at: "2026-10-03T00:00:00Z" }]),
     merchantProducts: vi.fn().mockResolvedValue({ products: [{ id: "p1", name: "Latte", category: "Drinks", price: 450, discount: 50, stock: 12, active: true, status: "available", total_sold: 30, sold_today: 4 }, { id: "p2", name: "Muffin", category: null, price: 300, discount: 0, stock: null, active: false, status: "available", total_sold: 0, sold_today: 0 }], next_cursor: null, total: 2 }),
     merchantTransactions: vi.fn().mockResolvedValue(TXPAGE), signOutTerminal: vi.fn().mockResolvedValue(null), ...extra,
@@ -1395,7 +1411,7 @@ describe("merchant support page", () => {
   });
 
   it("Email Merchants (from the list) picks an audience with counts and asks to confirm before sending", async () => {
-    const merchants = vi.fn().mockResolvedValue([{ ...ML, status: "active" }, { ...ML, id: "m2", name: "Bar", status: "pending" }, { ...ML, id: "m3", name: "Pub", status: "pending" }]);
+    const merchants = vi.fn().mockResolvedValue({ ...pg("merchants", [{ ...ML, status: "active" }, { ...ML, id: "m2", name: "Bar", status: "pending" }, { ...ML, id: "m3", name: "Pub", status: "pending" }]), counts: { active: 1, pending: 2 } });
     const emailMerchants = vi.fn().mockResolvedValue({ total: 2, sent: 0, failed: 0, not_configured: 2, no_address: 0, skipped: [], results: [] });
     const user = await signIn(api({ merchants, emailMerchants }), vi.fn().mockResolvedValue(SIGNED));
     await user.click(await screen.findByRole("link", { name: "Merchants" }));
@@ -1415,7 +1431,7 @@ describe("merchant support page", () => {
 
   it("Sales cannot email merchants (no button)", async () => {
     const sales: SignedIn = { ...SIGNED, admin: { ...SIGNED.admin, role: "sales" }, role: "sales", pages: ["users", "merchants", "tags"], landing: "users" };
-    const user = await signIn(api({ merchants: vi.fn().mockResolvedValue([ML]) }), vi.fn().mockResolvedValue(sales));
+    const user = await signIn(api({ merchants: vi.fn().mockResolvedValue(pg("merchants", [ML])) }), vi.fn().mockResolvedValue(sales));
     await user.click(await screen.findByRole("link", { name: "Merchants" }));
     await screen.findByRole("row", { name: /Cafe Nero/ });
     expect(screen.queryByRole("button", { name: "Email Merchants" })).toBeNull();
@@ -1522,7 +1538,7 @@ describe("user support page", () => {
   const utx = (id: string, type: string, status: string, amount: number, extra: object = {}) => ({ id, type, status, status_code: null, amount, timestamp: "2026-10-16T12:00:00Z", direction: "out", via: null, counterparty: "Bob", wallet: "Ada Lovelace", agent: false, reference: null, ...extra });
   const TXP = { counts: { all: 3, sends: 2, received: 1, payments: 0, loads: 0, refunds: 0 }, totals: { money_out: 1500, money_in: 400 }, transactions: [utx("a", "send", "completed", 1500), utx("b", "send", "completed", 400, { direction: "in", counterparty: "Bob" }), utx("c", "send", "failed", 100, { status_code: "send_not_allowed", wallet: "Kid" })], next_cursor: null };
   const api = (extra: Partial<Api> = {}) => fakeApi({
-    users: vi.fn().mockResolvedValue([UL]), user: vi.fn().mockResolvedValue(DETAIL), userWallets: vi.fn().mockResolvedValue(WALLETS),
+    users: vi.fn().mockResolvedValue(pg("users", [UL])), user: vi.fn().mockResolvedValue(DETAIL), userWallets: vi.fn().mockResolvedValue(WALLETS),
     userTags: vi.fn().mockResolvedValue([{ id: "t1", label: "Wrist", locked: false, transaction_limit: 5000, last_read_at: null, updated_at: "2026-10-03T00:00:00Z", model: "NEO Band", model_type: "band", wallet: "Ada Lovelace" }]),
     userDevices: vi.fn().mockResolvedValue([{ id: "d1", platform: "ios", wallet: null, created_at: "2026-10-01T00:00:00Z", last_accessed_at: "2026-10-16T10:00:00Z", session_expires_at: "2027-01-01T00:00:00Z", revoked_at: null, active: true }, { id: "d2", platform: null, wallet: "Kid", created_at: "2026-10-02T00:00:00Z", last_accessed_at: null, session_expires_at: "2027-01-01T00:00:00Z", revoked_at: "2026-10-05T00:00:00Z", active: false }]),
     userFunding: vi.fn().mockResolvedValue({ banks: [{ id: "b1", last4: "4321", status: "active", created_at: "2026-10-01T00:00:00Z" }], fundings: [{ id: "f1", amount: 100000, status: "completed", failure_code: null, last4: "4321", created_at: "2026-10-01T00:00:00Z", released_at: "2026-10-01T00:01:00Z", returned_at: null }, { id: "f2", amount: 5000, status: "failed", failure_code: "insufficient_funds", last4: "4321", created_at: "2026-10-02T00:00:00Z", released_at: null, returned_at: null }] }),
@@ -1792,7 +1808,7 @@ describe("shop and audit log", () => {
     const UID = "0190cccc-dddd-7eee-8fff-aaaaaaaaaaaa";
     const userActivity = vi.fn().mockResolvedValue({ logs: [{ ...LOG, actor_type: "customer", action: "customer.login", actor_label: "ada@example.com" }], next_cursor: null });
     const a = fakeApi({
-      users: vi.fn().mockResolvedValue([{ id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 0, wallets: 1, agents: 0 }]),
+      users: vi.fn().mockResolvedValue(pg("users", [{ id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", status: "active", created_at: "2026-10-01T00:00:00Z", balance: 0, wallets: 1, agents: 0 }])),
       user: vi.fn().mockResolvedValue({
         id: UID, name: "Ada Lovelace", handle: "ada01", email: "ada@example.com", phone: null, status: "active", tier: "free", photo: null, created_at: "2026-10-01T00:00:00Z", login_locked: null,
         balances: { balance: 0, pending: 0, credit_limit: 0, credit_spent: 0, earmarked: 0, shared: 0 },
@@ -1825,7 +1841,7 @@ describe("organizations", () => {
   ];
   const RUNS = [{ id: "r1", source: "schedule" as const, run_date: "2026-10-15", status: "missed" as const, row_count: 3, total: 16000, sent: 0, held: 0, failure_code: "insufficient_balance", created_at: "2026-10-15T09:00:00Z" }];
   const api = (extra: Partial<Api> = {}) => fakeApi({
-    organizations: vi.fn().mockResolvedValue([ROW]), organization: vi.fn().mockResolvedValue(DETAIL),
+    organizations: vi.fn().mockResolvedValue(pg("organizations", [ROW])), organization: vi.fn().mockResolvedValue(DETAIL),
     organizationEmployees: vi.fn().mockResolvedValue({ employees: EMPLOYEES, next_cursor: null, total: EMPLOYEES.length }), organizationRuns: vi.fn().mockResolvedValue(RUNS),
     organizationDocuments: vi.fn().mockResolvedValue([{ id: "d1", type: "business_document", created_at: "2026-10-03T00:00:00Z", file: "pdf" }]),
     downloadOrganizationDocument: vi.fn().mockResolvedValue(new Blob(["x"])),

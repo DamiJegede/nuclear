@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { usePaged, type Page } from "../usePaged";
 import type { Api, MerchantRow, OrganizationRow, UserRow } from "../api";
 import { int, money } from "../format";
 import { EmailMerchants } from "./EmailMerchants";
@@ -6,29 +7,22 @@ import { EmailMerchants } from "./EmailMerchants";
 const joined = (iso: string) => new Date(iso).toLocaleDateString();
 const statusPill = (s: string) => <span className={`pill ${s === "active" ? "available" : s === "pending" ? "pending" : "closed"}`}>{s}</span>;
 
-/** Shared by Merchants and Users: a name filter (typed, sent to the API after a short pause) over a table. */
-function useFiltered<T>(load: (q: string) => Promise<T[]>, onError: (e: unknown) => void) {
+/** Shared by Merchants, Users and Organizations: a name filter (typed, sent to the API after a short pause) over a table that loads a page at a time. */
+function useFiltered<T>(load: (q: string, cursor?: string) => Promise<Page<T>>, onError: (e: unknown) => void) {
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState<T[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const seq = useRef(0);
+  const [term, setTerm] = useState("");
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), q ? 250 : 0); return () => clearTimeout(t); }, [q]);
+  const paged = usePaged<T>(useCallback((cursor?: string) => load(term, cursor), [load, term]), onError);
+  return { q, setQ, ...paged };
+}
 
-  const run = useCallback(async (term: string) => {
-    const mine = ++seq.current;
-    try {
-      const r = await load(term);
-      if (mine === seq.current) { setRows(r); setFailed(false); }
-    } catch (e) {
-      if (mine === seq.current) { setFailed(true); onError(e); }
-    }
-  }, [load, onError]);
-
-  useEffect(() => {
-    const t = setTimeout(() => void run(q.trim()), q ? 250 : 0);
-    return () => clearTimeout(t);
-  }, [q, run]);
-
-  return { q, setQ, rows, failed, retry: () => void run(q.trim()) };
+function More({ shown, total, hasMore, more, loadMore }: { shown: number; total: number; hasMore: boolean; more: boolean; loadMore: () => Promise<void> }) {
+  return (
+    <p className="more">
+      <span className="muted">Showing {int(shown)} of {int(total)}</span>
+      {hasMore && <button type="button" className="ghost" disabled={more} onClick={() => void loadMore()}>{more ? "Loading…" : "Load More"}</button>}
+    </p>
+  );
 }
 
 function FilterBox({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
@@ -41,8 +35,8 @@ function FilterBox({ label, value, onChange }: { label: string; value: string; o
 
 export function Merchants({ api, onError, open, canEmail = false }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void; canEmail?: boolean }) {
   const [emailing, setEmailing] = useState(false);
-  const load = useCallback((q: string) => api.merchants(q || undefined), [api]);
-  const { q, setQ, rows, failed, retry } = useFiltered<MerchantRow>(load, onError);
+  const load = useCallback(async (q: string, cursor?: string) => { const r = await api.merchants(q || undefined, cursor); return { items: r.merchants, next: r.next_cursor, total: r.total }; }, [api]);
+  const { q, setQ, rows, total, hasMore, more, failed, retry, loadMore } = useFiltered<MerchantRow>(load, onError);
   return (
     <section>
       <div className="head">
@@ -81,13 +75,14 @@ export function Merchants({ api, onError, open, canEmail = false }: { api: Api; 
             </table>
           )}
       </div>
+      {rows && rows.length > 0 && <More shown={rows.length} total={total} hasMore={hasMore} more={more} loadMore={loadMore} />}
     </section>
   );
 }
 
 export function Users({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
-  const load = useCallback((q: string) => api.users(q || undefined), [api]);
-  const { q, setQ, rows, failed, retry } = useFiltered<UserRow>(load, onError);
+  const load = useCallback(async (q: string, cursor?: string) => { const r = await api.users(q || undefined, cursor); return { items: r.users, next: r.next_cursor, total: r.total }; }, [api]);
+  const { q, setQ, rows, total, hasMore, more, failed, retry, loadMore } = useFiltered<UserRow>(load, onError);
   return (
     <section>
       <div className="head"><h1>Users</h1></div>
@@ -122,13 +117,14 @@ export function Users({ api, onError, open }: { api: Api; onError: (e: unknown) 
             </table>
           )}
       </div>
+      {rows && rows.length > 0 && <More shown={rows.length} total={total} hasMore={hasMore} more={more} loadMore={loadMore} />}
     </section>
   );
 }
 
 export function Organizations({ api, onError, open }: { api: Api; onError: (e: unknown) => void; open?: (id: string) => void }) {
-  const load = useCallback((q: string) => api.organizations(q || undefined), [api]);
-  const { q, setQ, rows, failed, retry } = useFiltered<OrganizationRow>(load, onError);
+  const load = useCallback(async (q: string, cursor?: string) => { const r = await api.organizations(q || undefined, cursor); return { items: r.organizations, next: r.next_cursor, total: r.total }; }, [api]);
+  const { q, setQ, rows, total, hasMore, more, failed, retry, loadMore } = useFiltered<OrganizationRow>(load, onError);
   return (
     <section>
       <div className="head"><h1>Organizations</h1></div>
@@ -164,6 +160,7 @@ export function Organizations({ api, onError, open }: { api: Api; onError: (e: u
             </table>
           )}
       </div>
+      {rows && rows.length > 0 && <More shown={rows.length} total={total} hasMore={hasMore} more={more} loadMore={loadMore} />}
     </section>
   );
 }

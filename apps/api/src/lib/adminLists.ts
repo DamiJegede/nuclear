@@ -2,16 +2,22 @@ import type { Sql } from "../db";
 import { imageUrl } from "./images";
 import { PROGRAM_TZ } from "./dates";
 import { n } from "./money";
+import { DEFAULT_PAGE, encodePair } from "./paging";
+
+type Cursor = { ts: string; id: string } | null;
 
 /** Escapes LIKE wildcards so a typed filter is matched literally. */
 import { likePattern as like } from "./sqlText";
 
-export async function merchantList(sql: Sql, q: string | null) {
+export async function merchantList(sql: Sql, q: string | null, limit: number = DEFAULT_PAGE, cursor: Cursor = null) {
+  const where = sql`a.type = 'B' ${q ? sql`and (coalesce(b.display_name, a.name) ilike ${like(q)} or a.name ilike ${like(q)} or a.handle ilike ${like(q)})` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from accounts a left join businesses b on b.account_id = a.id where ${where}`;
+  const counts = await sql<{ status: string; n: number }[]>`select status, count(*)::int as n from accounts where type = 'B' group by status`;
   const rows = await sql<{
     id: string; name: string; handle: string | null; status: string; created_at: Date; balance: bigint;
-    terminals: number; payments: number; volume: bigint;
+    terminals: number; payments: number; volume: bigint; ts_key: string;
   }[]>`
-    select a.id, coalesce(b.display_name, a.name) as name, a.handle, a.status, a.created_at,
+    select a.id, coalesce(b.display_name, a.name) as name, a.handle, a.status, a.created_at, a.created_at::text as ts_key,
            coalesce(bal.balance, 0) as balance,
            (select count(*) from terminals t where t.account_id = a.id)::int as terminals,
            (select count(*) from txn x where x.to_account_id = a.id and x.type = 'pay' and x.status = 'completed')::int as payments,
@@ -19,28 +25,41 @@ export async function merchantList(sql: Sql, q: string | null) {
       from accounts a
       left join businesses b on b.account_id = a.id
       left join balances bal on bal.account_id = a.id
-     where a.type = 'B'
-       ${q ? sql`and (coalesce(b.display_name, a.name) ilike ${like(q)} or a.name ilike ${like(q)} or a.handle ilike ${like(q)})` : sql``}
+     where ${where}
+       ${cursor ? sql`and (a.created_at, a.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
      order by a.created_at desc, a.id desc
-     limit 200`;
-  return rows.map((r) => ({ ...r, balance: n(r.balance), volume: n(r.volume) }));
+     limit ${limit + 1}`;
+  const page = rows.slice(0, limit), last = page[page.length - 1];
+  return {
+    merchants: page.map(({ ts_key: _t, ...r }) => ({ ...r, balance: n(r.balance), volume: n(r.volume) })),
+    next_cursor: rows.length > limit && last ? encodePair(last.ts_key, last.id) : null,
+    total: cnt!.total,
+    counts: Object.fromEntries(counts.map((c) => [c.status, c.n])) as Record<string, number>,   // every merchant by status, whatever the filter (the Email Merchants window)
+  };
 }
 
-export async function userList(sql: Sql, q: string | null) {
+export async function userList(sql: Sql, q: string | null, limit: number = DEFAULT_PAGE, cursor: Cursor = null) {
+  const where = sql`a.type = 'C' ${q ? sql`and (a.name ilike ${like(q)} or a.handle ilike ${like(q)} or a.email ilike ${like(q)})` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from accounts a where ${where}`;
   const rows = await sql<{
     id: string; name: string; handle: string | null; email: string | null; status: string; created_at: Date;
-    balance: bigint; wallets: number; agents: number;
+    balance: bigint; wallets: number; agents: number; ts_key: string;
   }[]>`
-    select a.id, a.name, a.handle, a.email, a.status, a.created_at,
+    select a.id, a.name, a.handle, a.email, a.status, a.created_at, a.created_at::text as ts_key,
            coalesce(bal.balance, 0) as balance,
            (select count(*) from wallets w where w.account_id = a.id)::int as wallets,
            (select count(*) from wallets w where w.account_id = a.id and w.type = 'agent')::int as agents
       from accounts a left join balances bal on bal.account_id = a.id
-     where a.type = 'C'
-       ${q ? sql`and (a.name ilike ${like(q)} or a.handle ilike ${like(q)} or a.email ilike ${like(q)})` : sql``}
+     where ${where}
+       ${cursor ? sql`and (a.created_at, a.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
      order by a.created_at desc, a.id desc
-     limit 200`;
-  return rows.map((r) => ({ ...r, balance: n(r.balance) }));
+     limit ${limit + 1}`;
+  const page = rows.slice(0, limit), last = page[page.length - 1];
+  return {
+    users: page.map(({ ts_key: _t, ...r }) => ({ ...r, balance: n(r.balance) })),
+    next_cursor: rows.length > limit && last ? encodePair(last.ts_key, last.id) : null,
+    total: cnt!.total,
+  };
 }
 
 /** Who is on one side of a transaction: a link target for the portal (user or merchant) and a photo only when it is an image address. */

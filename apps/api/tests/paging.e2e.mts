@@ -83,6 +83,20 @@ const ap = (await call("GET", `/v1/admin/merchants/${shop.account_id}/products`,
 const apAll = await walk(`/v1/admin/merchants/${shop.account_id}/products`, OP, "products");
 eq("admin: a merchant's products are paged", [ap.products.length, ap.total, apAll.ids.length, new Set(apAll.ids).size], [20, 45, 45, 45]);
 
+// ---- the admin Users, Merchants and Organizations lists: 20 a page, a total, a cursor that never skips or repeats, a bad cursor is 400
+for (let i = 0; i < 27; i++) await sign(`Extra ${i}`, `extra${i}@example.com`);
+const users1 = (await call("GET", "/v1/admin/users", { token: OP })).json;
+const usersAll = await walk("/v1/admin/users", OP, "users");
+eq("admin Users: 20 on the first page, a total, and walking visits every user once", [users1.users.length, users1.next_cursor !== null, usersAll.ids.length === usersAll.total, new Set(usersAll.ids).size === usersAll.ids.length, usersAll.total >= 27], [20, true, true, true, true]);
+eq("admin Users: a small limit pages the same list (limit 7)", (await walk("/v1/admin/users", OP, "users", 7)).ids, usersAll.ids);
+const filtered = (await call("GET", "/v1/admin/users?q=extra&limit=5", { token: OP })).json;
+eq("admin Users: the filter counts only its matches", [filtered.users.length, filtered.total], [5, 27]);
+eq("admin Users: a bad cursor or limit is 400", [(await call("GET", "/v1/admin/users?cursor=nope", { token: OP })).status, (await call("GET", "/v1/admin/users?limit=0", { token: OP })).status, (await call("GET", "/v1/admin/users?limit=101", { token: OP })).status], [400, 400, 400]);
+const m1 = (await call("GET", "/v1/admin/merchants?limit=1", { token: OP })).json;
+eq("admin Merchants: paged, with the whole-scheme counts by status for the email window", [m1.merchants.length, typeof m1.total, typeof m1.counts, (await walk("/v1/admin/merchants", OP, "merchants", 1)).ids.length === m1.total], [1, "number", "object", true]);
+const o1 = (await call("GET", "/v1/admin/organizations?limit=1", { token: OP })).json;
+eq("admin Organizations: paged with a total", [o1.organizations.length, typeof o1.total, (await walk("/v1/admin/organizations", OP, "organizations", 1)).ids.length === o1.total], [1, "number", true]);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end();
 process.exit(fail ? 1 : 0);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseUids } from "./csv";
+import { parseUids, payoutsCsv } from "./csv";
 
 describe("parseUids", () => {
   it("reads one UID per line, in any case or separator style", () => {
@@ -22,5 +22,26 @@ describe("parseUids", () => {
   });
   it("is empty for an empty file", () => {
     expect(parseUids("")).toEqual({ uids: [], duplicates: 0, ignored: 0 });
+  });
+});
+
+describe("payoutsCsv", () => {
+  const row = (o: Partial<Parameters<typeof payoutsCsv>[1][number]>) => ({ merchant_id: "m1", merchant: "Alpha Cafe", kind: "payout" as const, amount: 150050, status: "settled", status_code: null, bank_last4: "4321", ...o });
+
+  it("lists only payouts, in dollars and cents, with the bank's last four digits", () => {
+    const csv = payoutsCsv("2026-10-22", [row({}), row({ merchant_id: "m2", merchant: "Beta Books", kind: "collection", amount: 6000 })]);
+    expect(csv).toBe("settlement_date,merchant,merchant_id,amount,amount_cents,bank_last4,status,reason\r\n2026-10-22,Alpha Cafe,m1,1500.50,150050,4321,settled,\r\n");
+  });
+
+  it("quotes commas and quotes, and defuses spreadsheet formulas in merchant names", () => {
+    const csv = payoutsCsv("2026-10-22", [row({ merchant: 'Salt, "Sage" & Co' }), row({ merchant: "=HYPERLINK(\"http://x\")" }), row({ merchant: "+1 Pizza" })]);
+    const lines = csv.trim().split("\r\n");
+    expect(lines[1]).toContain('"Salt, ""Sage"" & Co"');
+    expect(lines[2]).toContain("\"'=HYPERLINK(\"\"http://x\"\")\"");
+    expect(lines[3]).toContain("'+1 Pizza");
+  });
+
+  it("has only the header when there are no payouts", () => {
+    expect(payoutsCsv("2026-10-22", [row({ kind: "collection" })]).trim().split("\r\n")).toHaveLength(1);
   });
 });

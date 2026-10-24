@@ -7,12 +7,14 @@ import { DEFAULT_PAGE, encodePair } from "./paging";
 
 import { likePattern as like } from "./sqlText";
 
-export async function organizationList(sql: Sql, q: string | null) {
+export async function organizationList(sql: Sql, q: string | null, limit: number = DEFAULT_PAGE, cursor: { ts: string; id: string } | null = null) {
+  const where = sql`a.type = 'O' ${q ? sql`and (coalesce(b.display_name, a.name) ilike ${like(q)} or a.name ilike ${like(q)} or a.email ilike ${like(q)})` : sql``}`;
+  const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from accounts a left join businesses b on b.account_id = a.id where ${where}`;
   const rows = await sql<{
     id: string; name: string; email: string | null; status: string; created_at: Date; email_verified: boolean; balance: bigint;
-    mode: string | null; chosen: boolean | null; employees: number; claimed: number; held: bigint; runs: number;
+    mode: string | null; chosen: boolean | null; employees: number; claimed: number; held: bigint; runs: number; ts_key: string;
   }[]>`
-    select a.id, coalesce(b.display_name, a.name) as name, a.email, a.status, a.created_at, (a.email_verified_at is not null) as email_verified,
+    select a.id, coalesce(b.display_name, a.name) as name, a.email, a.status, a.created_at, a.created_at::text as ts_key, (a.email_verified_at is not null) as email_verified,
            shared_funds(a.id) as balance, b.program_mode as mode, (b.program_chosen_at is not null) as chosen,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active')::int as employees,
            (select count(*) from employees e where e.org_account_id = a.id and e.status = 'active' and e.employee_account_id is not null)::int as claimed,
@@ -21,11 +23,16 @@ export async function organizationList(sql: Sql, q: string | null) {
       from accounts a
       left join businesses b on b.account_id = a.id
       left join balances bal on bal.account_id = a.id
-     where a.type = 'O'
-       ${q ? sql`and (coalesce(b.display_name, a.name) ilike ${like(q)} or a.name ilike ${like(q)} or a.email ilike ${like(q)})` : sql``}
+     where ${where}
+       ${cursor ? sql`and (a.created_at, a.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
      order by a.created_at desc, a.id desc
-     limit 200`;
-  return rows.map((r) => ({ ...r, balance: n(r.balance), held: n(r.held) }));
+     limit ${limit + 1}`;
+  const page = rows.slice(0, limit), last = page[page.length - 1];
+  return {
+    organizations: page.map(({ ts_key: _t, ...r }) => ({ ...r, balance: n(r.balance), held: n(r.held) })),
+    next_cursor: rows.length > limit && last ? encodePair(last.ts_key, last.id) : null,
+    total: cnt!.total,
+  };
 }
 
 export async function organizationDetail(sql: Sql, id: string) {

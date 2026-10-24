@@ -93,4 +93,20 @@ describe("Settlements", () => {
     await user.click(await screen.findByRole("button", { name: "Try Again" }));
     expect(await screen.findByRole("button", { name: "2026-10-22" })).toBeInTheDocument();
   });
+
+  it("downloads the day's payouts as a CSV file (collections left out)", async () => {
+    const user = userEvent.setup();
+    let blob: Blob | null = null;
+    const create = vi.fn((b: Blob) => { blob = b; return "blob:x"; });
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<Settlements api={api()} canAdmin onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "2026-10-22" }));
+    await user.click(await screen.findByRole("button", { name: "Download Payouts CSV" }));
+    expect(click).toHaveBeenCalled();
+    const text = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsText(blob!); });
+    expect(text).toContain("Alpha Cafe,m1,1500.00,150000,4321,submitted");
+    expect(text).not.toContain("Beta Books");
+    click.mockRestore();
+  });
 });

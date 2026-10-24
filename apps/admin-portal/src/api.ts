@@ -266,6 +266,15 @@ export type SettlementRunResult =
   | { ran: false; reason: "no_provider" | "already_done" }
   | { ran: true; cutoff_date: string; created: number; payouts: number; collections: number; payout_total: number; collection_total: number; status: string };
 
+/** The query string of a paged, filtered list. */
+const listQuery = (q?: string, cursor?: string) => {
+  const p = new URLSearchParams();
+  if (q) p.set("q", q);
+  if (cursor) p.set("cursor", cursor);
+  const t = p.toString();
+  return t ? `?${t}` : "";
+};
+
 export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefined) ?? "https://nuclear-api.a-space.workers.dev";
 
 async function send<T>(base: string, token: string | null, method: string, path: string, body?: unknown): Promise<T> {
@@ -313,14 +322,11 @@ export function createApi(token: string, base: string = API_URL) {
   return {
     me: () => request<AdminMe>("GET", "/v1/admin/me"),
     logout: () => request<null>("POST", "/v1/admin/logout"),
-    merchants: async (q?: string) =>
-      (await request<{ merchants: MerchantRow[] }>("GET", `/v1/admin/merchants${q ? `?q=${encodeURIComponent(q)}` : ""}`)).merchants,
-    users: async (q?: string) =>
-      (await request<{ users: UserRow[] }>("GET", `/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`)).users,
+    merchants: (q?: string, cursor?: string) => request<{ merchants: MerchantRow[]; next_cursor: string | null; total: number; counts: Record<string, number> }>("GET", `/v1/admin/merchants${listQuery(q, cursor)}`),
+    users: (q?: string, cursor?: string) => request<{ users: UserRow[]; next_cursor: string | null; total: number }>("GET", `/v1/admin/users${listQuery(q, cursor)}`),
     transactions: async (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       absTx(await request<TxPage>("GET", `/v1/admin/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
-    organizations: async (q?: string) =>
-      (await request<{ organizations: OrganizationRow[] }>("GET", `/v1/admin/organizations${q ? `?q=${encodeURIComponent(q)}` : ""}`)).organizations,
+    organizations: (q?: string, cursor?: string) => request<{ organizations: OrganizationRow[]; next_cursor: string | null; total: number }>("GET", `/v1/admin/organizations${listQuery(q, cursor)}`),
     organization: async (id: string) => absolutePhoto((await request<{ organization: OrganizationDetailData }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}`)).organization),
     organizationEmployees: (id: string, q?: string, cursor?: string) =>
       request<{ employees: OrgEmployeeRow[]; next_cursor: string | null; total: number }>("GET", `/v1/admin/organizations/${encodeURIComponent(id)}/employees${[q ? `q=${encodeURIComponent(q)}` : "", cursor ? `cursor=${encodeURIComponent(cursor)}` : ""].filter(Boolean).map((x, i) => (i ? "&" : "?") + x).join("")}`),

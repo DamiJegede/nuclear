@@ -36,7 +36,7 @@ export function EmailMerchants({ api, target, onClose, onError }: { api: Api; ta
   useEffect(() => {
     if (target.kind !== "many") return;
     let alive = true;
-    api.merchants().then((rows) => { if (alive) setCounts({ active: rows.filter((r) => r.status === "active").length, pending: rows.filter((r) => r.status === "pending").length }); }).catch(onError);
+    api.merchants().then((r) => { if (alive) setCounts({ active: r.counts.active ?? 0, pending: r.counts.pending ?? 0 }); }).catch(onError);
     return () => { alive = false; };
   }, [api, target.kind, onError]);
 

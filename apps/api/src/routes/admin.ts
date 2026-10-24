@@ -443,16 +443,20 @@ admin.post("/stats/reconcile", async (c) => {
 
 // ---- Merchants, users and transactions --------------------------------------------------------
 
-const nameFilter = z.object({ q: z.string().trim().max(80).optional() });
+const nameFilter = z.object({ q: z.string().trim().max(80).optional(), limit: pageLimit, cursor: z.string().max(200).optional() });
 admin.get("/merchants", async (c) => {
   const q = nameFilter.safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
-  return c.json({ merchants: await merchantList(c.get("sql"), q.data.q || null) });
+  const cursor = decodeTimeCursor(q.data.cursor);
+  if (cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await merchantList(c.get("sql"), q.data.q || null, q.data.limit, cursor));
 });
 admin.get("/users", async (c) => {
   const q = nameFilter.safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
-  return c.json({ users: await userList(c.get("sql"), q.data.q || null) });
+  const cursor = decodeTimeCursor(q.data.cursor);
+  if (cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await userList(c.get("sql"), q.data.q || null, q.data.limit, cursor));
 });
 
 // ---- One merchant, for support: profile and numbers, terminals, staff, products, payments and refunds ----
@@ -546,7 +550,9 @@ admin.put("/merchants/:id/status", async (c) => {
 admin.get("/organizations", async (c) => {
   const q = nameFilter.safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
-  return c.json({ organizations: await organizationList(c.get("sql"), q.data.q || null) });
+  const cursor = decodeTimeCursor(q.data.cursor);
+  if (cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await organizationList(c.get("sql"), q.data.q || null, q.data.limit, cursor));
 });
 admin.get("/organizations/:id", async (c) => {
   const id = merchantId.safeParse(c.req.param("id"));
