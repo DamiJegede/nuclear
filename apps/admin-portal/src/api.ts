@@ -378,6 +378,7 @@ export function createApi(token: string, base: string = API_URL) {
     userTransactions: async (id: string, kind: UserTxKind = "all", cursor?: string, range: DayRange = {}) =>
       absTx(await request<UserTxPage>("GET", `/v1/admin/users/${encodeURIComponent(id)}/transactions?kind=${kind}${range.from ? `&from=${range.from}` : ""}${range.to ? `&to=${range.to}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)),
     /** Support actions (Admin, Support): sign out everywhere, unlock the login, revoke an agent key. */
+    signOutDevice: (id: string, deviceId: string) => request<void>("POST", `/v1/admin/users/${encodeURIComponent(id)}/devices/${encodeURIComponent(deviceId)}/sign-out`),
     signOutUser: (id: string) => request<{ signed_out: number }>("POST", `/v1/admin/users/${encodeURIComponent(id)}/sign-out`),
     unlockUserLogin: (id: string) => request<null>("POST", `/v1/admin/users/${encodeURIComponent(id)}/unlock-login`),
     revokeAgentKey: (walletId: string) => request<null>("POST", `/v1/admin/wallets/${encodeURIComponent(walletId)}/revoke-key`),

@@ -657,6 +657,17 @@ admin.post("/users/:id/sign-out", async (c) => {
   await adminLog(c, "user.signed_out", { type: "user", id: id.data, label: (await userDetail(c.get("sql"), id.data))?.name }, { sessions: rows.length });
   return c.json({ signed_out: rows.length });
 });
+// One session of a person (a lost or shared phone), not every one. The signed token keeps reading the lightest routes until it expires, but a revoked device
+// can no longer move money, refresh or use any other route (the money functions and every non-LIGHT route check the device row).
+admin.post("/users/:id/devices/:deviceId/sign-out", async (c) => {
+  const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id")), deviceId = merchantId.safeParse(c.req.param("deviceId"));
+  if (!id.success || !deviceId.success) return c.json({ error: "not_found" }, 404);
+  const rows = await c.get("sql")`update devices set revoked_at = now() where id = ${deviceId.data} and account_id = ${id.data} and revoked_at is null returning id, platform, model`;
+  if (!rows.length) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "user.device_signed_out", { type: "user", id: id.data, label: (await userDetail(c.get("sql"), id.data))?.name }, { device_id: deviceId.data, platform: rows[0]!.platform, model: rows[0]!.model });
+  return c.body(null, 204);
+});
 admin.post("/users/:id/unlock-login", async (c) => {
   const denied = roleGate(USER_WRITERS)(c); if (denied) return denied;
   const id = merchantId.safeParse(c.req.param("id"));

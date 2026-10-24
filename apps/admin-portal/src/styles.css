@@ -343,6 +343,8 @@ tr.tx-detail.open .tx-collapse { grid-template-rows: 1fr; }
 tr.tx-detail:not(.open) .tx-line { padding-top: 0; }
 .tx-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; color: var(--text); }
 .tx-status { font-weight: 600; letter-spacing: 0.04em; }
+.row-actions { margin: 0; padding: 8px 0 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row-actions button { padding: 5px 12px; font-size: 13px; }
 .tx-parties { margin: 0; padding: 8px 0 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .tx-party { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
 .tx-party a { color: var(--text); text-decoration: none; }

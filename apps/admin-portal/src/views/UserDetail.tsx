@@ -1,3 +1,4 @@
+import { ExpandRow } from "./ExpandRow";
 import { deviceName } from "../deviceNames";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Api, DayRange, UserDetailData, UserDevice, UserFunding, UserOrder, UserTag, UserTxKind, UserTxPage, UserTxRow, UserWallet } from "../api";
@@ -142,7 +143,7 @@ export function UserDetail({
           {tab === "wallets" && <Wallets api={api} id={id} canAct={canAct} canAdmin={canAdmin} onChanged={() => void load()} onError={onError} />}
           {tab === "transactions" && <UserTransactions api={api} id={id} openUser={openUser} openMerchant={openMerchant} onError={onError} />}
           {tab === "tags" && <Tags api={api} id={id} onError={onError} />}
-          {tab === "devices" && <Devices api={api} id={id} onError={onError} />}
+          {tab === "devices" && <Devices api={api} id={id} canAct={canAct} onError={onError} />}
           {tab === "funding" && <Funding api={api} id={id} canAdmin={canAdmin} onError={onError} />}
           {tab === "orders" && <Orders api={api} id={id} onError={onError} />}
           {tab === "activity" && <ActivityLog load={(cursor) => api.userActivity(id, cursor)} onError={onError} />}
@@ -196,11 +197,11 @@ function Wallets({ api, id, canAct, canAdmin, onChanged, onError }: { api: Api; 
           <table>
             <thead><tr>
               <th scope="col">Wallet</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col" className="num">Spendable balance</th>
-              <th scope="col" className="num">Daily limit</th><th scope="col">Can</th><th scope="col">Agent key</th><th scope="col"><span className="sr-only">Actions</span></th>
+              <th scope="col" className="num">Daily limit</th><th scope="col">Can</th><th scope="col">Agent key</th>
             </tr></thead>
             <tbody>
               {data.map((w) => (
-                <tr key={w.id}>
+                <ExpandRow key={w.id} cols={7} cells={<>
                   <th scope="row">{w.name}</th>
                   <td>{pill(w.type)}</td>
                   <td>{statusPill(w.status)}</td>
@@ -208,13 +209,16 @@ function Wallets({ api, id, canAct, canAdmin, onChanged, onError }: { api: Api; 
                   <td className="num">{w.daily_limit === null ? <span className="muted">None</span> : <>{money(w.spent_today ?? 0)} of {money(w.daily_limit)}</>}</td>
                   <td>{[w.allow_pay && "pay", w.allow_send && "send"].filter(Boolean).join(" · ") || "nothing"}</td>
                   <td>{w.key ? <>…{w.key.hint} <span className="muted note">used {when(w.key.last_used_at)}</span></> : <span className="muted">—</span>}</td>
-                  <td className="actions">
-                    {canAct && w.key && <button type="button" className="ghost" aria-label={`Revoke agent key for ${w.name}`} onClick={() => { setError(null); setAction({ w, kind: "revoke" }); }}>Revoke Key</button>}{" "}
+                </>}>
+                  <p className="tx-line">Wallet ID: <span className="tx-id">{w.id}</span></p>
+                  <p className="row-actions">
+                    {canAct && w.key && <button type="button" className="ghost" aria-label={`Revoke agent key for ${w.name}`} onClick={() => { setError(null); setAction({ w, kind: "revoke" }); }}>Revoke Key</button>}
                     {canAdmin && w.status !== "closed" && w.type !== "default" && (
                       <button type="button" className="ghost" aria-label={`${w.status === "active" ? "Suspend" : "Reactivate"} wallet ${w.name}`} onClick={() => { setError(null); setAction({ w, kind: "status" }); }}>{w.status === "active" ? "Suspend" : "Reactivate"}</button>
                     )}
-                  </td>
-                </tr>
+                    {!(canAct && w.key) && !(canAdmin && w.status !== "closed" && w.type !== "default") && <span className="muted">No actions for this wallet.</span>}
+                  </p>
+                </ExpandRow>
               ))}
             </tbody>
           </table>
@@ -265,8 +269,20 @@ function Tags({ api, id, onError }: { api: Api; id: string; onError: (e: unknown
   );
 }
 
-function Devices({ api, id, onError }: { api: Api; id: string; onError: (e: unknown) => void }) {
+function Devices({ api, id, canAct, onError }: { api: Api; id: string; canAct: boolean; onError: (e: unknown) => void }) {
   const { data, failed, retry } = useList<UserDevice[]>(useCallback(() => api.userDevices(id), [api, id]), onError);
+  const [target, setTarget] = useState<UserDevice | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function signOut() {
+    if (!target) return;
+    setBusy(true); setError(null);
+    try { await api.signOutDevice(id, target.id); setTarget(null); retry(); }
+    catch (e) { onError(e); setError("Couldn't sign this device out. Try again."); }
+    finally { setBusy(false); }
+  }
+
   return (
     <div className="card flush">
       {failed && !data ? <p className="error pad" role="alert">Couldn't load devices. <button className="link" onClick={retry}>Try Again</button></p>
@@ -277,7 +293,7 @@ function Devices({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
             <thead><tr><th scope="col">Session</th><th scope="col">Device</th><th scope="col">Platform</th><th scope="col">Shared wallet</th><th scope="col">Started</th><th scope="col">Last used</th><th scope="col">Expires</th></tr></thead>
             <tbody>
               {data.map((d) => (
-                <tr key={d.id}>
+                <ExpandRow key={d.id} cols={7} cells={<>
                   <td>{pill(d.active ? "active" : d.revoked_at ? "signed out" : "expired", d.active ? "available" : "closed")}</td>
                   <td>{d.model ? <span title={d.model}>{deviceName(d.model)}</span> : <span className="muted">Not reported</span>}</td>
                   <td>{d.platform ?? "—"}</td>
@@ -285,11 +301,27 @@ function Devices({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
                   <td className="when">{when(d.created_at)}</td>
                   <td className="when">{when(d.last_accessed_at)}</td>
                   <td className="when">{when(d.session_expires_at)}</td>
-                </tr>
+                </>}>
+                  <p className="tx-line">Session ID: <span className="tx-id">{d.id}</span></p>
+                  <p className="row-actions">
+                    {canAct && d.active ? <button type="button" className="ghost" aria-label={`Sign out ${d.model ? deviceName(d.model) : d.platform ?? "this device"}`} onClick={() => { setError(null); setTarget(d); }}>Sign Out Device</button>
+                      : <span className="muted">{d.active ? "No actions for this session." : "This session has ended."}</span>}
+                  </p>
+                </ExpandRow>
               ))}
             </tbody>
           </table>
         )}
+      {target && (
+        <Modal title="Sign Out Device" onClose={() => setTarget(null)} locked={busy}>
+          <p>Sign out {target.model ? <strong>{deviceName(target.model)}</strong> : "this device"}{target.wallet ? <> (shared wallet <strong>{target.wallet}</strong>)</> : null}? It can no longer move money or refresh; the person signs in again on it with their email and password{target.wallet ? ", or gets a new wallet link" : ""}. Their other devices are not affected.</p>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="modal-actions">
+            <button type="button" disabled={busy} onClick={() => void signOut()}>{busy ? "Signing out…" : "Confirm Sign Out"}</button>
+            <button type="button" className="ghost" disabled={busy} onClick={() => setTarget(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

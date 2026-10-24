@@ -1609,8 +1609,12 @@ describe("user support page", () => {
     expect(agent).toHaveTextContent("pay · send");
     expect(agent).toHaveTextContent("…CSEY");
     expect(within(screen.getByRole("row", { name: /^Ada Lovelace/ })).getByText("Shared funds")).toBeInTheDocument();
-    expect(within(screen.getByRole("row", { name: /^Ada Lovelace/ })).queryByRole("button", { name: /Suspend wallet/ })).toBeNull();     // the default wallet stays
-    await user.click(within(agent).getByRole("button", { name: "Revoke agent key for Ada's Agent" }));
+    await user.click(screen.getByRole("row", { name: /^Ada Lovelace/ }));
+    expect(screen.queryByRole("button", { name: /Suspend wallet/ })).toBeNull();     // the default wallet stays
+    expect(screen.getByText("No actions for this wallet.")).toBeInTheDocument();
+    await user.click(agent);                                                          // click the row: its options slide open
+    expect(agent).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Revoke agent key for Ada's Agent" }));
     await user.click(within(screen.getByRole("dialog", { name: "Revoke Agent Key" })).getByRole("button", { name: "Confirm Revoke" }));
     await waitFor(() => expect(revokeAgentKey).toHaveBeenCalledWith("w2"));
     await user.click(await screen.findByRole("button", { name: "Suspend wallet Ada's Agent" }));
@@ -1638,13 +1642,19 @@ describe("user support page", () => {
   });
 
   it("Tags, Devices, Funding and Orders tabs", async () => {
-    const user = await open(api());
+    const signOutDevice = vi.fn().mockResolvedValue(undefined);
+    const user = await open(api({ signOutDevice }));
     await user.click(tab("Tags"));
     expect(await screen.findByRole("row", { name: /NEO Band/ })).toHaveTextContent("Wrist");
     await user.click(tab("Devices"));
     const active = await screen.findByRole("row", { name: /ios/ });
     expect(within(active).getByText("active")).toBeInTheDocument();
     expect(within(active).getByText("iPhone 15 Pro Max")).toHaveAttribute("title", "iPhone16,2");
+    await user.click(active);                                                        // the row opens: the session id and Sign Out Device
+    expect(screen.getByText("d1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign out iPhone 15 Pro Max" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Sign Out Device" })).getByRole("button", { name: "Confirm Sign Out" }));
+    await waitFor(() => expect(signOutDevice).toHaveBeenCalledWith(UID, "d1"));
     expect(within(screen.getByRole("row", { name: /Kid/ })).getByText("signed out")).toBeInTheDocument();
     await user.click(tab("Funding"));
     const bad = await screen.findByRole("row", { name: /\$50\.00/ });
@@ -1708,6 +1718,7 @@ describe("user support page", () => {
     expect(screen.getByRole("button", { name: "Unlock Login" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend User" })).toBeNull();
     await user.click(tab("Wallets"));
+    await user.click(await screen.findByRole("row", { name: /^Ada's Agent/ }));
     expect(await screen.findByRole("button", { name: "Revoke agent key for Ada's Agent" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Suspend wallet/ })).toBeNull();
   });
