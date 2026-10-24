@@ -1,10 +1,10 @@
 //! The secure channel between an Orb and its terminal (docs/ORB.md §8a). Everything here is pure computation so it runs under
-//! `cargo test`; the board supplies randomness (`nonce_o`), the device key `K_orb` (from secure storage or the eFuse HMAC peripheral)
+//! `cargo test`; the board supplies randomness (`nonce_o`), the fleet key `K_orb` (compiled in, see [`fleet_key`])
 //! and the stored [`Binding`].
 //!
-//! Key hierarchy (HMAC-SHA256 is the only primitive besides the AEAD): the API holds `ORB_ROOT_KEY`; `K_orb = PRF(root, "nuclear-orb-device-v1", uid)`
-//! is written to the Orb at the factory. A bind is authorized by the API (`bind_proof`, tied to this Orb's fresh `nonce_o`), which gives
-//! both sides `K_bind`. Frames are ChaCha20-Poly1305 with a strictly increasing counter per direction.
+//! Key hierarchy (HMAC-SHA256 is the only primitive besides the AEAD): one fleet key `K_orb` (`ORB_KEY_V1`) is built into the firmware and held by
+//! the API; no Orb is provisioned individually. A bind is authorized by the API (`bind_proof`, tied to this Orb's uid and fresh `nonce_o`),
+//! which gives both sides a per-binding `K_bind`. Frames are ChaCha20-Poly1305 with a strictly increasing counter per direction.
 use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce, Tag};
 use hmac::{Hmac, Mac};
@@ -40,9 +40,26 @@ fn prf_matches(key: &[u8], label: &str, parts: &[&[u8]], expected: &[u8; 32]) ->
     m.verify_slice(expected).is_ok()
 }
 
-/// The device key the factory writes to an Orb (also what the API derives to authorize a bind).
-pub fn device_key(root: &[u8; KEY_LEN], uid: &[u8; 6]) -> [u8; 32] {
-    prf(root, "nuclear-orb-device-v1", &[uid])
+/// The fleet key compiled into the firmware: build with `ORB_KEY_V1=<64 hex chars> cargo build --release`. `None` when the build did not set it.
+pub const FLEET_KEY_HEX: Option<&str> = option_env!("ORB_KEY_V1");
+
+/// Parses 64 hex characters into a key (None on any other input).
+pub fn parse_key(hex: &str) -> Option<[u8; KEY_LEN]> {
+    let b = hex.as_bytes();
+    if b.len() != 2 * KEY_LEN {
+        return None;
+    }
+    let nib = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let mut k = [0u8; KEY_LEN];
+    for i in 0..KEY_LEN {
+        k[i] = nib(b[2 * i])? << 4 | nib(b[2 * i + 1])?;
+    }
+    Some(k)
+}
+
+/// The key this firmware image was built with.
+pub fn fleet_key() -> Option<[u8; KEY_LEN]> {
+    FLEET_KEY_HEX.and_then(parse_key)
 }
 
 /// What an Orb keeps once bound: the binding id the API issued and the per-binding key. 48 bytes in the persistent slot.
@@ -211,54 +228,55 @@ mod tests {
     const NONCE_T: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf";
 
     fn orb() -> Authorizer {
-        let k = device_key(&a(ROOT), &a(UID));
-        Authorizer::new(k, a(UID), a(NONCE_O))
+        Authorizer::new(a(ROOT), a(UID), a(NONCE_O))
     }
 
     #[test]
-    fn device_key_vector() {
-        assert_eq!(device_key(&a(ROOT), &a(UID)).to_vec(), h("14bbde0827b226df8016a9dd7851e50d665a5e3eed05fcd2bbd708557f0cec48"));
+    fn key_parsing() {
+        assert_eq!(parse_key(ROOT), Some(a(ROOT)));
+        assert_eq!(parse_key("00"), None);
+        assert_eq!(parse_key(&"zz".repeat(32)), None);
     }
 
     #[test]
     fn bind_vector() {
-        let proof = a("d0194671cdd9ec6989df2fe66d300f9441a8f3451144043b32d177b0d051830e");
+        let proof = a("65e43504815dc989a54c047d0460819962401aaa1ebe287b27e8ceb929a88392");
         let (b, orb_proof) = orb().verify_bind(&a(BINDING_ID), &proof).unwrap();
-        assert_eq!(b.key.to_vec(), h("a8a92973061b638c991773194f0394ab01e31539a1084f210c547b98eed2481c"));
-        assert_eq!(orb_proof.to_vec(), h("c7b0b6a1de815de945b3f725d8d2e771a23613bb62c2d5aa794041577f0ae51c"));
+        assert_eq!(b.key.to_vec(), h("a669767ce4577d47d23b35283c54c52c895193c4afdb6715b5ca04f2b2ec90af"));
+        assert_eq!(orb_proof.to_vec(), h("cceb9d70218c738390c1a320e367ae8735c649b74bd129f5266e7b26d3444b1a"));
     }
 
     #[test]
     fn bind_refuses_wrong_nonce_binding_or_orb() {
-        let proof: [u8; 32] = a("d0194671cdd9ec6989df2fe66d300f9441a8f3451144043b32d177b0d051830e");
+        let proof: [u8; 32] = a("65e43504815dc989a54c047d0460819962401aaa1ebe287b27e8ceb929a88392");
         let mut other = a::<16>(BINDING_ID);
         other[0] ^= 1;
         assert!(orb().verify_bind(&other, &proof).is_none());                       // authorization for another binding id
-        let stale = Authorizer::new(device_key(&a(ROOT), &a(UID)), a(UID), [0; 16]);
+        let stale = Authorizer::new(a(ROOT), a(UID), [0; 16]);
         assert!(stale.verify_bind(&a(BINDING_ID), &proof).is_none());               // authorization issued for another connection (replay)
         let mut uid = a::<6>(UID);
         uid[5] ^= 1;
-        let other_orb = Authorizer::new(device_key(&a(ROOT), &uid), uid, a(NONCE_O));
-        assert!(other_orb.verify_bind(&a(BINDING_ID), &proof).is_none());           // authorization for another Orb
+        let other_orb = Authorizer::new(a(ROOT), uid, a(NONCE_O));
+        assert!(other_orb.verify_bind(&a(BINDING_ID), &proof).is_none());           // authorization for another Orb (the uid is bound into the proof)
         let mut bad = proof;
         bad[31] ^= 1;
         assert!(orb().verify_bind(&a(BINDING_ID), &bad).is_none());
     }
 
     fn binding() -> Binding {
-        let proof = a("d0194671cdd9ec6989df2fe66d300f9441a8f3451144043b32d177b0d051830e");
+        let proof = a("65e43504815dc989a54c047d0460819962401aaa1ebe287b27e8ceb929a88392");
         orb().verify_bind(&a(BINDING_ID), &proof).unwrap().0
     }
 
     #[test]
     fn resume_vector_and_refusals() {
         let b = binding();
-        let proof = a("09eba972372eae5b7ff71cc3ce57a1810e3a7adbf19eac6e1f8816d84df1c133");
-        assert_eq!(orb().verify_resume(&b, &a(NONCE_T), &proof).unwrap().to_vec(), h("08c18bd008a8c08702b541b55fcc31a300c4b709cb75517f0444ec656dee1996"));
+        let proof = a("97c5228ada8f31bcb2512b41ee7bd3350ab1dac5bfd307eea92a78d96cae19d9");
+        assert_eq!(orb().verify_resume(&b, &a(NONCE_T), &proof).unwrap().to_vec(), h("308ddb49160b29945bb13fb0b30fd9013be4aa9cacd387e4670ef716b9815bbf"));
         let mut other_t = a::<16>(NONCE_T);
         other_t[0] ^= 1;
         assert!(orb().verify_resume(&b, &other_t, &proof).is_none());
-        let stale = Authorizer::new(device_key(&a(ROOT), &a(UID)), a(UID), [1; 16]);
+        let stale = Authorizer::new(a(ROOT), a(UID), [1; 16]);
         assert!(stale.verify_resume(&b, &a(NONCE_T), &proof).is_none());            // a recorded resume cannot be replayed on a new connection
     }
 
@@ -270,13 +288,13 @@ mod tests {
         let plain = h("020001000200000001");
         let mut buf = [0u8; 64];
         let n = term.seal(&plain, &mut buf).unwrap();
-        assert_eq!(buf[..n].to_vec(), h("0000000000000001813a2cdb4d220e3b3dd85404c3a1129f93567f699d9e13ef33"));
+        assert_eq!(buf[..n].to_vec(), h("000000000000000174dc65fda33818d5e7a08bb9904fda8aa048f44efd94e5ac34"));
         let mut out = [0u8; 64];
         let m = orb_ch.open(&buf[..n], &mut out).unwrap();
         assert_eq!(&out[..m], &plain[..]);
         orb_ch.seal(&plain, &mut buf).unwrap();                                      // counter 1 in this direction...
         let n2 = orb_ch.seal(&plain, &mut buf).unwrap();                             // ...and 2 here
-        assert_eq!(buf[..n2].to_vec(), h("000000000000000250d915f95d0fab7c521fa70636a2759dcaeef0baee52e92d77"));
+        assert_eq!(buf[..n2].to_vec(), h("00000000000000029587de8bb36126192f4bc1b03700625752d373a7fccdfeb991"));
         assert_eq!(term.open(&buf[..n2], &mut out).unwrap(), plain.len());
     }
 

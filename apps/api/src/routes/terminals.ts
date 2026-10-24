@@ -9,7 +9,7 @@ import { decryptTagUrl } from "../lib/tagproof";
 import { consumeCounter, isFresh, loadTag } from "../lib/tap";
 import { requireOwner, requireSession, requireTerminal } from "../session";
 import type { Sql } from "../db";
-import { ORB_NONCE, ORB_UID, authorizeBind, orbRootKey } from "../lib/orbKeys";
+import { ORB_NONCE, ORB_UID, authorizeBind, orbKey } from "../lib/orbKeys";
 import { log } from "../lib/audit";
 import { RULES, rateLimit } from "../lib/throttle";
 
@@ -251,13 +251,13 @@ terminalSelf.put("/orb", async (c) => {
 terminalSelf.post("/orb/bind", rateLimit("orb-bind", RULES.orbBind, (c) => c.get("terminal").terminalId), async (c) => {
   const body = z.object({ uid: orbUid, nonce: z.string().regex(ORB_NONCE) }).safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
-  const root = orbRootKey(c.env.ORB_ROOT_KEY_V1);
-  if (!root) return c.json({ error: "orb_keys_unavailable" }, 503);
+  const key = orbKey(c.env.ORB_KEY_V1);
+  if (!key) return c.json({ error: "orb_keys_unavailable" }, 503);
   const { accountId, terminalId } = c.get("terminal");
   const sql = c.get("sql");
   const [held] = await sql<{ account_id: string }[]>`select account_id from terminals where orb_uid = ${body.data.uid} and account_id <> ${accountId} limit 1`;
   if (held) return c.json({ error: "orb_assigned_to_another_account" }, 409);
-  const out = await authorizeBind(root, body.data.uid, body.data.nonce);
+  const out = await authorizeBind(key, body.data.uid, body.data.nonce);
   await log(sql, { actor: { type: "system", label: "terminal" }, action: "orb.bind_authorized", target: { type: "terminal", id: terminalId }, details: { account_id: accountId, uid: body.data.uid, binding_id: out.binding_id } });
   return c.json(out);
 });

@@ -7,7 +7,7 @@ resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 2, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
 const ROOT = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), SANDBOX_FUNDING: "true", ORB_ROOT_KEY_V1: ROOT };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), SANDBOX_FUNDING: "true", ORB_KEY_V1: ROOT };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
 const eq = (l: string, g: unknown, w: unknown) => { const ok = JSON.stringify(g) === JSON.stringify(w); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", l, ok ? "" : `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`); };
@@ -20,8 +20,8 @@ const prf = (key: Buffer, label: string, ...parts: Buffer[]) => createHmac("sha2
 
 // Fixed vectors shared with docs/orb-protocol-vectors.md, Rust and Swift.
 const v = await authorizeBind(Buffer.from(ROOT, "hex"), "0211223344FF", "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf", Buffer.from("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf", "hex"));
-eq("vector: bind proof", v.proof, "d0194671cdd9ec6989df2fe66d300f9441a8f3451144043b32d177b0d051830e");
-eq("vector: binding key", v.bind_key, "a8a92973061b638c991773194f0394ab01e31539a1084f210c547b98eed2481c");
+eq("vector: bind proof", v.proof, "65e43504815dc989a54c047d0460819962401aaa1ebe287b27e8ceb929a88392");
+eq("vector: binding key", v.bind_key, "a669767ce4577d47d23b35283c54c52c895193c4afdb6715b5ca04f2b2ec90af");
 
 const shop = await signup("Shop", "shop@example.com", "B");
 await q("update accounts set status = 'active' where id = $1", [shop.account_id]);
@@ -31,7 +31,7 @@ const nonce = randomBytes(16).toString("hex");
 
 const r = await call("POST", "/v1/terminal/orb/bind", { token: T, body: { uid: "02:11:22:33:44:ff".replace(/:/g, "").toUpperCase(), nonce } });
 eq("bind: 200 with id, proof and key", [r.status, r.json.binding_id?.length, r.json.proof?.length, r.json.bind_key?.length], [200, 32, 64, 64]);
-const kOrb = prf(Buffer.from(ROOT, "hex"), "nuclear-orb-device-v1", Buffer.from("0211223344ff", "hex"));
+const kOrb = Buffer.from(ROOT, "hex");
 eq("bind: proof is the HMAC the Orb will check", r.json.proof, prf(kOrb, "bind-auth-v1", Buffer.from("0211223344ff", "hex"), Buffer.from(r.json.binding_id, "hex"), Buffer.from(nonce, "hex")).toString("hex"));
 eq("bind: key is K_bind", r.json.bind_key, prf(kOrb, "bind-key-v1", Buffer.from("0211223344ff", "hex"), Buffer.from(r.json.binding_id, "hex")).toString("hex"));
 const r2 = await call("POST", "/v1/terminal/orb/bind", { token: T, body: { uid: "0211223344FF", nonce } });
@@ -41,7 +41,7 @@ eq("bind: audited, never with the key", (await q("select details from logs where
 eq("bad bodies are 400", await Promise.all([{ uid: "xyz", nonce }, { uid: "0211223344FF", nonce: "ab" }, { uid: "0211223344FF" }].map(async (b) => (await call("POST", "/v1/terminal/orb/bind", { token: T, body: b })).status)), [400, 400, 400]);
 eq("no terminal session: refused", (await call("POST", "/v1/terminal/orb/bind", { body: { uid: "0211223344FF", nonce } })).status, 401);
 eq("an owner session is not a terminal", (await call("POST", "/v1/terminal/orb/bind", { token: shop.session_token, body: { uid: "0211223344FF", nonce } })).status >= 400, true);
-eq("without the root key: 503", (await call("POST", "/v1/terminal/orb/bind", { token: T, body: { uid: "0211223344FF", nonce }, env: { ...env, ORB_ROOT_KEY_V1: undefined } })).json.error, "orb_keys_unavailable");
+eq("without the fleet key: 503", (await call("POST", "/v1/terminal/orb/bind", { token: T, body: { uid: "0211223344FF", nonce }, env: { ...env, ORB_KEY_V1: undefined } })).json.error, "orb_keys_unavailable");
 
 // An Orb already paired to another account cannot be authorized for this one.
 const other = await signup("Other", "other@example.com", "B");

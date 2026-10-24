@@ -239,13 +239,13 @@ final class NuclearTerminalKitTests: XCTestCase {
 final class OrbSecureTests: XCTestCase {
     private func h(_ s: String) -> [UInt8] { stride(from: 0, to: s.count, by: 2).map { UInt8(s[s.index(s.startIndex, offsetBy: $0)..<s.index(s.startIndex, offsetBy: $0 + 2)], radix: 16)! } }
     // The same vectors as docs/orb-protocol-vectors.md and apps/orb-firmware/src/secure.rs.
-    private let kBind = "a8a92973061b638c991773194f0394ab01e31539a1084f210c547b98eed2481c"
+    private let kBind = "a669767ce4577d47d23b35283c54c52c895193c4afdb6715b5ca04f2b2ec90af"
     private let nonceO = "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf", bindingId = "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf", nonceT = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
 
     func testProofVectors() {
-        XCTAssertEqual(OrbSecure.expectedOrbProofForBind(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId)), h("c7b0b6a1de815de945b3f725d8d2e771a23613bb62c2d5aa794041577f0ae51c"))
-        XCTAssertEqual(OrbSecure.terminalProof(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("09eba972372eae5b7ff71cc3ce57a1810e3a7adbf19eac6e1f8816d84df1c133"))
-        XCTAssertEqual(OrbSecure.expectedOrbProofForResume(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("08c18bd008a8c08702b541b55fcc31a300c4b709cb75517f0444ec656dee1996"))
+        XCTAssertEqual(OrbSecure.expectedOrbProofForBind(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId)), h("cceb9d70218c738390c1a320e367ae8735c649b74bd129f5266e7b26d3444b1a"))
+        XCTAssertEqual(OrbSecure.terminalProof(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("97c5228ada8f31bcb2512b41ee7bd3350ab1dac5bfd307eea92a78d96cae19d9"))
+        XCTAssertEqual(OrbSecure.expectedOrbProofForResume(kBind: h(kBind), nonceO: h(nonceO), nonceT: h(nonceT)), h("308ddb49160b29945bb13fb0b30fd9013be4aa9cacd387e4670ef716b9815bbf"))
         XCTAssertTrue(OrbSecure.constantTimeEqual([1, 2], [1, 2]))
         XCTAssertFalse(OrbSecure.constantTimeEqual([1, 2], [1, 3]))
     }
@@ -253,9 +253,9 @@ final class OrbSecureTests: XCTestCase {
     func testFrameVectorsAndRefusals() throws {
         var t = OrbSecure.Channel(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId), generation: 7)
         let plain = h("020001000200000001")
-        XCTAssertEqual(try t.seal(plain), h("0000000000000001813a2cdb4d220e3b3dd85404c3a1129f93567f699d9e13ef33"))
+        XCTAssertEqual(try t.seal(plain), h("000000000000000174dc65fda33818d5e7a08bb9904fda8aa048f44efd94e5ac34"))
         // The Orb-to-terminal frame from the vectors opens on the terminal side, once.
-        let orbFrame = h("000000000000000250d915f95d0fab7c521fa70636a2759dcaeef0baee52e92d77")
+        let orbFrame = h("00000000000000029587de8bb36126192f4bc1b03700625752d373a7fccdfeb991")
         XCTAssertEqual(try t.open(orbFrame), plain)
         XCTAssertThrowsError(try t.open(orbFrame)) { XCTAssertEqual($0 as? OrbSecure.ChannelError, .replay) }
         var other = OrbSecure.Channel(kBind: h(kBind), nonceO: h(nonceO), bindingId: h(bindingId), generation: 8)
