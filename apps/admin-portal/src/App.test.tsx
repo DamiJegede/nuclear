@@ -1540,7 +1540,7 @@ describe("user support page", () => {
   const api = (extra: Partial<Api> = {}) => fakeApi({
     users: vi.fn().mockResolvedValue(pg("users", [UL])), user: vi.fn().mockResolvedValue(DETAIL), userWallets: vi.fn().mockResolvedValue(WALLETS),
     userTags: vi.fn().mockResolvedValue([{ id: "t1", label: "Wrist", locked: false, transaction_limit: 5000, last_read_at: null, updated_at: "2026-10-03T00:00:00Z", model: "NEO Band", model_type: "band", wallet: "Ada Lovelace" }]),
-    userDevices: vi.fn().mockResolvedValue([{ id: "d1", platform: "ios", wallet: null, created_at: "2026-10-01T00:00:00Z", last_accessed_at: "2026-10-16T10:00:00Z", session_expires_at: "2027-01-01T00:00:00Z", revoked_at: null, active: true }, { id: "d2", platform: null, wallet: "Kid", created_at: "2026-10-02T00:00:00Z", last_accessed_at: null, session_expires_at: "2027-01-01T00:00:00Z", revoked_at: "2026-10-05T00:00:00Z", active: false }]),
+    userDevices: vi.fn().mockResolvedValue([{ id: "d1", platform: "ios", model: "iPhone16,2", wallet: null, created_at: "2026-10-01T00:00:00Z", last_accessed_at: "2026-10-16T10:00:00Z", session_expires_at: "2027-01-01T00:00:00Z", revoked_at: null, active: true }, { id: "d2", platform: null, wallet: "Kid", created_at: "2026-10-02T00:00:00Z", last_accessed_at: null, session_expires_at: "2027-01-01T00:00:00Z", revoked_at: "2026-10-05T00:00:00Z", active: false }]),
     userFunding: vi.fn().mockResolvedValue({ banks: [{ id: "b1", last4: "4321", status: "active", created_at: "2026-10-01T00:00:00Z" }], fundings: [{ id: "f1", amount: 100000, status: "completed", failure_code: null, last4: "4321", created_at: "2026-10-01T00:00:00Z", released_at: "2026-10-01T00:01:00Z", returned_at: null }, { id: "f2", amount: 5000, status: "failed", failure_code: "insufficient_funds", last4: "4321", created_at: "2026-10-02T00:00:00Z", released_at: null, returned_at: null }] }),
     userOrders: vi.fn().mockResolvedValue([{ id: "o1", model_name: "NEO Band", model_type: "band", quantity: 2, unit_price: 2999, total: 5998, status: "paid", shipping: { city: "London", region: "LDN", country: "GB" }, created_at: "2026-10-04T00:00:00Z" }]),
     userTransactions: vi.fn().mockResolvedValue(TXP), signOutUser: vi.fn().mockResolvedValue({ signed_out: 3 }), unlockUserLogin: vi.fn().mockResolvedValue(null),
@@ -1644,6 +1644,7 @@ describe("user support page", () => {
     await user.click(tab("Devices"));
     const active = await screen.findByRole("row", { name: /ios/ });
     expect(within(active).getByText("active")).toBeInTheDocument();
+    expect(within(active).getByText("iPhone 15 Pro Max")).toHaveAttribute("title", "iPhone16,2");
     expect(within(screen.getByRole("row", { name: /Kid/ })).getByText("signed out")).toBeInTheDocument();
     await user.click(tab("Funding"));
     const bad = await screen.findByRole("row", { name: /\$50\.00/ });

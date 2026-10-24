@@ -97,6 +97,19 @@ await q("update accounts set status='active' where id=$1", [biz.account_id]);
 eq("approved, the same token works at once (no new token needed)", (await call("GET", "/v1/balance", { token: biz.session_token })).status, 200);
 eq("refresh for a business gives its account and no consumer pieces", await call("POST", "/v1/auth/refresh", { token: biz.session_token }).then((r) => [r.status, r.json.account.type, r.json.balance, r.json.wallets]), [200, "B", null, []]);
 
+
+// ---- the device model: sent at sign-in, updated by the launch call, bounded, never an error
+const mdl = async (token: string) => (await call("GET", "/v1/devices", { token })).json.devices.map((d: any) => d.model);
+const withModel = (await call("POST", "/v1/auth/login", { body: { email: "ada@example.com", password: "correct horse battery", platform: "ios", model: "iPhone15,3" } })).json;
+eq("model: sign-in stores it, the owner's device list shows it", (await mdl(withModel.session_token))[0], "iPhone15,3");
+eq("model: the launch call updates it", await (async () => { await call("POST", "/v1/auth/refresh", { token: withModel.session_token, body: { model: "iPhone16,2" } }); return (await mdl(withModel.session_token))[0]; })(), "iPhone16,2");
+eq("model: a launch call with no model or a bad one keeps the stored model and still succeeds", await (async () => {
+  const a = (await call("POST", "/v1/auth/refresh", { token: withModel.session_token })).status;
+  const b = (await call("POST", "/v1/auth/refresh", { token: withModel.session_token, body: { model: "x".repeat(65) } })).status;
+  return [a, b, (await mdl(withModel.session_token))[0]];
+})(), [200, 200, "iPhone16,2"]);
+eq("model: more than 64 characters at sign-in is a 400", (await call("POST", "/v1/auth/login", { body: { email: "ada@example.com", password: "correct horse battery", model: "x".repeat(65) } })).status, 400);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end();
 process.exit(fail ? 1 : 0);

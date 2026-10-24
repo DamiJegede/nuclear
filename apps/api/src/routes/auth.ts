@@ -13,6 +13,8 @@ import { verifyAccountLink } from "../crypto";
 export const auth = new Hono<AppContext>();
 
 const platform = z.enum(["ios", "android", "web"]);
+/** What the device says it is (iOS machine identifier, Android manufacturer and model). Untrusted text, shown to support. */
+export const deviceModel = z.string().trim().min(1).max(64);
 
 const signupBody = z.object({
   type: z.enum(["C", "B", "O"]).default("C"),
@@ -21,6 +23,7 @@ const signupBody = z.object({
   phone: z.string().trim().max(32).optional(),
   password: z.string().min(10).max(256),
   platform: platform.optional(),
+  model: deviceModel.optional(),
   push_token: z.string().max(512).optional(),
 });
 
@@ -28,6 +31,7 @@ const loginBody = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   password: z.string().min(1).max(256),
   platform: platform.optional(),
+  model: deviceModel.optional(),
   push_token: z.string().max(512).optional(),
 });
 
@@ -61,8 +65,8 @@ auth.post("/signup", rateLimit("signup", RULES.signupIp, byIp), async (c) => {
                  values (${accountId}, ${`${b.name} escrow`.slice(0, 80)}, 'escrow', 0, false, false)`;
       }
       const [dev] = await tx<{ id: string }[]>`
-        insert into devices (account_id, platform, push_token, redeemed_at, session_expires_at, last_accessed_at)
-        values (${accountId}, ${b.platform ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
+        insert into devices (account_id, platform, model, push_token, redeemed_at, session_expires_at, last_accessed_at)
+        values (${accountId}, ${b.platform ?? null}, ${b.model ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
         returning id`;
       return { accountId, walletId: wallet!.id, device: dev! };
     });
@@ -110,8 +114,8 @@ auth.post("/login", rateLimit("login-ip", RULES.loginIp, byIp), async (c) => {
   await reset(c.get("limiter"), failKey);
 
   const [dev] = await sql<{ id: string }[]>`
-    insert into devices (account_id, platform, push_token, redeemed_at, session_expires_at, last_accessed_at)
-    values (${acct.id}, ${b.platform ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
+    insert into devices (account_id, platform, model, push_token, redeemed_at, session_expires_at, last_accessed_at)
+    values (${acct.id}, ${b.platform ?? null}, ${b.model ?? null}, ${b.push_token ?? null}, now(), now() + interval '90 days', now())
     returning id`;
   const session = await signSession(c.env.JWT_SECRET, { accountId: acct.id, deviceId: dev!.id, walletId: null, accountType: acct.type });
   await customerLog(c, acct.id, b.email, "customer.login", { device_id: dev!.id });
@@ -131,9 +135,12 @@ auth.post("/refresh", requireDeviceSession, async (c) => {
   const { accountId, walletId } = c.get("auth");
   const deviceId = c.get("auth").deviceId!;
   const sql = c.get("sql");
+  // The launch call may report the device's model (an update, or a device that signed in before the model was sent); a bad value is ignored, never an error.
+  const m = z.object({ model: deviceModel }).safeParse(await c.req.json().catch(() => null));
   const [row] = await sql<{ type: string }[]>`
     update devices d
-       set session_expires_at = greatest(d.session_expires_at, now() + interval '90 days'), last_accessed_at = now()
+       set session_expires_at = greatest(d.session_expires_at, now() + interval '90 days'), last_accessed_at = now(),
+           model = coalesce(${m.success ? m.data.model : null}, d.model)
       from accounts a
      where d.id = ${deviceId} and d.account_id = ${accountId} and a.id = d.account_id and a.status in ('active', 'pending', 'declined')
        and d.revoked_at is null and d.session_expires_at > now()

@@ -17,6 +17,7 @@ devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => 
     .object({
       token: z.string().min(20).max(2048),
       platform: z.enum(["ios", "android", "web"]).optional(),
+      model: z.string().trim().min(1).max(64).optional(),
       push_token: z.string().max(512).optional(),
     })
     .safeParse(await c.req.json().catch(() => null));
@@ -34,6 +35,7 @@ devices.post("/redeem", rateLimit("redeem", RULES.redeemIp, byIp), async (c) => 
            session_expires_at = now() + interval '90 days',
            last_accessed_at   = now(),
            platform           = coalesce(${body.data.platform ?? null}, d.platform),
+           model              = coalesce(${body.data.model ?? null}, d.model),
            push_token         = coalesce(${body.data.push_token ?? null}, d.push_token)
      where d.id = ${claims.device_id}
        and d.account_id = ${claims.account_id}
@@ -62,7 +64,7 @@ devices.use("*", requireDeviceSession);
 devices.get("/", requireOwner, async (c) => {
   const { accountId } = c.get("auth");
   const rows = await c.get("sql")`
-    select id, wallet_id, platform, created_at, last_accessed_at, session_expires_at, revoked_at,
+    select id, wallet_id, platform, model, created_at, last_accessed_at, session_expires_at, revoked_at,
            (redeemed_at is not null) as redeemed
       from devices where account_id = ${accountId}
      order by created_at desc, id desc limit 100`;

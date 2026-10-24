@@ -1,3 +1,4 @@
+import { deviceName } from "../deviceNames";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Api, DayRange, UserDetailData, UserDevice, UserFunding, UserOrder, UserTag, UserTxKind, UserTxPage, UserTxRow, UserWallet } from "../api";
 import { int, money } from "../format";
@@ -273,11 +274,12 @@ function Devices({ api, id, onError }: { api: Api; id: string; onError: (e: unkn
         : data.length === 0 ? <p className="muted pad">No sessions yet.</p>
         : (
           <table>
-            <thead><tr><th scope="col">Session</th><th scope="col">Platform</th><th scope="col">Shared wallet</th><th scope="col">Started</th><th scope="col">Last used</th><th scope="col">Expires</th></tr></thead>
+            <thead><tr><th scope="col">Session</th><th scope="col">Device</th><th scope="col">Platform</th><th scope="col">Shared wallet</th><th scope="col">Started</th><th scope="col">Last used</th><th scope="col">Expires</th></tr></thead>
             <tbody>
               {data.map((d) => (
                 <tr key={d.id}>
                   <td>{pill(d.active ? "active" : d.revoked_at ? "signed out" : "expired", d.active ? "available" : "closed")}</td>
+                  <td>{d.model ? <span title={d.model}>{deviceName(d.model)}</span> : <span className="muted">Not reported</span>}</td>
                   <td>{d.platform ?? "—"}</td>
                   <td>{d.wallet ?? <span className="muted">Their own login</span>}</td>
                   <td className="when">{when(d.created_at)}</td>

@@ -95,6 +95,7 @@ Device registration: the push token, the list of a person's devices, revocation 
 | account_id | Foreign key to accounts.id; owner of the account/wallet access. |
 | wallet_id | Foreign key to wallets.id; target of delegated wallet access. NULL for the account holder's own login. |
 | platform | ios, android or web. |
+| model | Nullable text, 1-64 characters, what the device reports about itself: the iOS machine identifier (`iPhone16,2`) or Android manufacturer and `Build.MODEL`. Untrusted; sent at sign-up, sign-in, link redemption and the launch refresh, and shown to support (the admin portal maps known identifiers to printed names). Added by migration 0004 (physically last, logically after platform). |
 | push_token | Nullable notification-delivery token, never an authentication credential. |
 | redeemed_at | When the session was first issued (sign-up, sign-in, or redeeming a wallet link). NULL = a wallet link not opened yet; set exactly when `session_expires_at` is. |
 | session_expires_at | Nullable expiry; set to issue time + 90 days and rolled to server time + 90 days by `POST /v1/auth/refresh`. NULL before redemption. |

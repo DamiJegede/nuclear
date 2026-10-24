@@ -43,7 +43,7 @@ const uid = "04" + randomBytes(6).toString("hex").toUpperCase();
 await call("POST", `/v1/admin/tag-models/${model.id}/tags`, { token: OP, body: { uids: [uid] } });
 await call("POST", "/v1/tags/claim", { token: A, body: { url: urlFor(uid, 1), label: "Wrist" } });
 await call("POST", "/v1/shop/orders", { token: A, key: "o1", body: { model_id: model.id, quantity: 1, shipping: { name: "Ada", line1: "1 St", city: "London", region: "LDN", postal_code: "N1", country: "gb" } } });
-const second = (await call("POST", "/v1/auth/login", { body: { email: "ada@example.com", password: "correct horse battery", platform: "ios" } })).json.session_token;
+const second = (await call("POST", "/v1/auth/login", { body: { email: "ada@example.com", password: "correct horse battery", platform: "ios", model: "iPhone16,2" } })).json.session_token;
 const kidSession = (await call("POST", "/v1/devices/redeem", { body: { token: (await call("POST", `/v1/wallets/${kid.id}/links`, { token: A })).json.url.split("/magic-link/")[1] } })).json.session_token;
 
 // ---- people with roles
@@ -71,6 +71,7 @@ eq("wallets: default first, then agent and person, with earmark, limits, permiss
 eq("tags: the band, its model, label and wallet (no NFC UID)", [(await op(`/v1/admin/users/${U}/tags`)).json.tags.map((t: any) => [t.model, t.model_type, t.label, t.locked, t.wallet]), JSON.stringify((await op(`/v1/admin/users/${U}/tags`)).json).includes(uid)], [[["NEO Band", "band", "Wrist", false, "Ada Lovelace"]], false]);
 const dev = (await op(`/v1/admin/users/${U}/devices`)).json.devices;
 eq("devices: each login and the delegated session, with platform, activity and whether it is active; never a token", [dev.length, dev.filter((x: any) => x.active).length, dev.some((x: any) => x.platform === "ios"), dev.some((x: any) => x.wallet === "Kid"), JSON.stringify(dev).match(/token|hash/i)], [3, 3, true, true, null]);
+eq("devices: the model the device reported (iOS machine identifier) is shown to support", dev.filter((x: any) => x.model).map((x: any) => [x.platform, x.model]), [["ios", "iPhone16,2"]]);
 const fund = (await op(`/v1/admin/users/${U}/funding`)).json.funding;
 eq("funding: bank accounts and every load with its status", [fund.fundings.length, fund.fundings[0].status, fund.fundings[0].amount, fund.banks.length], [1, "completed", 100000, 1]);
 eq("orders: model, quantity, total, status and where it ships (city, not the full address)", (await op(`/v1/admin/users/${U}/orders`)).json.orders.map((o: any) => [o.model_name, o.quantity, o.total, o.status, o.shipping.city]), [["NEO Band", 1, 2999, "paid", "London"]]);

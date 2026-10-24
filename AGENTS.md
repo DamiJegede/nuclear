@@ -52,6 +52,7 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 | `0001_init.sql` | All 29 tables, constraints, triggers, the system account and the Nuclear Bank / Nuclear Shop wallets, the views `txn` and `account_effects`, `program_today()` and `shared_funds()` |
 | `0002_money_functions.sql` | `app_send`, `app_pay_plan`, `app_pay_checkout`, `app_pay_tap`, `app_pay_app`, `app_refund`, `app_refund_resolve`, `app_purchase` and their helpers |
 | `0003_fund_return.sql` | Written 2026-10-23: `fund_return` may carry `credit_amount`; `account_effects` mirrors the fund it reverses. **Apply to nuclear-dev before deploying the code that uses it.** |
+| `0004_device_model.sql` | Written 2026-10-24: `devices.model` (nullable, 1-64 characters). **Apply to nuclear-dev before deploying the code that uses it.** |
 
 **Rules from here:** the two files are applied and frozen: never edit them, add a new numbered file (`0003_...`) and record it in this table. A migration that creates a table must also `grant all` on it to the Hyperdrive role if it is applied by a different role than the one that owns the existing tables.
 

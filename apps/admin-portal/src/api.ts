@@ -165,7 +165,7 @@ export type UserWallet = {
   key: { hint: string; last_used_at: string | null } | null; created_at: string;
 };
 export type UserTag = { id: string; label: string | null; locked: boolean; transaction_limit: number | null; last_read_at: string | null; updated_at: string; model: string; model_type: string; wallet: string };
-export type UserDevice = { id: string; platform: string | null; wallet: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; active: boolean };
+export type UserDevice = { id: string; platform: string | null; model: string | null; wallet: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; active: boolean };
 export type UserFunding = {
   banks: { id: string; last4: string; status: string; created_at: string }[];
   fundings: { id: string; amount: number; status: string; failure_code: string | null; last4: string | null; created_at: string; released_at: string | null; returned_at: string | null }[];

@@ -92,10 +92,10 @@ export async function userTags(sql: Sql, id: string) {
 
 export async function userDevices(sql: Sql, id: string) {
   const rows = await sql<{
-    id: string; platform: string | null; wallet: string | null; created_at: Date; last_accessed_at: Date | null;
+    id: string; platform: string | null; model: string | null; wallet: string | null; created_at: Date; last_accessed_at: Date | null;
     session_expires_at: Date | null; revoked_at: Date | null; active: boolean;
   }[]>`
-    select d.id, d.platform, w.display_name as wallet, d.created_at, d.last_accessed_at, d.session_expires_at, d.revoked_at,
+    select d.id, d.platform, d.model, w.display_name as wallet, d.created_at, d.last_accessed_at, d.session_expires_at, d.revoked_at,
            (d.revoked_at is null and d.session_expires_at > now()) as active
       from devices d left join wallets w on w.id = d.wallet_id
      where d.account_id = ${id}
