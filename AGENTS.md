@@ -55,6 +55,8 @@ directly (no deploy requests). A `PlanetScale` MCP server is configured in `.mcp
 
 **Rules from here:** the two files are applied and frozen: never edit them, add a new numbered file (`0003_...`) and record it in this table. A migration that creates a table must also `grant all` on it to the Hyperdrive role if it is applied by a different role than the one that owns the existing tables.
 
+**The money architecture (scheme v2) is final for V1** (owner, 2026-10-23, after the 14-day endurance run in docs/SCHEME-V2.md: drift 0 every night, about 1,300 requests/s measured). Do not redesign it; build features on it.
+
 ## Approval rules
 
 - Read-only SQL and read-only `pscale` commands (`org/database/branch list`, `insights`, `inspect`, `select`) are allowed without asking.

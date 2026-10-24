@@ -47,6 +47,10 @@ Differences from the plan above, all deliberate:
 - An organization's spendable funds are `shared_funds(account)`: balance less the escrow wallet. An organization's `balances.balance` therefore includes what it holds for employees, and the Overview's organization balance does too.
 - Declined rows older than 90 days are purged nightly one week at a time (a range read on `created_at`), not by a full scan.
 
+### Endurance run (2026-10-23, temporary PlanetScale branch `sim-m320`, M-320 HA with 2 replicas, since deleted)
+
+`scripts/simulate-week.mts --days 14 --tps 10 --users 100000 --merchants 200 --workers 300` through the pooled port (PgBouncer): 14 simulated days of 864,000 requests each (sends, tap and app payments, refunds, purchases, loads, benefit runs, settlement), every night run by the real nightly job. **Result: all 14 nightly checks reconciled with drift 0, the full recompute afterwards passed every check, 12,208,049 transactions, no negative non-merchant balance.** Client-side latency per day: throughput 1,230-1,300 requests/s after the first days, p50 161-166 ms, p90 211-272 ms, p99 1,042-1,175 ms, 2-5% of calls over 1 s, slowest call 2.3-5.2 s; flat across the run while the table grew past 12 million rows. The primary showed 190 of 200 direct connections (186 of them PgBouncer's pool), CPU 66%, memory 86% during the run. Whether a larger pool would have raised throughput was **not tested**: the simulator is closed-loop (300 workers), so the rate may be bounded by workers and round trip; to settle it, re-run with a larger pool or more workers and watch PgBouncer waiting clients and CPU. For production, size Hyperdrive's origin pool to fit under the connection limit. **Owner decision (2026-10-23): the architecture is final for V1**; 1,300 requests/s is about a year of growth away.
+
 ## 1. Table inventory (36 now, 29 target)
 
 | Table | Verdict | Why |
