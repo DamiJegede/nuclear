@@ -110,6 +110,10 @@ eq("sign out one device: only that session stops (a signed token still reads the
   const shown = (await op(`/v1/admin/users/${U}/devices`)).json.devices.find((x: any) => x.id === d.id);
   return [denied, r1, r2, other, shown.active, (await call("GET", "/v1/account", { token: second })).status, (await call("GET", "/v1/account", { token: A })).status];
 })(), [403, 204, 404, 404, false, 401, 200]);
+eq("a signed-out device cannot renew (launch refresh 401), sign in again with its old token, send, pay or buy; the other session still renews", await (async () => {
+  const t = (p: string, m = "POST", body?: unknown) => call(m, p, { token: second, key: "k" + p, body }).then((r) => r.status);
+  return [await t("/v1/auth/refresh"), await t("/v1/transfers", "POST", { to_wallet_id: bob.default_wallet_id, amount: 100 }), await t("/v1/wallets", "GET"), (await call("POST", "/v1/auth/refresh", { token: A })).status];
+})(), [401, 401, 200, 200]);
 const before = (await op(`/v1/admin/users/${U}`)).json.user.stats.devices;
 const out = await act("support", `/v1/admin/users/${U}/sign-out`);
 eq("sign out everywhere: every session, including the delegated one, stops working at once; money and wallets are untouched", [before > 2, out.status, out.json.signed_out >= before, (await call("GET", "/v1/account", { token: A })).status, (await call("POST", "/v1/transfers", { token: second, key: "so-1", body: { to_wallet_id: bob.default_wallet_id, amount: 1 } })).status, (await call("GET", "/v1/balance", { token: kidSession })).status, (await op(`/v1/admin/users/${U}`)).json.user.stats.devices, (await call("GET", "/v1/balance", { token: agent.key })).status], [true, 200, true, 401, 401, 401, 0, 200]);
