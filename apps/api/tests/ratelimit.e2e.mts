@@ -45,6 +45,12 @@ eq("signups: ten per IP per hour, the eleventh is refused, another IP is fine", 
   return [rs.slice(0, 10).every((s) => s === 201), rs[10], (await call("POST", "/v1/auth/signup", { ip: "203.0.113.8", body: { name: "N", email: "other-ip@example.com", password: GOOD } })).status];
 })(), [true, 429, 201]);
 eq("without a cf-connecting-ip header there is no IP limit (local runs, tests)", await (async () => { let ok = 0; for (let i = 0; i < 12; i++) ok += (await call("POST", "/v1/auth/signup", { body: { name: "N", email: `noip${i}@example.com`, password: GOOD } })).status === 201 ? 1 : 0; return ok; })(), 12);
+eq("per-IP limits do not apply with the operator token header (seed and load scripts); a wrong token does not help", await (async () => {
+  const go = async (token: string, i: number) => (await app.fetch(new Request("http://x/v1/auth/signup", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.50", "x-operator-token": token }, body: JSON.stringify({ name: "N", email: `op${token.length}-${i}@example.com`, password: GOOD }) }), env, ctx)).status;
+  const good = []; for (let i = 0; i < 12; i++) good.push(await go(OP, i));
+  const bad = []; for (let i = 0; i < 11; i++) bad.push(await go("wrong-token", i));
+  return [good.every((s) => s === 201), bad[10]];
+})(), [true, 429]);
 eq("logins: thirty attempts per IP per minute, then 429 before any password is checked", await (async () => {
   const rs = []; for (let i = 0; i < 32; i++) rs.push((await login(`spray${i}@example.com`, BAD, "198.51.100.1")).status);
   return [rs.slice(0, 30).every((s) => s === 401), rs[30], rs[31]];

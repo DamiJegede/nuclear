@@ -31,7 +31,7 @@ const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 async function api(method, path, { token, body, type, bytes } = {}) {
   const res = await fetch(API + path, {
     method,
-    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined || bytes ? { "content-type": type ?? "application/json" } : {}) },
+    headers: { "x-operator-token": OP, ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined || bytes ? { "content-type": type ?? "application/json" } : {}) },
     body: bytes ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
   const text = await res.text();

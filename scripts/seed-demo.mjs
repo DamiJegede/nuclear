@@ -42,7 +42,7 @@ async function call(method, path, { token, key, body } = {}, tries = 4) {
     try {
       const res = await fetch(API + path, {
         method,
-        headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...(key ? { "idempotency-key": key } : {}) },
+        headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...(key ? { "idempotency-key": key } : {}), "x-operator-token": OP },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const text = await res.text();

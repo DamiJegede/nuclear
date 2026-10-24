@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppContext, Env } from "../env";
+import { sameSecret } from "./adminAuth";
 
 /** `limit` hits per `windowSec` seconds; the window starts at the first hit. */
 export type Rule = { limit: number; windowSec: number };
@@ -133,5 +134,10 @@ export function rateLimit(name: string, rule: Rule, who: (c: Context<AppContext>
   };
 }
 
-export const byIp = (c: Context<AppContext>) => clientIp(c);
+/** Per-IP limits do not apply to a request carrying the operator token (`x-operator-token`, the same secret the operator scripts already hold): seeding and load scripts run from one address. */
+export const byIp = (c: Context<AppContext>) => {
+  const op = c.env.ADMIN_API_TOKEN, given = c.req.header("x-operator-token");
+  if (op && given && sameSecret(given, op)) return null;
+  return clientIp(c);
+};
 export const byAccount = (c: Context<AppContext>) => c.get("auth")?.accountId ?? null;
