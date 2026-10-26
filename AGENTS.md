@@ -22,6 +22,8 @@ apps/organization-portal/   organization (employer) portal (Vite + React, same t
 apps/admin-portal/      admin portal (Vite + React): system overview, tags (model cards), admins, security; navigation Overview, Merchants, Users, Tags, Admins, with the admin's name (opens Security: two-step verification and recovery codes) and Transactions on the right; each page has its own URL (/merchants, /users, /tags, /tags/<id>, /admins, /transactions, /security); the UI says "tag" where the database says model; `npm run admin:dev|test|build`; hosted at https://nuclear-admin.a-space.workers.dev (Worker `nuclear-admin`, static assets, version `003e2258`; `npm run deploy -w @nuclear/admin-portal`)
 ```
 
+Cross River (the bank) API notes, learned from their public docs: `docs/CROSS-RIVER.md`. Credentials are in the git-ignored `CR_ACCESS*` files; never print or commit them.
+
 Specs, in authoritative order: `docs/TABLES.md`, `docs/BALANCE-POLICY.md`,
 `docs/WALLET-ACCESS-POLICY.md`, `docs/PLATFORM-SCOPE.md`, `docs/FEATURE-SPEC.md`.
 Run from the repo root: `npm install`, `npm run typecheck`, `npm run api:dev`, `npm run api:deploy`.
