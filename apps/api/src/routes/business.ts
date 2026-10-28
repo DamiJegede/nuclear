@@ -15,7 +15,7 @@ import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { closeOut } from "../lib/settlement";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
-import { BANK_COLS, bankView, ensureBank, refreshBank, type BankRow } from "../lib/banks";
+import { abaOk, ROUTING_COLS, ROUTING_FROM, bankView, ensureRouting, refreshBank, type RoutingRow } from "../lib/banks";
 import type { Sql } from "../db";
 
 /**
@@ -60,9 +60,10 @@ business.get("/overview", async (c) => {
              coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= e.y0 and x."timestamp" < e.t0), 0) as y_ref
         from txn x, e
        where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= e.y0`,
-    sql<(BankRow & { last4: string })[]>`
-      select ${sql.unsafe(BANK_COLS.split(", ").map((c) => `k.${c}`).join(", "))}, ba.last4
-        from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.status = 'active' left join banks k on k.id = ba.bank_id
+    sql<(RoutingRow & { last4: string })[]>`
+      select ${sql.unsafe(ROUTING_COLS)}, ba.last4
+        from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.status = 'active'
+        join routing_numbers r on r.id = ba.routing_number_id left join institutions i on i.id = r.institution_id
        where b.account_id = ${id}`,
   ]);
   return c.json({
@@ -75,7 +76,7 @@ business.get("/overview", async (c) => {
     categories: cats[0]!.n, products: prods[0]!.n,
     best_seller: best[0] ? { name: best[0].name, sold_today: best[0].sold_today } : null,
     today: { transactions: tx[0]!.today_n, since: tx[0]!.since ?? null, closed_out_at: tx[0]!.closed_out_at ?? null },
-    payout_bank: payout[0] ? { last4: payout[0].last4, institution: bankView(payout[0].id ? payout[0] : null) } : null,
+    payout_bank: payout[0] ? { last4: payout[0].last4, institution: bankView(payout[0]) } : null,
     yesterday: { net: Number(tx[0]!.y_pay) - Number(tx[0]!.y_ref) },
   });
 });
@@ -144,23 +145,22 @@ business.put("/profile", async (c) => {
 });
 
 // ---- Payout bank (where settlements will go; settlement itself is not built) ----------------------------
-type BankAccountRow = { id: string; last4: string; status: string; created_at: Date; bank_id: string | null };
-const bankJson = (r: BankAccountRow | undefined, bank: BankRow | null = null) =>
+type BankAccountRow = { id: string; last4: string; status: string; created_at: Date; routing_number_id: string | null };
+const bankJson = (r: BankAccountRow | undefined, bank: RoutingRow | null = null) =>
   r ? { id: r.id, last4: r.last4, status: r.status, created_at: r.created_at, institution: bankView(bank) } : null;
-const abaOk = (r: string) => { const d = [...r].map(Number); return (3 * (d[0]! + d[3]! + d[6]!) + 7 * (d[1]! + d[4]! + d[7]!) + (d[2]! + d[5]! + d[8]!)) % 10 === 0; };
 
-const bankById = async (sql: Sql, id: string | null): Promise<BankRow | null> => {
+const bankById = async (sql: Sql, id: string | null): Promise<RoutingRow | null> => {
   if (!id) return null;
-  const [b] = await sql<BankRow[]>`select ${sql.unsafe(BANK_COLS)} from banks where id = ${id}`;
+  const [b] = await sql<RoutingRow[]>`select ${sql.unsafe(ROUTING_COLS)} from ${sql.unsafe(ROUTING_FROM)} where r.id = ${id}`;
   return b ?? null;
 };
 
 business.get("/bank", async (c) => {
   const sql = c.get("sql");
   const [r] = await sql<BankAccountRow[]>`
-    select ba.id, ba.last4, ba.status, ba.created_at, ba.bank_id from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.account_id = b.account_id
+    select ba.id, ba.last4, ba.status, ba.created_at, ba.routing_number_id from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.account_id = b.account_id
      where b.account_id = ${c.get("auth").accountId} and ba.status = 'active'`;
-  return c.json({ bank: bankJson(r, await bankById(sql, r?.bank_id ?? null)) });
+  return c.json({ bank: bankJson(r, await bankById(sql, r?.routing_number_id ?? null)) });
 });
 
 // Set or replace the payout bank: the previous one is marked removed. Needs the business profile first. The bank (by routing number) is looked up
@@ -176,20 +176,20 @@ business.put("/bank", async (c) => {
   const routing = b.data.routing_number;
   const account = encryptBankField(c.env.BANK_ENCRYPTION_KEY, accountId, "account", b.data.account_number);
   const sql = c.get("sql");
-  let bank = await ensureBank(sql, routing);
+  let bank = await ensureRouting(sql, routing);
   const out = await sql.begin(async (tx) => {
     const [p] = await tx<{ bank_account_id: string | null }[]>`select bank_account_id from businesses where account_id = ${accountId} for no key update`;
     if (!p) return { error: "profile_required" as const };
     const [n] = await tx<BankAccountRow[]>`
-      insert into bank_accounts (account_id, routing_number, account_number, last4, bank_id)
-      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}, ${bank.id}) returning id, last4, status, created_at, bank_id`;
+      insert into bank_accounts (account_id, routing_number, account_number, last4, routing_number_id)
+      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}, ${bank.id}) returning id, last4, status, created_at, routing_number_id`;
     await tx`update businesses set bank_account_id = ${n!.id} where account_id = ${accountId}`;
     if (p.bank_account_id) await tx`update bank_accounts set status = 'removed' where id = ${p.bank_account_id} and account_id = ${accountId}`;
     return { bank: n! };
   });
   if ("error" in out) return c.json({ error: out.error }, 409);
   bank = await refreshBank(c.env, sql, bank);                                   // answers right away when it can; never throws
-  await customerLog(c, accountId, null, "business.bank_saved", { last4: out.bank.last4, bank_id: bank.id });
+  await customerLog(c, accountId, null, "business.bank_saved", { last4: out.bank.last4, routing_number_id: bank.id });
   return c.json({ bank: bankJson(out.bank, bank) }, 201);
 });
 

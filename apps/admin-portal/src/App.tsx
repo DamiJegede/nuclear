@@ -104,7 +104,7 @@ export function App({
   useEffect(() => {
     if (!api || !hasBanks) { setNeedsLogo(0); return; }
     let alive = true;
-    api.banks({ needsLogo: true, limit: 1 }).then((r) => { if (alive) setNeedsLogo(r.needs_logo); }).catch(() => { /* the badge is a convenience */ });
+    api.bankAttention().then((r) => { if (alive) setNeedsLogo(r.needs_logo + r.unlinked); }).catch(() => { /* the badge is a convenience */ });
     return () => { alive = false; };
   }, [api, hasBanks]);
 
@@ -193,7 +193,7 @@ export function App({
         <nav aria-label="Sections">
           {([["overview", "Overview"], ["merchants", "Merchants"], ["organizations", "Organizations"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["settlements", "Settlements"], ["banks", "Banks"], ["audit", "Logs"]] as const).filter(([v]) => (v === "settlements" ? me.pages.includes("transactions") : me.pages.includes(v as never))).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") || (v === "merchants" && view === "merchant") || (v === "organizations" && view === "organization") || (v === "users" && view === "user") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); setView(v); }}>{label}{v === "banks" && needsLogo ? <span className="badge" aria-label={`${needsLogo} banks need a logo`}>{needsLogo}</span> : null}</a>
+              onClick={(e) => { e.preventDefault(); setView(v); }}>{label}{v === "banks" && needsLogo ? <span className="badge" aria-label={`${needsLogo} banks need attention`}>{needsLogo}</span> : null}</a>
           ))}
         </nav>
         <div className="who">

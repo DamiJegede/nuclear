@@ -27,7 +27,7 @@ type Tx = TransactionSql<{ bigint: bigint }>;
  * Close out (`closeOut`): the merchant can run its own sweep at any time ("end the day"): the same whole-balance sweep, for today's date, source
  * `close_out`. Still ONE settlement per merchant per day: a second close-out is refused and the nightly run skips a merchant already settled for
  * the day, so anything sold after a close-out simply stays in the balance and is swept by the next day's settlement. A close-out never collects
- * (a negative balance is left to the nightly run). Instant payments (the bank's `banks.instant`) go by RTP or FedNow; a bank that is not (or not
+ * (a negative balance is left to the nightly run). Instant payments (the bank's `routing_numbers.instant`) go by RTP or FedNow; a bank that is not (or not
  * known to be) instant gets same-day ACH, and an instant payment the bank cannot take falls back to same-day ACH too.
  *
  * Safety: (settle_date, merchant) is unique and each transaction's key (`settle:<merchant>:<date>`) is unique, so a repeated or overlapping
@@ -95,7 +95,7 @@ async function sweepMerchant(sql: Sql, date: string, accountId: string, source: 
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${accountId} for no key update`,
       tx<{ id: string; instant: boolean | null }[]>`
         select ba.id, bk.instant from businesses bz join bank_accounts ba on ba.id = bz.bank_account_id and ba.status = 'active'
-          left join banks bk on bk.id = ba.bank_id where bz.account_id = ${accountId}`,
+          left join routing_numbers bk on bk.id = ba.routing_number_id where bz.account_id = ${accountId}`,
       // Collections the bank has not answered yet already count against the debt.
       tx<{ total: bigint }[]>`
         select coalesce(sum(amount), 0)::bigint as total from settlements

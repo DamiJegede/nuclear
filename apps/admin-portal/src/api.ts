@@ -263,15 +263,30 @@ export type SettlementItem = {
   status_code: string | null; bank_last4: string | null; source?: "nightly" | "close_out"; rail?: "instant" | "ach";
 };
 
-/** A bank by routing number: what we know about it. `instant` null = not checked yet or the lookup failed. */
-export type BankRow = {
-  id: string; routing_number: string; name: string | null; icon: string | null; instant: boolean | null; networks: string[];
-  refreshed_at: string | null; created_at: string; accounts: number;
+/** An institution (Chase, Wells Fargo...): the name and logo shown for every routing number that belongs to it. */
+export type InstitutionRow = {
+  id: string; name: string; icon: string | null; domain: string | null; aliases: string[]; created_at: string; routing_numbers: number; accounts: number;
 };
-export type BankPage = { banks: BankRow[]; next_cursor: string | null; total: number; needs_logo: number };
+/** A 9-digit routing number: what the bank directory says about it (`instant` null = not known) and the institution it is linked to, if any. */
+export type RoutingNumberRow = {
+  id: string; routing_number: string; directory_name: string | null; institution_id: string | null; institution: string | null; icon: string | null;
+  instant: boolean | null; networks: string[]; refreshed_at: string | null; created_at: string; accounts: number;
+};
+/** `needs_logo`: institutions in use without a logo. `unlinked`: routing numbers in use that belong to no institution. */
+export type BankAttention = { needs_logo: number; unlinked: number };
+export type InstitutionPage = { institutions: InstitutionRow[]; next_cursor: string | null; total: number } & BankAttention;
+export type RoutingPage = { routing_numbers: RoutingNumberRow[]; next_cursor: string | null; total: number } & BankAttention;
 export type SettlementRunResult =
   | { ran: false; reason: "no_provider" | "already_done" }
   | { ran: true; cutoff_date: string; created: number; payouts: number; collections: number; payout_total: number; collection_total: number; status: string };
+
+/** The query string of a Banks page request (only the fields that are set). */
+const bankQuery = (o: Record<string, string | number | undefined>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== "") p.set(k, String(v));
+  const t = p.toString();
+  return t ? `?${t}` : "";
+};
 
 /** The query string of a paged, filtered list. */
 const listQuery = (q?: string, cursor?: string) => {
@@ -439,17 +454,16 @@ export function createApi(token: string, base: string = API_URL) {
     provisionTags: (id: string, uids: string[]) =>
       request<ProvisionResult>("POST", `/v1/admin/tag-models/${encodeURIComponent(id)}/tags`, { uids }),
     /** Uploads the (already resized) photo for a model. */
-    banks: (o: { q?: string; needsLogo?: boolean; cursor?: string; limit?: number } = {}) => {
-      const p = new URLSearchParams();
-      if (o.q) p.set("q", o.q);
-      if (o.needsLogo) p.set("needs_logo", "1");
-      if (o.cursor) p.set("cursor", o.cursor);
-      if (o.limit) p.set("limit", String(o.limit));
-      const t = p.toString();
-      return request<BankPage>("GET", `/v1/admin/banks${t ? `?${t}` : ""}`);
-    },
-    renameBank: (id: string, name: string) => request<null>("PATCH", `/v1/admin/banks/${encodeURIComponent(id)}`, { name }),
-    uploadBankIcon: (id: string, icon: Blob) => request<null>("PUT", `/v1/admin/banks/${encodeURIComponent(id)}/icon`, icon),
+    bankAttention: () => request<BankAttention>("GET", "/v1/admin/banks/attention"),
+    institutions: (o: { q?: string; needsLogo?: boolean; cursor?: string; limit?: number } = {}) =>
+      request<InstitutionPage>("GET", `/v1/admin/institutions${bankQuery({ q: o.q, needs_logo: o.needsLogo ? "1" : undefined, cursor: o.cursor, limit: o.limit })}`),
+    createInstitution: (b: { name: string; domain?: string | null; aliases?: string[] }) => request<{ institution: { id: string }; linked: number }>("POST", "/v1/admin/institutions", b),
+    updateInstitution: (id: string, b: { name?: string; domain?: string | null; aliases?: string[] }) => request<{ linked: number }>("PATCH", `/v1/admin/institutions/${encodeURIComponent(id)}`, b),
+    uploadInstitutionIcon: (id: string, icon: Blob) => request<null>("PUT", `/v1/admin/institutions/${encodeURIComponent(id)}/icon`, icon),
+    routingNumbers: (o: { q?: string; unlinked?: boolean; cursor?: string; limit?: number } = {}) =>
+      request<RoutingPage>("GET", `/v1/admin/routing-numbers${bankQuery({ q: o.q, unlinked: o.unlinked ? "1" : undefined, cursor: o.cursor, limit: o.limit })}`),
+    addRoutingNumber: (b: { routing_number: string; institution_id?: string | null }) => request<{ routing_number: { id: string } }>("POST", "/v1/admin/routing-numbers", b),
+    linkRoutingNumber: (id: string, institutionId: string | null) => request<null>("PUT", `/v1/admin/routing-numbers/${encodeURIComponent(id)}/institution`, { institution_id: institutionId }),
     uploadModelPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/tag-models/${encodeURIComponent(id)}/photo`, photo),
     createModel: async (m: NewModel) => (await request<{ model: TagModel }>("POST", "/v1/admin/tag-models", m)).model,
   };

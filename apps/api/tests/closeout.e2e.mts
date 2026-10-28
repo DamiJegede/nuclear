@@ -94,7 +94,7 @@ const provider: AchProvider = {
   submit: async (key, items) => { if (submitDown) throw new Error("bank unreachable"); seen.push(...items.map((i) => ({ ...i }))); return { reference: `t-${key}` }; },
   outcomes: async (_r, items) => items.map((i) => (i.rail === "instant" && instantRejected ? { itemId: i.itemId, outcome: "retry_ach" as const } : { itemId: i.itemId, outcome: "settled" as const })),
 };
-await q("update banks set instant = true");
+await q("update routing_numbers set instant = true");
 const F = await merchant("Foxtrot Foods", "fox@x.test"); await sale(F, 800);
 const rf = await closeOut(env, sql, F.account_id, provider);
 eq("a bank that takes instant payments is paid instantly, right away", [rf.ok && rf.settlement.rail, rf.ok && rf.settlement.arrival, rf.ok && rf.settlement.status, seen.map((i) => [i.rail, i.serviceType])], ["instant", "instant", "settled", [["instant", "SameDay"]]]);

@@ -74,7 +74,7 @@ export function Overview({ api, onError, needsLogo = 0, openBanks }: { api: Api;
   return (
     <section>
       {needsLogo > 0 && openBanks && (
-        <p className="notice-bar" role="status">{needsLogo} bank{needsLogo === 1 ? " needs" : "s need"} a logo. <a href="/banks" onClick={(e) => { e.preventDefault(); openBanks(); }}>Add Logos</a></p>
+        <p className="notice-bar" role="status">{needsLogo} bank item{needsLogo === 1 ? " needs" : "s need"} attention (logos to add or routing numbers to link). <a href="/banks" onClick={(e) => { e.preventDefault(); openBanks(); }}>Open Banks</a></p>
       )}
       <div className="head">
         <h1>System overview</h1>

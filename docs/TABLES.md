@@ -4,7 +4,7 @@ Updated October 23, 2026. This is the schema the code is built on: one initial m
 
 ## Current decisions
 
-**30 tables.** Identity and access: accounts, balances, wallets, devices, businesses, banks, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
+**31 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
 
 - **`transactions` is the source of truth and is immutable.** Every transaction is from one wallet to one wallet and is written once with a final outcome, `completed` or `declined`; nothing ever updates it. A correction is a new transaction (refund, fund_return, settle_return, adjustment). There is no ledger table: balances are checked against what the transactions did (reconciliation, below).
 - **Every account has a balance** (consumers, merchants, organizations, and the system account).
@@ -276,22 +276,35 @@ Every sign-in failure (unknown id, wrong password, wrong code, disabled, locked)
 | created_at | Creation timestamp. |
 | last_used_at | Nullable last use. |
 
-## banks
+## institutions
 
-One row per routing number (migration 0005), shared by every payout bank and, later, every linked consumer bank, so a bank is looked up once and not once per account (`lib/banks.ts`). Created the first time anyone adds an account at that routing number.
+The banks people know (Chase, Wells Fargo...), one row each (migration 0006): the display name and the logo, uploaded once however many routing numbers the institution has. Seeded from `scripts/institutions-top50.json` with `scripts/seed-institutions.mjs`; admins add more on the Banks page.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key. |
+| name | Display name, unique (1-120 characters). |
+| icon | R2 key `institutions/<id>-<epoch ms>.png` (CHECK), uploaded by an admin; the API returns the full URL. The bank directory has no pictures. |
+| domain | The institution's website (`chase.com`), used to find a logo. |
+| aliases | `text[]` of lower-case names the bank directory uses for it ("jpmorgan chase"); a routing number whose directory name contains one as whole words is linked to this institution automatically (the longest match wins). |
+| created_at, updated_at | Timestamps. |
+
+## routing_numbers
+
+One row per 9-digit routing number (migration 0005 as `banks`, renamed in 0006), shared by every bank account that uses it, so a number is looked up once and not once per account (`lib/banks.ts`). Created the first time anyone adds an account at that number, or by an admin. The facts about instant payments belong here and not on the institution: FedNow registers each routing number separately.
 
 | Field | Description |
 | --- | --- |
 | id | Primary key. |
 | routing_number | Unique, 9 digits (the ABA checksum is checked before an account is saved). |
-| name | The institution's name: filled from the bank directory when empty, editable by an admin (the admin's name is never overwritten). NULL when no directory entry exists (a bank that is not on an instant network has none). |
-| icon | R2 key `banks/<id>-<epoch ms>.png` (CHECK), uploaded by an admin on the Banks page; the API returns the full URL. The directory has no pictures. |
-| instant | `true` = the bank receives instant payments (RTP `CRDT`, FedNow `CTRO`/`CTSR`), `false` = it does not, **NULL = not known** (never checked, or the lookup failed). NULL is treated as "not instant" when a payout is sent. |
-| networks | `{RTP, FedNow}` subset the bank takes (a FedNow-only payout is capped at $500K, RTP $1M). |
-| refreshed_at | When the directory was last read **successfully**; an answer older than 30 days is read again (at bank-add, and by the nightly job for banks in use). |
+| directory_name | The name the bank directory gives this number (e.g. `JPMORGAN CHASE BANK, NATIONAL ASSOCIATION`); NULL when it has no directory entry (a bank on no instant network). Used to link the number to its institution. |
+| institution_id | Nullable foreign key to `institutions` (ON DELETE SET NULL). Set by name matching or by an admin, and **never replaced by a later lookup**. The name and logo a merchant sees come from the institution; until it is linked the directory's name is shown with a generic icon. |
+| instant | `true` = receives instant payments (RTP `CRDT`, FedNow `CTRO`/`CTSR`), `false` = it does not, **NULL = not known** (never checked, or the lookup failed). NULL is treated as "not instant" when a payout is sent. |
+| networks | `{RTP, FedNow}` subset the number takes (a FedNow-only payout is capped at $500K, RTP $1M). |
+| refreshed_at | When the directory was last read **successfully**; an answer older than 30 days is read again (at bank-add, and by the nightly job for numbers in use). |
 | created_at, updated_at | Timestamps. |
 
-A failed lookup never blocks a bank: it is saved with `instant` NULL and tried again after an hour (an attempt marker per routing number in `system`, key `bank_lookup:<routing>`), so a rush of merchants adding one bank causes one lookup.
+A failed lookup never blocks a bank: it is saved with `instant` NULL and tried again after an hour (an attempt marker per routing number in `system`, key `bank_lookup:<routing>`), so a rush of merchants adding one bank causes one lookup. A bank account reaches its institution through `bank_accounts.routing_number_id` then `routing_numbers.institution_id` (two primary-key joins; settlement only needs `routing_numbers.instant`).
 
 ## bank_accounts
 
@@ -302,7 +315,7 @@ A failed lookup never blocks a bank: it is saved with `instant` NULL and tried a
 | routing_number | The 9-digit routing number, stored as **plain text** (it is public: the Fed publishes the directory; migrations 0027/0028 enforce the format). Customer sandbox loads hold the placeholder `SANDBOX`. Not returned by the merchant endpoints (only `last4` of the account number is). |
 | account_number | The account number, stored **encrypted** (AES-256-GCM, `v1.` prefix, bound to the account and field), kept so settlements can be originated and the payout bank can move to another provider. Only `last4` is ever shown; full reads go through one audited function. |
 | last4 | Last four digits for display. |
-| bank_id | Nullable foreign key to `banks` (migration 0005): the bank this routing number belongs to. NULL only for the `SANDBOX` placeholder. |
+| routing_number_id | Nullable foreign key to `routing_numbers` (migration 0005 as `bank_id`, renamed in 0006). NULL only for the `SANDBOX` placeholder. |
 | provider_account_id | Nullable linked-bank-account resource identifier assigned by the banking provider. |
 | status | Bank-link operational status. |
 | created_at | Creation timestamp. |

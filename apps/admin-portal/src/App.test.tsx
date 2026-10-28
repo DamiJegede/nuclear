@@ -49,7 +49,8 @@ function fakeApi(over: Partial<Api> = {}): Api {
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
     merchants: vi.fn().mockResolvedValue(pg("merchants", [])),
-    banks: vi.fn().mockResolvedValue({ banks: [], next_cursor: null, total: 0, needs_logo: 0 }),
+    bankAttention: vi.fn().mockResolvedValue({ needs_logo: 0, unlinked: 0 }),
+    institutions: vi.fn().mockResolvedValue({ institutions: [], next_cursor: null, total: 0, needs_logo: 0, unlinked: 0 }),
     users: vi.fn().mockResolvedValue(pg("users", [])),
     transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 0, completed_volume: 0 }, transactions: [], next_cursor: null }),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
@@ -1081,13 +1082,13 @@ describe("roles", () => {
     expect(navLinks()).toEqual(links);
   });
 
-  it("a role with the Banks page sees it with a badge for the banks that need a logo, and the Overview says so too", async () => {
-    const banks = vi.fn().mockResolvedValue({ banks: [], next_cursor: null, total: 0, needs_logo: 2 });
-    const user = await signIn(fakeApi({ banks }), vi.fn().mockResolvedValue(as("admin", ["overview", "banks"])));
+  it("a role with the Banks page sees it with a badge for what needs attention (logos to add, routing numbers to link), and the Overview says so too", async () => {
+    const bankAttention = vi.fn().mockResolvedValue({ needs_logo: 1, unlinked: 1 });
+    const user = await signIn(fakeApi({ bankAttention }), vi.fn().mockResolvedValue(as("admin", ["overview", "banks"])));
     const link = await screen.findByRole("link", { name: /^Banks/ });
-    expect(await within(link).findByLabelText("2 banks need a logo")).toHaveTextContent("2");
-    expect(await screen.findByText(/2 banks need a logo\./)).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: "Add Logos" }));
+    expect(await within(link).findByLabelText("2 banks need attention")).toHaveTextContent("2");
+    expect(await screen.findByText(/2 bank items need attention/)).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Open Banks" }));
     expect(await screen.findByRole("heading", { name: "Banks" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/banks");
   });

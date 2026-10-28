@@ -6,13 +6,13 @@ import type { Env } from "../env";
  * into the full public URL here. A new upload gets a new key, so URLs can be cached forever and the old object is deleted.
  * Every other file (business documents) goes to the private bucket `nuclear-uploads` (see lib/uploads.ts).
  */
-export const IMAGE_FOLDERS = ["tags", "shop", "accounts", "wallets", "products", "banks"] as const;
+export const IMAGE_FOLDERS = ["tags", "shop", "accounts", "wallets", "products", "institutions"] as const;
 export type ImageFolder = (typeof IMAGE_FOLDERS)[number];
 export const MAX_IMAGE_BYTES = 262_144;
 export const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 export const isPng = (b: Uint8Array) => b.length >= 8 && PNG_SIGNATURE.every((x, i) => b[i] === x);
 
-const IMAGE_KEY = /^(tags|shop|accounts|wallets|products|banks)\/[0-9a-f-]{36}-\d+\.(png|jpg)$/;
+const IMAGE_KEY = /^(tags|shop|accounts|wallets|products|institutions)\/[0-9a-f-]{36}-\d+\.(png|jpg)$/;
 export const isImageKey = (k: string | null | undefined): k is string => !!k && IMAGE_KEY.test(k);
 export const newImageKey = (folder: ImageFolder, id: string, ext: "png" | "jpg") => `${folder}/${id}-${Date.now()}.${ext}`;
 

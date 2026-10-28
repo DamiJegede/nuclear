@@ -18,7 +18,8 @@ import { MAX_DOWNLOAD_BYTES, deleteUpload, downloadExt, getUpload, mimeOfPath, p
 import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
-import { bankList } from "../lib/adminBanks";
+import { attention, institutionList, routingList } from "../lib/adminBanks";
+import { abaOk, autoLinkInstitutions } from "../lib/banks";
 import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { decodeTimeCursor, pageLimit } from "../lib/paging";
@@ -170,8 +171,7 @@ admin.use("/merchants/*", requirePage("merchants"));
 admin.use("/terminals/*", requirePage("merchants"));
 admin.use("/organizations", requirePage("organizations"));
 admin.use("/organizations/*", requirePage("organizations"));
-admin.use("/banks", requirePage("banks"));
-admin.use("/banks/*", requirePage("banks"));
+for (const p of ["/banks", "/institutions", "/routing-numbers"]) { admin.use(p, requirePage("banks")); admin.use(`${p}/*`, requirePage("banks")); }
 admin.use("/users", requirePage("users"));
 admin.use("/users/*", requirePage("users"));
 admin.use("/wallets/*", requirePage("users"));
@@ -462,29 +462,68 @@ admin.get("/users", async (c) => {
   return c.json(await userList(c.get("sql"), q.data.q || null, q.data.limit, cursor));
 });
 
-// ---- Banks: every routing number we have seen (lib/banks.ts), with its name and logo. Admin and Merchants roles upload logos; others only look.
-const bankQuery = z.object({ q: z.string().trim().max(80).optional(), needs_logo: z.enum(["1", "true"]).optional(), limit: pageLimit, cursor: z.string().max(200).optional() });
-admin.get("/banks", async (c) => {
+// ---- Banks: institutions (Chase, Wells Fargo...: name and logo, uploaded once) and the routing numbers we have seen (lib/banks.ts), each linked to an
+// institution by name or by an admin. Admin and Merchants roles change them; others only look.
+const bankQuery = z.object({ q: z.string().trim().max(80).optional(), needs_logo: z.enum(["1", "true"]).optional(), unlinked: z.enum(["1", "true"]).optional(), limit: pageLimit, cursor: z.string().max(200).optional() });
+admin.get("/banks/attention", async (c) => c.json(await attention(c.get("sql"))));
+admin.get("/institutions", async (c) => {
   const q = bankQuery.safeParse(c.req.query());
   const cursor = q.success ? decodeTimeCursor(q.data.cursor) : null;
   if (!q.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
-  return c.json(await bankList(c.get("sql"), q.data.q || null, !!q.data.needs_logo, q.data.limit, cursor));
+  return c.json(await institutionList(c.get("sql"), q.data.q || null, !!q.data.needs_logo, q.data.limit, cursor));
+});
+admin.get("/routing-numbers", async (c) => {
+  const q = bankQuery.safeParse(c.req.query());
+  const cursor = q.success ? decodeTimeCursor(q.data.cursor) : null;
+  if (!q.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await routingList(c.get("sql"), q.data.q || null, !!q.data.unlinked, q.data.limit, cursor));
 });
 const bankWriteDenied = (c: any) => {
   const a = c.get("adminAuth");
   return a.kind === "admin" && !BANK_WRITERS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
 };
-admin.patch("/banks/:id", async (c) => {
-  const denied = bankWriteDenied(c); if (denied) return denied;
-  const id = merchantId.safeParse(c.req.param("id")), b = z.object({ name: z.string().trim().min(1).max(120) }).safeParse(await c.req.json().catch(() => null));
-  if (!id.success) return c.json({ error: "not_found" }, 404);
-  if (!b.success) return c.json({ error: "invalid_request" }, 400);
-  const [r] = await c.get("sql")<{ routing_number: string }[]>`update banks set name = ${b.data.name} where id = ${id.data} returning routing_number`;
-  if (!r) return c.json({ error: "not_found" }, 404);
-  await adminLog(c, "bank.renamed", { type: "bank", id: id.data, label: b.data.name }, { routing_number: r.routing_number });
-  return c.body(null, 204);
+const aliasList = z.array(z.string().trim().toLowerCase().min(2).max(80)).max(20).transform((a) => [...new Set(a)]);
+const institutionBody = z.object({
+  name: z.string().trim().min(1).max(120),
+  domain: z.string().trim().toLowerCase().regex(/^[a-z0-9.-]{3,100}$/).nullish().transform((v) => v ?? null),
+  aliases: aliasList.default([]),
 });
-admin.put("/banks/:id/icon", async (c) => {
+admin.post("/institutions", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const b = institutionBody.safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql");
+  const [i] = await sql<{ id: string }[]>`
+    insert into institutions (name, domain, aliases) values (${b.data.name}, ${b.data.domain}, ${`{${b.data.aliases.map((a) => `"${a.replace(/["\\]/g, "")}"`).join(",")}}`}::text[])
+    on conflict (name) do nothing returning id`;
+  if (!i) return c.json({ error: "institution_exists" }, 409);
+  const linked = await autoLinkInstitutions(sql);
+  await adminLog(c, "institution.created", { type: "institution", id: i.id, label: b.data.name }, { linked });
+  return c.json({ institution: { id: i.id }, linked }, 201);
+});
+admin.patch("/institutions/:id", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id")), b = institutionBody.partial().safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!b.success || Object.keys(b.data).length === 0) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql");
+  const d = b.data;
+  try {
+    const [r] = await sql<{ name: string }[]>`
+      update institutions set name = coalesce(${d.name ?? null}, name),
+        domain = ${"domain" in d ? d.domain ?? null : sql`domain`},
+        aliases = ${d.aliases ? `{${d.aliases.map((a) => `"${a.replace(/["\\]/g, "")}"`).join(",")}}` : sql`aliases`}${d.aliases ? sql`::text[]` : sql``}
+       where id = ${id.data} returning name`;
+    if (!r) return c.json({ error: "not_found" }, 404);
+    const linked = d.aliases || d.name ? await autoLinkInstitutions(sql) : 0;
+    await adminLog(c, "institution.updated", { type: "institution", id: id.data, label: r.name }, { fields: Object.keys(d), linked });
+    return c.json({ linked });
+  } catch (err) {
+    if ((err as { code?: string }).code === "23505") return c.json({ error: "institution_exists" }, 409);
+    throw err;
+  }
+});
+admin.put("/institutions/:id/icon", async (c) => {
   const denied = bankWriteDenied(c); if (denied) return denied;
   const id = merchantId.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);
@@ -495,13 +534,39 @@ admin.put("/banks/:id/icon", async (c) => {
   if (bytes.length > MAX_IMAGE_BYTES) return c.json({ error: "image_too_large" }, 413);
   if (!isPng(bytes)) return c.json({ error: "invalid_image" }, 400);
   const sql = c.get("sql");
-  const [m] = await sql<{ name: string | null; routing_number: string; icon: string | null }[]>`select name, routing_number, icon from banks where id = ${id.data}`;
+  const [m] = await sql<{ name: string; icon: string | null }[]>`select name, icon from institutions where id = ${id.data}`;
   if (!m) return c.json({ error: "not_found" }, 404);
-  const key = newImageKey("banks", id.data, "png");
+  const key = newImageKey("institutions", id.data, "png");
   if (!(await putPng(c.env, key, bytes))) return c.json({ error: "storage_unavailable" }, 503);
-  await sql`update banks set icon = ${key} where id = ${id.data}`;
+  await sql`update institutions set icon = ${key} where id = ${id.data}`;
   if (m.icon) await deleteImage(c.env, m.icon);
-  await adminLog(c, "bank.icon_uploaded", { type: "bank", id: id.data, label: m.name ?? m.routing_number });
+  await adminLog(c, "institution.icon_uploaded", { type: "institution", id: id.data, label: m.name });
+  return c.body(null, 204);
+});
+admin.post("/routing-numbers", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const b = z.object({ routing_number: z.string().trim().regex(/^\d{9}$/), institution_id: uuid.nullish() }).safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  if (!abaOk(b.data.routing_number)) return c.json({ error: "invalid_routing_number" }, 422);
+  const sql = c.get("sql");
+  if (b.data.institution_id && !(await sql`select 1 from institutions where id = ${b.data.institution_id}`).length) return c.json({ error: "not_found" }, 404);
+  const [r] = await sql<{ id: string }[]>`
+    insert into routing_numbers (routing_number, institution_id) values (${b.data.routing_number}, ${b.data.institution_id ?? null})
+    on conflict (routing_number) do nothing returning id`;
+  if (!r) return c.json({ error: "routing_number_exists" }, 409);
+  await adminLog(c, "routing_number.added", { type: "routing_number", id: r.id, label: b.data.routing_number });
+  return c.json({ routing_number: { id: r.id } }, 201);
+});
+admin.put("/routing-numbers/:id/institution", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id")), b = z.object({ institution_id: uuid.nullable() }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql");
+  if (b.data.institution_id && !(await sql`select 1 from institutions where id = ${b.data.institution_id}`).length) return c.json({ error: "not_found" }, 404);
+  const [r] = await sql<{ routing_number: string }[]>`update routing_numbers set institution_id = ${b.data.institution_id} where id = ${id.data} returning routing_number`;
+  if (!r) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "routing_number.linked", { type: "routing_number", id: id.data, label: r.routing_number }, { institution_id: b.data.institution_id });
   return c.body(null, 204);
 });
 
