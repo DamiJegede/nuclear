@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nuclear: Zero Fees. Zero Chargebacks. Paid Today.</title>
+  <meta name="description" content="Take payments with zero transaction fees and zero chargebacks, get same-day settlements, and run your business on free software. Sign up in minutes.">
+  <meta name="theme-color" content="#070a12">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='7' fill='%2339ffa0'/%3E%3Cg fill='none' stroke='%2339ffa0' stroke-width='3'%3E%3Cellipse cx='32' cy='32' rx='26' ry='10'/%3E%3Cellipse cx='32' cy='32' rx='26' ry='10' transform='rotate(60 32 32)'/%3E%3Cellipse cx='32' cy='32' rx='26' ry='10' transform='rotate(120 32 32)'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <canvas id="atoms" aria-hidden="true"></canvas>
+  <div class="glow" id="glow" aria-hidden="true"></div>
+
+  <header class="nav" id="nav">
+    <a class="brand" href="#top" aria-label="Nuclear home">
+      <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true"><circle cx="32" cy="32" r="7" fill="currentColor"/><g fill="none" stroke="currentColor" stroke-width="3"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g></svg>
+      <span>Nuclear</span>
+    </a>
+    <nav aria-label="Main">
+      <a href="#savings">Savings</a>
+      <a href="#software">Free software</a>
+      <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-sm" data-signup href="#">Sign up free</a>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <p class="pill"><span class="dot"></span> Now enrolling merchants</p>
+      <h1>Keep <span class="grad">every dollar</span><br>you earn.</h1>
+      <p class="lead">Take payments with <b>zero fees</b> and <b>zero chargebacks</b>. Get paid <b>the same day</b>. Run your whole business on software that costs nothing.</p>
+      <div class="cta-row">
+        <a class="btn btn-big" data-signup href="#">Sign up free <span aria-hidden="true">→</span></a>
+        <a class="btn btn-ghost btn-big" href="#savings">See what you'd save</a>
+      </div>
+      <p class="fine">Takes about five minutes. No monthly fee. No contract.</p>
+
+      <div class="stage" aria-label="Interactive demo: tap to pay">
+        <div class="terminal" id="terminal">
+          <div class="screen">
+            <div class="amount" id="t-amount">$12.50</div>
+            <div class="status" id="t-status">Waiting for tap…</div>
+          </div>
+          <div class="rings" aria-hidden="true"><i></i><i></i><i></i></div>
+        </div>
+        <div class="band" id="band" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="26" height="26"><circle cx="32" cy="32" r="7" fill="currentColor"/><g fill="none" stroke="currentColor" stroke-width="3"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g></svg>
+          <span>Nuclear band</span>
+        </div>
+        <button class="btn tap" id="tap" type="button">Tap to pay</button>
+        <ul class="receipt" id="receipt" aria-live="polite">
+          <li>Fees <b>$0.00</b></li>
+          <li>Chargebacks <b>0</b></li>
+          <li>Settles <b>today</b></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Why merchants switch">
+      <article class="card reveal"><div class="big"><span data-count="0" data-prefix="$">$0</span></div><h3>Transaction fees</h3><p>No percentage. No per-swipe charge. Every sale lands in full.</p></article>
+      <article class="card reveal"><div class="big"><span data-count="0">0</span></div><h3>Chargebacks</h3><p>Customers pay from a funded Nuclear balance, not a credit card, so there is no card dispute to lose.</p></article>
+      <article class="card reveal"><div class="big">Same <span class="grad">day</span></div><h3>Settlements</h3><p>Your day's takings are sent to your bank account, not held for days.</p></article>
+    </section>
+
+    <section class="section" id="savings">
+      <div class="head reveal"><p class="eyebrow">The math</p><h2>What are you paying in fees right now?</h2><p>Slide to your numbers. With Nuclear that line is zero.</p></div>
+      <div class="calc reveal">
+        <div class="controls">
+          <label>Monthly card sales <output id="o-sales">$40,000</output>
+            <input id="sales" type="range" min="2000" max="500000" step="1000" value="40000">
+          </label>
+          <label>Average sale <output id="o-avg">$18</output>
+            <input id="avg" type="range" min="3" max="150" step="1" value="18">
+          </label>
+        </div>
+        <div class="result" aria-live="polite">
+          <div class="col bad"><span>You pay in card fees</span><b id="r-fees">$0</b><small>per year</small><div class="bar"><i id="bar-fees"></i></div></div>
+          <div class="col good"><span>With Nuclear</span><b>$0</b><small>per year</small><div class="bar"><i style="width:0"></i></div></div>
+          <p class="keep">You'd keep <b id="r-keep">$0</b> more every year.</p>
+        </div>
+        <p class="fine">Illustrative estimate assuming a typical card rate of 2.9% + 30¢ per sale. Your current rate may be higher or lower.</p>
+      </div>
+      <p class="center"><a class="btn btn-big" data-signup href="#">Start keeping it <span aria-hidden="true">→</span></a></p>
+    </section>
+
+    <section class="section" id="software">
+      <div class="head reveal"><p class="eyebrow">Free software</p><h2>Run the whole business from one place. Free.</h2><p>No add-on fees, no per-seat pricing. It comes with your account.</p></div>
+      <div class="tabs reveal" role="tablist" aria-label="Software features">
+        <button role="tab" aria-selected="true" aria-controls="p-catalog" id="t-catalog">Catalog</button>
+        <button role="tab" aria-selected="false" aria-controls="p-team" id="t-team">Team &amp; terminals</button>
+        <button role="tab" aria-selected="false" aria-controls="p-orders" id="t-orders">Orders &amp; refunds</button>
+        <button role="tab" aria-selected="false" aria-controls="p-payroll" id="t-payroll">Payroll</button>
+      </div>
+      <div class="panels reveal">
+        <div class="panel" role="tabpanel" id="p-catalog" aria-labelledby="t-catalog">
+          <div class="copy"><h3>Your menu, your prices, always in sync</h3><p>Build a catalog with categories, discounts and stock counts. Items sell out on their own when you run low, and your best seller is one glance away.</p></div>
+          <div class="mock"><div class="row"><span>Flat white</span><b>$4.50</b></div><div class="row"><span>Banana bread</span><b>$3.75</b></div><div class="row"><span>Cold brew <em>12 left</em></span><b>$5.00</b></div><div class="row"><span>Breakfast combo <em>10% off</em></span><b>$7.40</b></div></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-team" aria-labelledby="t-team" hidden>
+          <div class="copy"><h3>Add terminals and staff in minutes</h3><p>Connect a terminal to take taps at the counter. Give each person the right access: who can sell, who can refund. Sign a lost device out remotely.</p></div>
+          <div class="mock"><div class="row"><span>Front counter <em>online</em></span><i class="ok">●</i></div><div class="row"><span>Patio <em>online</em></span><i class="ok">●</i></div><div class="row"><span>Maya · manager <em>can refund</em></span><b>Write</b></div><div class="row"><span>Leo · barista</span><b>Sell only</b></div></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-orders" aria-labelledby="t-orders" hidden>
+          <div class="copy"><h3>Every sale in one clean feed</h3><p>See today's takings, search by day, and issue a full or partial refund in a tap. You decide, because there is no card network to decide for you.</p></div>
+          <div class="mock"><div class="row"><span>#1042 · 2 items</span><b>$9.25</b></div><div class="row"><span>#1041 · refund <em>partial</em></span><b class="neg">−$3.75</b></div><div class="row"><span>#1040 · 1 item</span><b>$4.50</b></div><div class="row total"><span>Today so far</span><b>$412.60</b></div></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-payroll" aria-labelledby="t-payroll" hidden>
+          <div class="copy"><h3>Pay your team without the paperwork</h3><p>Add your people once and pay them in a few clicks. Upload a spreadsheet or set a schedule, and everyone sees their money right away.</p></div>
+          <div class="mock"><div class="row"><span>Maya Brooks</span><b>$1,420.00</b></div><div class="row"><span>Leo Park</span><b>$980.00</b></div><div class="row"><span>Ines Duarte</span><b>$1,115.00</b></div><div class="row total"><span>Next run · Friday</span><b>$3,515.00</b></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="head reveal"><p class="eyebrow">How it works</p><h2>From sign-up to paid in three steps</h2></div>
+      <ol class="steps">
+        <li class="card reveal"><span class="n">1</span><h3>Sign up</h3><p>Tell us about your business and upload your documents. We review and approve you.</p></li>
+        <li class="card reveal"><span class="n">2</span><h3>Take a tap</h3><p>Customers pay with their Nuclear band, card or phone. It works in a blink.</p></li>
+        <li class="card reveal"><span class="n">3</span><h3>Get paid today</h3><p>Your balance is settled to your bank, same day. See every cent in your dashboard.</p></li>
+      </ol>
+    </section>
+
+    <section class="section" id="faq">
+      <div class="head reveal"><p class="eyebrow">Questions</p><h2>Straight answers</h2></div>
+      <div class="faq reveal">
+        <details><summary>Is it really zero transaction fees?</summary><p>Yes. We don't take a percentage or a per-sale charge from your payments. What the customer pays is what you receive.</p></details>
+        <details><summary>Why are there no chargebacks?</summary><p>Customers pay from money they've already added to their Nuclear balance. There's no credit card behind the payment, so there's no card dispute process. If a customer needs their money back, you issue a refund yourself.</p></details>
+        <details><summary>How fast do I get paid?</summary><p>Settlements go out the same day as your sales. Your dashboard shows each payout and its status.</p></details>
+        <details><summary>What does the software cost?</summary><p>Nothing. Catalog, terminals, staff, orders, refunds and payroll are all included with your account.</p></details>
+        <details><summary>What do I need to get started?</summary><p>A business bank account and a few documents. Create your account, upload them, and we'll review your application.</p></details>
+      </div>
+    </section>
+
+    <section class="final">
+      <h2 class="reveal">Ready to stop paying fees?</h2>
+      <p class="reveal">Join Nuclear today. Sign-up takes about five minutes.</p>
+      <p class="reveal"><a class="btn btn-big" data-signup href="#">Sign up free <span aria-hidden="true">→</span></a></p>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="yr">2026</span> Nuclear</span>
+    <span><a data-signin href="#">Merchant sign in</a></span>
+  </footer>
+
+  <a class="sticky" data-signup href="#">Sign up free <span aria-hidden="true">→</span></a>
+  <script src="script.js"></script>
+</body>
+</html>

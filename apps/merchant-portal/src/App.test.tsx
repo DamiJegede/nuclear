@@ -53,6 +53,14 @@ describe("sign-in", () => {
     expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Refunds"]);
   });
 
+  it("opens straight on the sign-up form when the marketing site links with ?signup", () => {
+    window.history.replaceState(null, "", "/?signup=1");
+    try {
+      render(<App makeApi={() => fakeApi()} signIn={vi.fn()} signUp={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
+    } finally { window.history.replaceState(null, "", "/"); }
+  });
+
   it("explains a wrong password and clears it", async () => {
     const user = userEvent.setup();
     render(<App makeApi={() => fakeApi()} signIn={vi.fn().mockRejectedValue(new ApiError(401, "invalid_credentials"))} signUp={vi.fn()} />);

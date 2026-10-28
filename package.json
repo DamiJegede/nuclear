@@ -24,6 +24,7 @@
     "add-admin": "node scripts/add-admin.mjs",
     "manage-admin": "node scripts/manage-admin.mjs",
     "test:api": "npm run test -w @nuclear/api --",
-    "test:admin": "npm run test -w @nuclear/admin-portal"
+    "test:admin": "npm run test -w @nuclear/admin-portal",
+    "website:dev": "python3 -m http.server 4173 --bind 127.0.0.1 --directory apps/website"
   }
 }

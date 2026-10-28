@@ -21,7 +21,7 @@ The money core, the schema and the sessions were rebuilt on a local Postgres fol
 | --- | --- | --- |
 | API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `babbefcf` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `003e2258` |
-| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `6c98b572` |
+| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5f9e451a` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
 | Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (3 migrations) | |

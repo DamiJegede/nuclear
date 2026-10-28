@@ -12,7 +12,7 @@ type Props = {
 
 /** Sign in with email and password, or create a business account (it starts pending until it is approved). */
 export function Login({ signIn, signUp, onSignedIn, notice, requestPasswordReset = realRequestReset }: Props) {
-  const [mode, setMode] = useState<"in" | "up" | "forgot">("in");
+  const [mode, setMode] = useState<"in" | "up" | "forgot">(() => (new URLSearchParams(window.location.search).has("signup") ? "up" : "in"));   // the marketing site links straight to the sign-up form
   const [sent, setSent] = useState(false);
   usePageTitle(mode === "in" ? "Sign In" : mode === "up" ? "Create Account" : "Forgot Password");
   const [name, setName] = useState("");
