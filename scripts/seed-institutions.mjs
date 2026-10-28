@@ -3,7 +3,7 @@
 // each one's logo from a folder of 256 x 256 PNGs named after the institution (jpmorgan-chase.png ...). Safe to run again: an institution that exists is
 // kept, and a logo is only uploaded when it has none (or with --force). Routing numbers that already exist are linked by name as institutions appear.
 //
-//   ADMIN_API_TOKEN=... node scripts/seed-institutions.mjs <logos-dir> [--force] [--dry-run]     (API_URL overrides the target)
+//   ADMIN_API_TOKEN=... node scripts/seed-institutions.mjs <logos-dir> [--force] [--dry-run] [--list=institutions-neobanks.json]     (API_URL overrides the target)
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,8 +13,9 @@ const dir = args.find((a) => !a.startsWith("--"));
 const force = args.includes("--force"), dry = args.includes("--dry-run");
 const API = (process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev").replace(/\/$/, "");
 const OP = process.env.ADMIN_API_TOKEN;
-if (!dir || !OP) { console.error("usage: ADMIN_API_TOKEN=... node scripts/seed-institutions.mjs <logos-dir> [--force] [--dry-run]"); process.exit(2); }
-const list = JSON.parse(readFileSync(fileURLToPath(new URL("./institutions-top50.json", import.meta.url)), "utf8"));
+if (!dir || !OP) { console.error("usage: ADMIN_API_TOKEN=... node scripts/seed-institutions.mjs <logos-dir> [--force] [--dry-run] [--list=institutions-neobanks.json]"); process.exit(2); }
+const listName = args.find((a) => a.startsWith("--list="))?.slice(7) ?? "institutions-top50.json";
+const list = JSON.parse(readFileSync(fileURLToPath(new URL("./" + listName, import.meta.url)), "utf8"));
 const slug = (n) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 async function call(method, path, body, type) {
