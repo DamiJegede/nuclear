@@ -15,13 +15,15 @@ The money core, the schema and the sessions were rebuilt on a local Postgres fol
 
 **The architecture is final for V1 (owner, 2026-10-23)** after a 14-day, 100,000-user, 12-million-transaction endurance run with drift 0 on every night (see SCHEME-V2.md, "Endurance run"). Remaining work is features, apps and operations, not the money core.
 
+**Banks and close-out (2026-10-28):** `banks` table (instant check by routing number, names, logos uploaded on the admin Banks page), Close Out for merchants (one settlement a day, instant payment with same-day ACH fallback), migration 0005. The real bank directory and instant payments need the banking server and Cross River sandbox access (not set up): until then every bank's `instant` stays unknown and payouts go by ACH in sandbox.
+
 ## Live today (all deployed)
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `babbefcf` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `003e2258` |
-| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `5f9e451a` |
+| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `b2f563f2` |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `89af73fe` |
+| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `dadc40ba` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |
 | MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
 | Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (3 migrations) | |

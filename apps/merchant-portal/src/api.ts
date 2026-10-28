@@ -55,8 +55,12 @@ export type HandleLookup = { account_id: string; handle: string; type: "B" | "C"
 export type Overview = {
   balance: number; balance_pending: number; terminals: { count: number; paired: number }; pending_refunds: { count: number; amount: number };
   staff: { count: number; writers: number }; open_orders: number; city: string | null; state: string | null; categories: number; products: number; best_seller: { name: string; sold_today: number } | null;
-  today: { transactions: number }; yesterday: { net: number };
+  today: { transactions: number; since: string | null; closed_out_at: string | null }; yesterday: { net: number };
+  payout_bank: { last4: string; institution: Institution | null } | null;
 };
+/** A bank by routing number: its name and logo when we have them, and whether it takes instant payouts (null = not known). */
+export type Institution = { id: string; name: string | null; icon: string | null; instant: boolean | null };
+export type CloseOutResult = { settlement: { id: string; date: string; amount: number; rail: "instant" | "ach"; status: string; arrival: "instant" | "today" | "next_business_day" } };
 export type TxKind = "all" | "payments" | "refunds" | "pending";
 export type TxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; via: "tap" | "pass" | "app" | null;
@@ -69,8 +73,8 @@ export type TxPage = {
 export type DayRange = { from?: string; to?: string };
 export type Profile = { legal_name: string; display_name: string; tax_id_last4: string | null; address: string | null; city: string | null; state: string | null; post_code: string | null; country: string | null; website: string | null };
 export type ProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
-export type PayoutBank = { id: string; last4: string; status: string; created_at: string };
-export type Payout = { id: string; kind: "payout" | "collection"; amount: number; status: string; status_code: string | null; timestamp: string; completed_at: string | null; bank_last4: string | null };
+export type PayoutBank = { id: string; last4: string; status: string; created_at: string; institution: Institution | null };
+export type Payout = { id: string; kind: "payout" | "collection"; amount: number; status: string; status_code: string | null; timestamp: string; completed_at: string | null; bank_last4: string | null; source?: "nightly" | "close_out"; rail?: "instant" | "ach" };
 export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
 export type Product = {
   id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
@@ -147,6 +151,7 @@ export function createApi(token: string, base: string = API_URL) {
     bank: async () => (await request<{ bank: PayoutBank | null }>("GET", "/v1/business/bank")).bank,
     saveBank: async (input: { routing_number: string; account_number: string }) => (await request<{ bank: PayoutBank }>("PUT", "/v1/business/bank", input)).bank,
     payouts: async () => (await request<{ payouts: Payout[] }>("GET", "/v1/business/payouts")).payouts,
+    closeOut: async () => (await request<CloseOutResult>("POST", "/v1/business/close-out")).settlement,
     removeBank: () => request<null>("DELETE", "/v1/business/bank"),
     categories: async () => (await request<{ categories: Category[] }>("GET", "/v1/business/categories")).categories,
     createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,

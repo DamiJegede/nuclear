@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { App } from "./App";
@@ -24,7 +24,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     staff: vi.fn().mockResolvedValue([]),
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
-    overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0 }, yesterday: { net: 0 } }),
+    overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0, since: null, closed_out_at: null }, yesterday: { net: 0 }, payout_bank: null }),
     payouts: vi.fn().mockResolvedValue([]),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
@@ -367,6 +367,93 @@ describe("business details and payout bank", () => {
     expect(within(dlg).getByLabelText("Routing number")).toHaveValue("110000000");
     await user.click(within(dlg).getByRole("button", { name: "Save Bank" }));
     expect(saveBank).toHaveBeenCalledWith({ routing_number: "110000000", account_number: "000123456789" });
+  });
+});
+
+describe("close out and the payout bank", () => {
+  const OV = { balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, yesterday: { net: 0 } };
+  const BANK = { last4: "4321", institution: { id: "k1", name: "Test National Bank", icon: null, instant: true } };
+  const today = (closed: string | null = null) => ({ transactions: 3, since: closed, closed_out_at: closed });
+
+  it("Close Out asks first (the amount, the bank, how fast), then says the day is closed and when it arrives", async () => {
+    const closeOut = vi.fn().mockResolvedValue({ id: "s1", date: "2026-10-28", amount: 125000, rail: "instant", status: "completed", arrival: "instant" });
+    const overview = vi.fn().mockResolvedValue({ ...OV, today: today(), payout_bank: BANK });
+    const { user } = await signIn(fakeApi({ overview, closeOut }));
+    const card = await screen.findByRole("article", { name: "Today" });
+    await user.click(within(card).getByRole("button", { name: "Close Out" }));
+    const dlg = screen.getByRole("dialog", { name: "Close Out" });
+    expect(dlg).toHaveTextContent("$1,250.00");
+    expect(dlg).toHaveTextContent("Test National Bank •••• 4321");
+    expect(dlg).toHaveTextContent("instant");
+    expect(closeOut).not.toHaveBeenCalled();
+    await user.click(within(dlg).getByRole("button", { name: "Confirm Close Out" }));
+    expect(closeOut).toHaveBeenCalledTimes(1);
+    const done = await screen.findByRole("dialog", { name: "Day Closed" });
+    expect(done).toHaveTextContent("$1,250.00");
+    expect(done).toHaveTextContent("within seconds");
+  });
+
+  it("a bank that is not instant says same-day ACH and the cutoff", async () => {
+    const overview = vi.fn().mockResolvedValue({ ...OV, today: today(), payout_bank: { ...BANK, institution: { id: "k2", name: null, icon: null, instant: false } } });
+    const { user } = await signIn(fakeApi({ overview }));
+    await user.click(within(await screen.findByRole("article", { name: "Today" })).getByRole("button", { name: "Close Out" }));
+    expect(screen.getByRole("dialog", { name: "Close Out" })).toHaveTextContent("same-day ACH");
+    expect(screen.getByRole("dialog", { name: "Close Out" })).toHaveTextContent("4 PM Eastern");
+  });
+
+  it("after a close-out the button gives way to a note, and Today counts since then", async () => {
+    const overview = vi.fn().mockResolvedValue({ ...OV, today: today("2026-10-28T21:02:00Z"), payout_bank: BANK });
+    await signIn(fakeApi({ overview }));
+    const card = await screen.findByRole("article", { name: "Today" });
+    expect(card).toHaveTextContent("since you closed out at");
+    expect(card).toHaveTextContent("Closed out today. Sales since then are paid out tomorrow.");
+    expect(within(card).queryByRole("button", { name: "Close Out" })).toBeNull();
+  });
+
+  it("no bank: no button; nothing to pay out: the button is off", async () => {
+    await signIn(fakeApi({ overview: vi.fn().mockResolvedValue({ ...OV, today: today(), payout_bank: null }) }));
+    expect(within(await screen.findByRole("article", { name: "Today" })).queryByRole("button", { name: "Close Out" })).toBeNull();
+    cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    await signIn(fakeApi({ overview: vi.fn().mockResolvedValue({ ...OV, balance: 0, today: today(), payout_bank: BANK }) }));
+    expect(within(await screen.findByRole("article", { name: "Today" })).getByRole("button", { name: "Close Out" })).toBeDisabled();
+  });
+
+  it("explains a refusal in plain words", async () => {
+    const closeOut = vi.fn().mockRejectedValue(new ApiError(409, "already_closed_out"));
+    const { user } = await signIn(fakeApi({ overview: vi.fn().mockResolvedValue({ ...OV, today: today(), payout_bank: BANK }), closeOut }));
+    await user.click(within(await screen.findByRole("article", { name: "Today" })).getByRole("button", { name: "Close Out" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Close Out" })).getByRole("button", { name: "Confirm Close Out" }));
+    expect(await screen.findByText(/already closed out today/)).toBeInTheDocument();
+  });
+
+  it("adding a bank tells the merchant right away whether payouts can be instant", async () => {
+    for (const [institution, text] of [
+      [{ id: "k", name: "Test National Bank", icon: null, instant: true }, "Instant payouts are available at Test National Bank."],
+      [{ id: "k", name: "Small CU", icon: null, instant: false }, "Small CU doesn't support instant payouts."],
+      [null, "We couldn't confirm instant payouts for Your bank yet."],
+    ] as const) {
+      const saveBank = vi.fn().mockResolvedValue({ id: "b1", last4: "6789", status: "active", created_at: "2026-10-16T00:00:00Z", institution });
+      const { user } = await signIn(fakeApi({ bank: vi.fn().mockResolvedValue(null), saveBank }));
+      await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+      await user.click(within(card("Payout Bank")).getByRole("button", { name: "Edit" }));
+      await user.click(screen.getByRole("button", { name: "Add Bank" }));
+      const dlg = screen.getByRole("dialog");
+      await user.type(within(dlg).getByLabelText("Routing number"), "110000000");
+      await user.type(within(dlg).getByLabelText("Account number"), "000123456789");
+      await user.click(within(dlg).getByRole("button", { name: "Save Bank" }));
+      expect(await within(card("Payout Bank")).findByText(new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))).toBeInTheDocument();
+      cleanup(); sessionStorage.clear(); window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("the bank shows its name, logo and speed", async () => {
+    const bank = vi.fn().mockResolvedValue({ id: "b1", last4: "4321", status: "active", created_at: "2026-10-01T00:00:00Z", institution: { id: "k1", name: "Test National Bank", icon: "https://x.test/v1/photos/banks/k1.png", instant: true } });
+    const { user } = await signIn(fakeApi({ bank }));
+    await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    const c = card("Payout Bank");
+    expect(await within(c).findByText("Test National Bank")).toBeInTheDocument();
+    expect(c.querySelector("img.bank-icon")).toHaveAttribute("src", "https://x.test/v1/photos/banks/k1.png");
+    expect(c).toHaveTextContent("Instant payouts");
   });
 });
 

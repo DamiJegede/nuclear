@@ -105,7 +105,7 @@ describe("Settlements", () => {
     await user.click(await screen.findByRole("button", { name: "Download Payouts CSV" }));
     expect(click).toHaveBeenCalled();
     const text = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsText(blob!); });
-    expect(text).toContain("Alpha Cafe,m1,1500.00,150000,4321,submitted");
+    expect(text).toContain("Alpha Cafe,m1,1500.00,150000,4321,nightly,ach,submitted");
     expect(text).not.toContain("Beta Books");
     click.mockRestore();
   });

@@ -4,7 +4,7 @@ import type { Api, Stats, Vol } from "../api";
 
 const REFRESH_MS = 60_000;
 
-export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+export function Overview({ api, onError, needsLogo = 0, openBanks }: { api: Api; onError: (e: unknown) => void; needsLogo?: number; openBanks?: () => void }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -73,6 +73,9 @@ export function Overview({ api, onError }: { api: Api; onError: (e: unknown) => 
 
   return (
     <section>
+      {needsLogo > 0 && openBanks && (
+        <p className="notice-bar" role="status">{needsLogo} bank{needsLogo === 1 ? " needs" : "s need"} a logo. <a href="/banks" onClick={(e) => { e.preventDefault(); openBanks(); }}>Add Logos</a></p>
+      )}
       <div className="head">
         <h1>System overview</h1>
         <div className="asof">

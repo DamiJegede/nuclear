@@ -37,12 +37,12 @@ const pagesOf = (r: string) => users[r]!.signin;
 eq("sign-in tells the portal the role, the pages and where to land", ["admin", "accounting", "sales", "support", "tags", "merchants"].map((r) => [r, users[r]!.signin.admin.role]), ["admin", "accounting", "sales", "support", "tags", "merchants"].map((r) => [r, r]));
 const me = async (r: string) => (await call("GET", "/v1/admin/me", { token: users[r]!.T })).json;
 eq("me(): pages and landing per role", await Promise.all(["admin", "accounting", "sales", "support", "tags", "merchants"].map(async (r) => { const m = await me(r); return [r, m.pages.join("+"), m.landing]; })), [
-  ["admin", "overview+merchants+organizations+users+tags+admins+transactions+shop+audit", "overview"],
+  ["admin", "overview+merchants+organizations+users+tags+admins+transactions+shop+audit+banks", "overview"],
   ["accounting", "overview+transactions", "overview"],
   ["sales", "users+merchants+organizations+tags+shop", "users"],
   ["support", "users+organizations+transactions", "users"],
   ["tags", "tags", "tags"],
-  ["merchants", "merchants", "merchants"],
+  ["merchants", "merchants+banks", "merchants"],
 ]);
 
 // ---- the matrix: every role against every screen's API

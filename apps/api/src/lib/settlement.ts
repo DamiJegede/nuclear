@@ -3,7 +3,7 @@ import type { Sql } from "../db";
 import type { Env } from "../env";
 import { achProvider, type AchItem, type AchProvider } from "./ach";
 import { log } from "./audit";
-import { addDays } from "./dates";
+import { addDays, easternDate } from "./dates";
 import { BANK_WALLET, SYSTEM_ACCOUNT } from "./system";
 import { insertTx } from "./txn";
 
@@ -23,6 +23,12 @@ type Tx = TransactionSql<{ bigint: bigint }>;
  * The bank's answer finishes the row. A payout the bank returns is reversed by a `settle_return` transaction (bank to merchant) and the row
  * is `returned`; a collection that arrives writes a `collect` transaction (bank to merchant); a collection the bank returns leaves the debt
  * standing and it is collected again in the next run. Customers' refunds are never affected. Transactions are never updated.
+ *
+ * Close out (`closeOut`): the merchant can run its own sweep at any time ("end the day"): the same whole-balance sweep, for today's date, source
+ * `close_out`. Still ONE settlement per merchant per day: a second close-out is refused and the nightly run skips a merchant already settled for
+ * the day, so anything sold after a close-out simply stays in the balance and is swept by the next day's settlement. A close-out never collects
+ * (a negative balance is left to the nightly run). Instant payments (the bank's `banks.instant`) go by RTP or FedNow; a bank that is not (or not
+ * known to be) instant gets same-day ACH, and an instant payment the bank cannot take falls back to same-day ACH too.
  *
  * Safety: (settle_date, merchant) is unique and each transaction's key (`settle:<merchant>:<date>`) is unique, so a repeated or overlapping
  * run (the cron fires twice a day) cannot settle anyone twice; a run that stopped half way is finished by the next call. If the cron is
@@ -51,14 +57,13 @@ export async function runSettlement(env: Env, sql: Sql, today: string, provider:
      order by a.id`;
   let created = 0;
   for (const m of due) {
-    if (await settleMerchant(sql, date, m.id)) created += 1;
+    if ((await sweepMerchant(sql, date, m.id, "nightly")).ok) created += 1;
   }
 
   const items = await openItems(sql, date, true);
   if (items.length > 0) {
     try {
-      const sub = await provider.submit(date, items);
-      await sql`update settlements set provider_reference = ${sub.reference} where settle_date = ${date}::date and status = 'submitted' and provider_reference is null`;
+      await submitItems(sql, provider, date, items);
     } catch (err) {
       console.error("settlement submit failed", err);
       await failDay(sql, date, "submit_failed");
@@ -75,66 +80,120 @@ export async function runSettlement(env: Env, sql: Sql, today: string, provider:
 const markDone = (sql: Sql, date: string) => sql`
   insert into system (key, value) values ('settled_day', ${date}) on conflict (key) do update set value = excluded.value where system.value < excluded.value`;
 
-/** One merchant: works out the net under the balance lock and records the payout or collection. Returns whether a row was created. */
-async function settleMerchant(sql: Sql, date: string, accountId: string): Promise<boolean> {
+export type Sweep =
+  | { ok: true; id: string; amount: bigint; direction: "credit" | "debit"; rail: "instant" | "ach" }
+  | { ok: false; reason: "no_bank" | "inactive" | "already_settled" | "nothing_to_settle" | "owes"; owed?: bigint };
+
+/**
+ * One merchant: works out the net under the balance lock and records the payout or collection. A close-out (`allowDebit` false) turns a negative
+ * net away (`owes`); the nightly run records it as a collection. Credits go by the bank's best rail; a collection is always ACH.
+ */
+async function sweepMerchant(sql: Sql, date: string, accountId: string, source: "nightly" | "close_out"): Promise<Sweep> {
   return sql.begin(async (txRaw) => {
     const tx = txRaw as unknown as Tx;
-    const [[bal], [bank], [inflight], [wallet]] = await Promise.all([
+    const [[bal], [bank], [inflight], [wallet], [acct]] = await Promise.all([
       tx<{ balance: bigint }[]>`select balance from balances where account_id = ${accountId} for no key update`,
-      tx<{ id: string }[]>`
-        select ba.id from businesses bz join bank_accounts ba on ba.id = bz.bank_account_id and ba.status = 'active' where bz.account_id = ${accountId}`,
+      tx<{ id: string; instant: boolean | null }[]>`
+        select ba.id, bk.instant from businesses bz join bank_accounts ba on ba.id = bz.bank_account_id and ba.status = 'active'
+          left join banks bk on bk.id = ba.bank_id where bz.account_id = ${accountId}`,
       // Collections the bank has not answered yet already count against the debt.
       tx<{ total: bigint }[]>`
         select coalesce(sum(amount), 0)::bigint as total from settlements
          where merchant_account_id = ${accountId} and direction = 'debit' and status = 'submitted'`,
       tx<{ id: string }[]>`select id from wallets where account_id = ${accountId} and type = 'default'`,
+      tx<{ status: string }[]>`select status from accounts where id = ${accountId}`,
     ]);
-    if (!bal || !bank || !wallet) return false;
+    if (!acct || acct.status !== "active") return { ok: false, reason: "inactive" } as Sweep;
+    if (!bal || !bank || !wallet) return { ok: false, reason: "no_bank" } as Sweep;
     const net = bal.balance + inflight!.total;
-    if (net === 0n) return false;
+    if (net === 0n) return { ok: false, reason: "nothing_to_settle" } as Sweep;
+    if (net < 0n && source === "close_out") return { ok: false, reason: "owes", owed: -net } as Sweep;
     const amount = net > 0n ? net : -net;
+    const rail = net > 0n && bank.instant === true ? "instant" : "ach";
 
     const [s] = await tx<{ id: string }[]>`
-      insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount)
-      values (${date}::date, ${accountId}, ${bank.id}, ${net > 0n ? "credit" : "debit"}, ${amount.toString()})
+      insert into settlements (settle_date, merchant_account_id, bank_account_id, direction, amount, source, rail)
+      values (${date}::date, ${accountId}, ${bank.id}, ${net > 0n ? "credit" : "debit"}, ${amount.toString()}, ${source}, ${rail})
       on conflict (settle_date, merchant_account_id) do nothing returning id`;
-    if (!s) return false;                                                         // this merchant was already settled for the date
+    if (!s) return { ok: false, reason: "already_settled" } as Sweep;             // this merchant was already settled for the date
     if (net > 0n) {
       await Promise.all([
         tx`update balances set balance = balance - ${amount.toString()} where account_id = ${accountId}`,
         insertTx(tx, { type: "settle", from: wallet.id, to: BANK_WALLET, amount, settlement: s.id, account: SYSTEM_ACCOUNT, idem: `settle:${accountId}:${date}` }),
       ]);
     }
-    return true;
-  }) as Promise<boolean>;
+    return { ok: true, id: s.id, amount, direction: net > 0n ? "credit" : "debit", rail } as Sweep;
+  }) as Promise<Sweep>;
 }
 
-/** The day's rows still waiting for the bank (and, for `fresh`, not yet sent). */
+/** A Postgres array literal of row ids (they come from our own database, so they are plain uuids): the driver here does not serialize uuid arrays. */
+const pgUuidArray = (ids: string[]) => `{${ids.join(",")}}`;
+
+const ITEM_COLS = `id as "itemId", direction, amount as "amountCents", bank_account_id as "bankAccountId", merchant_account_id as "accountId", rail,
+    case when source = 'close_out' then 'SameDay' else 'Standard' end as "serviceType"`;
+
+/** Sends items to the bank and remembers its reference on exactly those rows. Throws when the bank accepted nothing. */
+async function submitItems(sql: Sql, provider: AchProvider, batchKey: string, items: AchItem[]) {
+  const sub = await provider.submit(batchKey, items);
+  await sql`update settlements set provider_reference = ${sub.reference} where id = any(${pgUuidArray(items.map((i) => i.itemId))}::uuid[]) and status = 'submitted'`;
+}
+
+export type CloseOutResult =
+  | { ok: true; settlement: { id: string; date: string; amount: number; rail: "instant" | "ach"; status: string; arrival: "instant" | "today" | "next_business_day" } }
+  | { ok: false; error: "payouts_unavailable" | "no_bank" | "account_inactive" | "already_closed_out" | "nothing_to_close_out" | "owes"; owed?: number };
+
+/** Same-day ACH is cut off at this time (Eastern); after it, or on a weekend, a payout goes the next business day. Confirm the bank's windows (docs/CROSS-RIVER.md). */
+export const SAME_DAY_CUTOFF_HOUR_ET = 16;
+
+/** When the money reaches the merchant's bank, as far as we can tell now. Holidays are not known here. */
+export function arrivalOf(rail: "instant" | "ach", now: Date): "instant" | "today" | "next_business_day" {
+  if (rail === "instant") return "instant";
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(now);
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }).format(now)) % 24;
+  return wd === "Sat" || wd === "Sun" || hour >= SAME_DAY_CUTOFF_HOUR_ET ? "next_business_day" : "today";
+}
+
+/**
+ * "Close out": the merchant ends its day now. The whole balance is paid out at once, for today's date, and everything sold afterwards belongs
+ * to the next day. The balance drops under the lock before anything is sent (so a double click, or a sale a moment later, cannot pay the same money
+ * twice); if the bank cannot be reached the row simply stays `submitted` and the next run sends it (the bank sees our row id as the idempotency key).
+ */
+export async function closeOut(env: Env, sql: Sql, accountId: string, provider: AchProvider | null = achProvider(env), now = new Date()): Promise<CloseOutResult> {
+  if (!provider) return { ok: false, error: "payouts_unavailable" };
+  const date = easternDate(now);
+  const sweep = await sweepMerchant(sql, date, accountId, "close_out");
+  if (!sweep.ok) {
+    const error = ({ no_bank: "no_bank", inactive: "account_inactive", already_settled: "already_closed_out", nothing_to_settle: "nothing_to_close_out", owes: "owes" } as const)[sweep.reason];
+    return { ok: false, error, ...(sweep.owed !== undefined ? { owed: Number(sweep.owed) } : {}) };
+  }
+  const item: AchItem = { itemId: sweep.id, direction: "credit", amountCents: sweep.amount, bankAccountId: "", accountId, rail: sweep.rail, serviceType: "SameDay" };
+  const [row] = await sql<{ bank_account_id: string }[]>`select bank_account_id from settlements where id = ${sweep.id}`;
+  item.bankAccountId = row!.bank_account_id;
+  try {
+    await submitItems(sql, provider, `${date}:${accountId}`, [item]);
+    await confirmItems(sql, provider, [sweep.id]);
+  } catch (err) {
+    console.error("close-out submit failed; the next run sends it", err);
+  }
+  await log(sql, { actor: { type: "customer", id: accountId }, action: "merchant.closed_out", target: { type: "settlement", id: sweep.id, label: date }, details: { amount: Number(sweep.amount), rail: sweep.rail } });
+  const [fin] = await sql<{ status: string; rail: "instant" | "ach" }[]>`select status, rail from settlements where id = ${sweep.id}`;
+  return { ok: true, settlement: { id: sweep.id, date, amount: Number(sweep.amount), rail: fin!.rail, status: fin!.status, arrival: arrivalOf(fin!.rail, now) } };
+}
+
+/** The day's rows still waiting for the bank. With `fresh`: every row up to that day that was never sent (a close-out made while the bank was unreachable, or a missed run). */
 const openItems = (sql: Sql, date: string, fresh = false) => sql<AchItem[]>`
-  select id as "itemId", direction, amount as "amountCents", bank_account_id as "bankAccountId", merchant_account_id as "accountId"
-    from settlements where settle_date = ${date}::date and status = 'submitted' ${fresh ? sql`and provider_reference is null` : sql``} order by id`;
+  select ${sql.unsafe(ITEM_COLS)}
+    from settlements where ${fresh ? sql`settle_date <= ${date}::date and provider_reference is null` : sql`settle_date = ${date}::date`} and status = 'submitted' order by id`;
 
 /** Asks the bank for results and finishes every row it has answered. */
 export async function confirmSettlement(sql: Sql, date: string, provider: AchProvider | null): Promise<{ status: string; settled: number; returned: number }> {
-  const [run] = await sql<{ n: number; ref: string | null }[]>`
-    select count(*)::int as n, max(provider_reference) as ref from settlements where settle_date = ${date}::date`;
+  const [run] = await sql<{ n: number }[]>`select count(*)::int as n from settlements where settle_date = ${date}::date`;
   if (!run || run.n === 0) return { status: "missing", settled: 0, returned: 0 };
-  const items = await sql<(AchItem & { ref: string | null })[]>`
-    select id as "itemId", direction, amount as "amountCents", bank_account_id as "bankAccountId", merchant_account_id as "accountId", provider_reference as ref
-      from settlements where settle_date = ${date}::date and status = 'submitted' and provider_reference is not null order by id`;
   let settled = 0, returned = 0;
   if (provider) {
-    for (const ref of new Set(items.map((i) => i.ref!))) {
-      const batch = items.filter((i) => i.ref === ref);
-      const results = await provider.outcomes(ref, batch);
-      for (const r of results) {
-        const item = batch.find((i) => i.itemId === r.itemId);
-        if (!item) continue;
-        if (await finishItem(sql, item, r.outcome === "settled" ? null : r.code ?? "bank_returned", "returned")) {
-          if (r.outcome === "settled") settled += 1; else returned += 1;
-        }
-      }
-    }
+    const ids = await sql<{ id: string }[]>`select id from settlements where settle_date = ${date}::date and status = 'submitted' and provider_reference is not null order by id`;
+    const r = await confirmItems(sql, provider, ids.map((x) => x.id));
+    settled = r.settled; returned = r.returned;
   }
   const [left] = await sql<{ n: number }[]>`select count(*)::int as n from settlements where settle_date = ${date}::date and status = 'submitted'`;
   if (left!.n === 0) {
@@ -142,6 +201,39 @@ export async function confirmSettlement(sql: Sql, date: string, provider: AchPro
     return { status: "completed", settled, returned };
   }
   return { status: "submitted", settled, returned };
+}
+
+/**
+ * Asks the bank for the answer to these waiting rows and finishes the ones it has answered. An instant payment the bank cannot take (`retry_ach`)
+ * is moved to same-day ACH, sent at once and asked about again, once; an item still waiting is simply left for the next poll.
+ */
+export async function confirmItems(sql: Sql, provider: AchProvider, ids: string[]): Promise<{ settled: number; returned: number; retried: number }> {
+  let settled = 0, returned = 0, retried = 0;
+  let pending = ids;
+  for (let pass = 0; pass < 2 && pending.length > 0; pass++) {
+    const items = await sql<(AchItem & { ref: string })[]>`
+      select ${sql.unsafe(ITEM_COLS)}, provider_reference as ref from settlements
+       where id = any(${pgUuidArray(pending)}::uuid[]) and status = 'submitted' and provider_reference is not null order by id`;
+    const again: AchItem[] = [];
+    for (const ref of new Set(items.map((i) => i.ref))) {
+      const batch = items.filter((i) => i.ref === ref);
+      for (const r of await provider.outcomes(ref, batch)) {
+        const item = batch.find((i) => i.itemId === r.itemId);
+        if (!item) continue;
+        if (r.outcome === "retry_ach") {
+          const [moved] = await sql<{ id: string }[]>`
+            update settlements set rail = 'ach', provider_reference = null where id = ${item.itemId} and status = 'submitted' and rail = 'instant' returning id`;
+          if (moved) { again.push({ ...item, rail: "ach", serviceType: "SameDay" }); retried += 1; }
+        } else if (await finishItem(sql, item, r.outcome === "settled" ? null : r.code ?? "bank_returned", "returned")) {
+          if (r.outcome === "settled") settled += 1; else returned += 1;
+        }
+      }
+    }
+    if (again.length === 0) break;
+    await submitItems(sql, provider, `retry:${again[0]!.itemId}`, again);
+    pending = again.map((i) => i.itemId);
+  }
+  return { settled, returned, retried };
 }
 
 /**

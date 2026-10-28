@@ -1,8 +1,13 @@
 import type { Env } from "../env";
 
 /** One bank movement in a settlement batch (`itemId` is the `settlements` row). `credit` pays the merchant's bank; `debit` collects from it. */
-export type AchItem = { itemId: string; direction: "credit" | "debit"; amountCents: bigint; bankAccountId: string; accountId: string };
-export type AchOutcome = { itemId: string; outcome: "settled" | "returned"; code?: string };
+export type AchItem = {
+  itemId: string; direction: "credit" | "debit"; amountCents: bigint; bankAccountId: string; accountId: string;
+  /** `instant` = RTP or FedNow (credits only: an instant payment cannot pull money); `ach` = by ACH, `SameDay` when the merchant closed out, `Standard` for the nightly run. */
+  rail: "instant" | "ach"; serviceType: "SameDay" | "Standard";
+};
+/** `retry_ach`: the bank could not take this item as an instant payment (the account is not eligible, a limit, the network is down); send it by same-day ACH instead. */
+export type AchOutcome = { itemId: string; outcome: "settled" | "returned" | "retry_ach"; code?: string };
 
 /**
  * The bank rail behind settlement. No ACH provider is chosen yet, so this is the seam: a real adapter reads the account numbers it

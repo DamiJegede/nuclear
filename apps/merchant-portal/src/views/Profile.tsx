@@ -279,6 +279,14 @@ function BusinessDetails({ api, onError }: { api: Api; onError: (e: unknown) => 
   );
 }
 
+/** What to tell a merchant who just saved a bank: whether payouts can be instant (null = we could not find out yet). */
+const speedNotice = (b: { name: string | null; instant: boolean | null } | null) => {
+  const name = b?.name ?? "Your bank";
+  return b?.instant === true ? `Instant payouts are available at ${name}.`
+    : b?.instant === false ? `${name} doesn't support instant payouts. We'll send by same-day ACH: closed out before 4 PM Eastern on a business day arrives that day, later ones the next business day.`
+    : `We couldn't confirm instant payouts for ${name} yet. Payouts go by same-day ACH until we can.`;
+};
+
 /** Where settlements will be paid. Only the last four digits of the account are ever shown; Edit reveals the change and remove buttons. */
 function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   const { data, failed, retry } = useList<Bank | null>(useCallback(() => api.bank(), [api]), onError, "bank");
@@ -290,6 +298,7 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
   const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -297,7 +306,11 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
     if (routing.length !== 9) return setError("The routing number is 9 digits.");
     if (account.length < 4 || account.length > 17) return setError("The account number is 4 to 17 digits.");
     setBusy(true);
-    try { await api.saveBank({ routing_number: routing, account_number: account }); setAdding(false); setEditing(false); setRouting(""); setAccount(""); retry(); }
+    try {
+      const saved = await api.saveBank({ routing_number: routing, account_number: account });
+      setNotice(speedNotice(saved.institution));
+      setAdding(false); setEditing(false); setRouting(""); setAccount(""); retry();
+    }
     catch (err) {
       onError(err);
       setError(err instanceof ApiError && err.code === "profile_required" ? "Save your business details first." : err instanceof ApiError && err.code === "invalid_routing_number" ? "That routing number isn't valid." : "Couldn't save the bank account. Try again.");
@@ -313,7 +326,17 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
       {failed && !data ? <p className="error" role="alert">Couldn't load the bank. <button className="link" onClick={retry}>Try Again</button></p>
         : data === null && !failed ? <p className="muted" role="status">Loading…</p>
         : null}
-      {data ? <p className="big small">•••• {data.last4} <span className="pill available">{data.status}</span></p> : data === null && failed ? null : <p className="dim">No payout bank yet.</p>}
+      {data ? (
+        <>
+          <p className="bank-line">
+            {data.institution?.icon ? <img className="bank-icon" src={data.institution.icon} alt="" /> : <span className="bank-glyph" aria-hidden="true">🏦</span>}
+            <span className="bank-name">{data.institution?.name ?? "Your bank"}</span>
+          </p>
+          <p className="big small">•••• {data.last4} <span className="pill available">{data.status}</span></p>
+          <p className="sub">{data.institution?.instant === true ? "Instant payouts" : "Same-day ACH payouts"}</p>
+        </>
+      ) : data === null && failed ? null : <p className="dim">No payout bank yet.</p>}
+      {notice && <p role="status" className="hint">{notice}</p>}
       {editing && (
         <div className="modal-actions left">
           <button type="button" className="ghost" onClick={() => { setError(null); setAdding(true); }}>{data ? "Replace Bank" : "Add Bank"}</button>
@@ -329,14 +352,14 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
             {payouts.data.map((p) => (
               <li key={p.id}>
                 <span className="when">{p.completed_at ? new Date(p.completed_at).toLocaleDateString() : new Date(p.timestamp).toLocaleDateString()}</span>
-                <span>{p.kind === "payout" ? "Payout" : "Collection"}{p.bank_last4 ? <span className="muted note">•••• {p.bank_last4}</span> : null}</span>
+                <span>{p.kind === "payout" ? (p.source === "close_out" ? "Close Out" : "Payout") : "Collection"}{p.bank_last4 ? <span className="muted note">•••• {p.bank_last4}</span> : null}{p.rail === "instant" ? <span className="muted note">instant</span> : null}</span>
                 <span className="num">{p.kind === "collection" ? "−" : ""}{money(p.amount)}</span>
                 <span className={`pill ${p.status === "completed" ? "available" : p.status === "failed" || p.status === "returned" ? "closed" : "pending"}`}>{p.status}</span>
               </li>
             ))}
           </ul>
         )}
-      <p className="hint">Payouts aren't switched on yet. Settlements will be listed here once they start.</p>
+      <p className="hint">Your balance is paid out every night. Press Close Out on the Overview to be paid sooner.</p>
       {adding && (
         <Modal title={data ? "Replace Payout Bank" : "Add Payout Bank"} onClose={() => setAdding(false)} locked={busy}>
           <form onSubmit={save} className="modal-form">

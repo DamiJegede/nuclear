@@ -16,6 +16,7 @@ import { USER_TABS, UserDetail, type UserTab } from "./views/UserDetail";
 import { MERCHANT_TABS, MerchantDetail, type MerchantTab } from "./views/MerchantDetail";
 import { Transactions } from "./views/Transactions";
 import { Overview } from "./views/Overview";
+import { Banks } from "./views/Banks";
 import { Shop } from "./views/Shop";
 import { AuditLog } from "./views/AuditLog";
 import { Settlements } from "./views/Settlements";
@@ -31,11 +32,11 @@ function writeToken(t: string | null) {
   try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
-type View = "overview" | "merchants" | "merchant" | "organizations" | "organization" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "settlements" | "shop" | "audit" | "security";
+type View = "overview" | "merchants" | "merchant" | "organizations" | "organization" | "users" | "user" | "tags" | "tag" | "admins" | "transactions" | "settlements" | "banks" | "shop" | "audit" | "security";
 type Route = { view: View; id?: string; tab?: MerchantTab | UserTab | OrganizationTab };
 
 // Each page has its own address, so the browser's back and forward buttons move between pages.
-const PATHS: Record<Exclude<View, "tag" | "merchant" | "organization" | "user">, string> = { overview: "/", merchants: "/merchants", organizations: "/organizations", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", settlements: "/settlements", shop: "/shop", audit: "/audit", security: "/security" };
+const PATHS: Record<Exclude<View, "tag" | "merchant" | "organization" | "user">, string> = { overview: "/", merchants: "/merchants", organizations: "/organizations", users: "/users", tags: "/tags", admins: "/admins", transactions: "/transactions", settlements: "/settlements", banks: "/banks", shop: "/shop", audit: "/audit", security: "/security" };
 const pathOf = (r: Route): string =>
   r.view === "tag" ? `/tags/${r.id}`
   : r.view === "merchant" ? `/merchants/${r.id}`
@@ -93,12 +94,22 @@ export function App({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const [notice, setNotice] = useState<string | null>(null);
+  // Banks in use that still need a logo: shown on the Banks tab and the Overview, for the roles that have the Banks page.
+  const [needsLogo, setNeedsLogo] = useState(0);
 
   const api = useMemo(() => (token ? makeApi(token) : null), [token, makeApi]);
 
   // Tab title per page. Sign-in, enrollment and the tag page set their own (undefined = leave it).
+  const hasBanks = !!(me?.mfa_enabled && me.pages.includes("banks"));
+  useEffect(() => {
+    if (!api || !hasBanks) { setNeedsLogo(0); return; }
+    let alive = true;
+    api.banks({ needsLogo: true, limit: 1 }).then((r) => { if (alive) setNeedsLogo(r.needs_logo); }).catch(() => { /* the badge is a convenience */ });
+    return () => { alive = false; };
+  }, [api, hasBanks]);
+
   const TITLES: Record<Exclude<View, "tag" | "merchant" | "organization" | "user" | "shop" | "audit">, string> = {
-    overview: "Overview", merchants: "Merchants", organizations: "Organizations", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", settlements: "Settlements", security: "Security",
+    overview: "Overview", merchants: "Merchants", organizations: "Organizations", users: "Users", tags: "Tags", admins: "Admins", transactions: "Transactions", settlements: "Settlements", banks: "Banks", security: "Security",
   };
   usePageTitle(token && me?.mfa_enabled && view !== "tag" && view !== "merchant" && view !== "organization" && view !== "user" && view !== "shop" && view !== "audit" ? TITLES[view] : undefined);
 
@@ -180,9 +191,9 @@ export function App({
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Admin</span></div>
         <nav aria-label="Sections">
-          {([["overview", "Overview"], ["merchants", "Merchants"], ["organizations", "Organizations"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["settlements", "Settlements"], ["audit", "Logs"]] as const).filter(([v]) => (v === "settlements" ? me.pages.includes("transactions") : me.pages.includes(v as never))).map(([v, label]) => (
+          {([["overview", "Overview"], ["merchants", "Merchants"], ["organizations", "Organizations"], ["users", "Users"], ["tags", "Tags"], ["admins", "Admins"], ["shop", "Shop"], ["transactions", "Transactions"], ["settlements", "Settlements"], ["banks", "Banks"], ["audit", "Logs"]] as const).filter(([v]) => (v === "settlements" ? me.pages.includes("transactions") : me.pages.includes(v as never))).map(([v, label]) => (
             <a key={v} href={PATHS[v]} className={view === v || (v === "tags" && view === "tag") || (v === "merchants" && view === "merchant") || (v === "organizations" && view === "organization") || (v === "users" && view === "user") ? "tab active" : "tab"} aria-current={view === v ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); setView(v); }}>{label}</a>
+              onClick={(e) => { e.preventDefault(); setView(v); }}>{label}{v === "banks" && needsLogo ? <span className="badge" aria-label={`${needsLogo} banks need a logo`}>{needsLogo}</span> : null}</a>
           ))}
         </nav>
         <div className="who">
@@ -192,7 +203,7 @@ export function App({
         </div>
       </header>
       <main>
-        {view === "overview" && me.pages.includes("overview") && <Overview api={api} onError={onError} />}
+        {view === "overview" && me.pages.includes("overview") && <Overview api={api} onError={onError} needsLogo={me.pages.includes("banks") ? needsLogo : 0} openBanks={() => setView("banks")} />}
         {view === "tags" && me.pages.includes("tags") && <Tags api={api} onError={onError} canWrite={canWriteTags} open={(id) => setView("tag", false, id)} />}
         {view === "tag" && route.id && me.pages.includes("tags") && <TagDetail api={api} id={route.id} canWrite={canWriteTags} onBack={() => setView("tags")} onError={onError} />}
         {view === "security" && <Security api={api} onError={onError} />}
@@ -212,6 +223,7 @@ export function App({
           <UserDetail api={api} id={route.id} tab={(route.tab as UserTab) ?? "details"} canAct={me.role === "admin" || me.role === "support"} canAdmin={me.role === "admin"} openUser={me.pages.includes("users") ? (uid) => setView("user", false, uid, "details") : undefined} openMerchant={me.pages.includes("merchants") ? (mid) => setView("merchant", false, mid, "details") : undefined}
             onTab={(t) => setView("user", false, route.id, t)} onBack={() => setView("users")} onError={onError} />
         )}
+        {view === "banks" && me.pages.includes("banks") && <Banks api={api} onError={onError} canWrite={me.role === "admin" || me.role === "merchants"} onCount={setNeedsLogo} />}
         {view === "shop" && me.pages.includes("shop") && <Shop api={api} onError={onError} canWrite={me.role === "admin" || me.role === "sales"} />}
         {view === "audit" && me.pages.includes("audit") && <AuditLog api={api} onError={onError} />}
         {view === "settlements" && me.pages.includes("transactions") && <Settlements api={api} canAdmin={me.role === "admin"} openMerchant={me.pages.includes("merchants") ? (id) => setView("merchant", false, id, "details") : undefined} onError={onError} />}

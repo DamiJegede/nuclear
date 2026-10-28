@@ -33,6 +33,11 @@ export interface Env {
    * `wrangler secret put MFA_ENCRYPTION_KEY`. Without it admin MFA enrollment and sign-in return 503.
    */
   MFA_ENCRYPTION_KEY?: string;
+  /** The banking server (the one machine on the bank's IP allowlist): its base URL and the shared secret that signs our calls to it (docs/CROSS-RIVER.md). Unset = bank lookups answer "unknown" and nothing is sent. */
+  BANKING_URL?: string;
+  BANKING_SECRET?: string;
+  /** Tests and local runs: a ready-made banking client used instead of calling BANKING_URL. */
+  BANKING_CLIENT?: import("./lib/banks").BankingClient;
   /** AES-256 key (base64, 32 bytes) encrypting bank routing and account numbers at rest. Losing it makes every stored number unrecoverable: keep a copy in the password manager. Without it, saving a payout bank returns 503. */
   BANK_ENCRYPTION_KEY?: string;
   /** The Orb fleet key (64 hex chars = 32 bytes, docs/ORB.md §8a): the same key is compiled into every Orb's firmware. Rotating it needs a firmware release. Without it `POST /v1/terminal/orb/bind` returns 503. */

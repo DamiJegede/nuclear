@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
+import { Modal } from "./Modal";
 import { RefreshButton } from "./RefreshButton";
-import type { Account, Api, Overview as OverviewData } from "../api";
+import { ApiError, type Account, type Api, type CloseOutResult, type Overview as OverviewData } from "../api";
 import { int, money } from "../format";
 import { usePageTitle } from "../title";
 import { useList } from "../useList";
@@ -15,6 +16,26 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const [closed, setClosed] = useState<CloseOutResult["settlement"] | null>(null);
+
+  async function closeOut() {
+    setBusy(true); setCloseError(null);
+    try { const r = await api.closeOut(); setClosing(false); setClosed(r); onChanged(); retry(); }
+    catch (err) {
+      onError(err);
+      const code = err instanceof ApiError ? err.code : "";
+      setCloseError(code === "already_closed_out" ? "You've already closed out today. Anything sold since is paid out with tomorrow's close-out."
+        : code === "nothing_to_close_out" ? "There's nothing to pay out right now."
+        : code === "owes" ? "Your balance is below zero after refunds, so there's nothing to pay out. It will be settled with your next sales."
+        : code === "no_bank" ? "Add a payout bank first."
+        : code === "payouts_unavailable" ? "Payouts aren't available right now. Try again later."
+        : code === "rate_limited" ? "Too many tries. Wait a little and try again."
+        : "Couldn't close out. Try again.");
+    } finally { setBusy(false); }
+  }
 
   function pick(f: File | undefined) {
     setFileError(null);
@@ -56,10 +77,17 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
         <article className="card linkcard" aria-label="Today">
           <h2><a href="/transactions" className="stretched" onClick={nav("transactions")}>Today</a></h2>
           <p className="big xl">{money(data.balance)}</p>
-          <p className="sub">{int(data.today.transactions)} transaction{data.today.transactions === 1 ? "" : "s"}</p>
+          <p className="sub">{int(data.today.transactions)} transaction{data.today.transactions === 1 ? "" : "s"}{data.today.closed_out_at ? ` since you closed out at ${new Date(data.today.closed_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</p>
           <hr className="tile-rule" />
           <h3 className="tile-label">Yesterday</h3>
           <p className="big md">{money(data.yesterday.net)}</p>
+          {data.payout_bank && (
+            <div className="tile-actions">
+              {data.today.closed_out_at
+                ? <p className="sub">Closed out today. Sales since then are paid out tomorrow.</p>
+                : <button type="button" className="ghost" disabled={data.balance <= 0} onClick={() => { setCloseError(null); setClosing(true); }}>Close Out</button>}
+            </div>
+          )}
         </article>
 
         <article className="card linkcard" aria-label="Catalog">
@@ -79,6 +107,24 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
         <article className="card linkcard" aria-label="Orders"><h2><a href="/orders" className="stretched" onClick={nav("orders")}>Orders</a></h2><p className="big">{int(data.open_orders)}</p><p className="sub">waiting to be paid</p></article>
       </div>
 
+      {closing && data.payout_bank && (
+        <Modal title="Close Out" onClose={() => setClosing(false)} locked={busy}>
+          <p>Send <strong>{money(data.balance)}</strong> to {data.payout_bank.institution?.name ?? "your bank"} •••• {data.payout_bank.last4} now.</p>
+          <p className="muted">{data.payout_bank.institution?.instant === true ? "Your bank takes instant payouts, so it should arrive within seconds." : "It goes by same-day ACH: before 4 PM Eastern on a business day it arrives today, otherwise the next business day."} You can close out once a day; anything you sell afterwards is paid out with tomorrow's close-out.</p>
+          {closeError && <p className="error" role="alert">{closeError}</p>}
+          <div className="modal-actions">
+            <button type="button" disabled={busy} onClick={() => void closeOut()}>{busy ? "Closing out…" : "Confirm Close Out"}</button>
+            <button type="button" className="ghost" disabled={busy} onClick={() => setClosing(false)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+      {closed && (
+        <Modal title="Day Closed" onClose={() => setClosed(null)}>
+          <p><strong>{money(closed.amount)}</strong> {closed.status === "completed" ? "has been sent" : "is on its way"} to your bank.</p>
+          <p className="muted">{closed.arrival === "instant" ? "Instant payouts arrive within seconds." : closed.arrival === "today" ? "It should arrive today." : "It should arrive the next business day."}</p>
+          <div className="modal-actions"><button type="button" onClick={() => setClosed(null)}>Done</button></div>
+        </Modal>
+      )}
       {file && (
         <PhotoCrop file={file} onClose={() => setFile(null)}
           onSave={async (jpeg) => { await api.uploadPhoto(jpeg); setFile(null); onChanged(); retry(); }} />

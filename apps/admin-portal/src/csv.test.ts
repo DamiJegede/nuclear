@@ -30,7 +30,7 @@ describe("payoutsCsv", () => {
 
   it("lists only payouts, in dollars and cents, with the bank's last four digits", () => {
     const csv = payoutsCsv("2026-10-22", [row({}), row({ merchant_id: "m2", merchant: "Beta Books", kind: "collection", amount: 6000 })]);
-    expect(csv).toBe("settlement_date,merchant,merchant_id,amount,amount_cents,bank_last4,status,reason\r\n2026-10-22,Alpha Cafe,m1,1500.50,150050,4321,settled,\r\n");
+    expect(csv).toBe("settlement_date,merchant,merchant_id,amount,amount_cents,bank_last4,source,rail,status,reason\r\n2026-10-22,Alpha Cafe,m1,1500.50,150050,4321,nightly,ach,settled,\r\n");
   });
 
   it("quotes commas and quotes, and defuses spreadsheet formulas in merchant names", () => {
@@ -39,6 +39,11 @@ describe("payoutsCsv", () => {
     expect(lines[1]).toContain('"Salt, ""Sage"" & Co"');
     expect(lines[2]).toContain("\"'=HYPERLINK(\"\"http://x\"\")\"");
     expect(lines[3]).toContain("'+1 Pizza");
+  });
+
+  it("says how each payout was started and sent", () => {
+    const csv = payoutsCsv("2026-10-22", [row({ source: "close_out", rail: "instant" })]);
+    expect(csv.trim().split("\r\n")[1]).toContain(",close_out,instant,");
   });
 
   it("has only the header when there are no payouts", () => {

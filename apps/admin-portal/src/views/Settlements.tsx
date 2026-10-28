@@ -134,7 +134,7 @@ function Day({ api, date, canAdmin, openMerchant, onBack, onError }: { api: Api;
                 {items.map((i) => (
                   <tr key={i.id} className={i.status === "failed" || i.status === "returned" ? "fail-row" : undefined}>
                     <th scope="row">{openMerchant ? <button type="button" className="link" onClick={() => openMerchant(i.merchant_id)}>{i.merchant}</button> : i.merchant}</th>
-                    <td>{i.kind === "payout" ? "Payout" : "Collection"}</td>
+                    <td>{i.kind === "payout" ? "Payout" : "Collection"}{i.source === "close_out" ? <span className="muted note">Close Out</span> : null}{i.rail === "instant" ? <span className="muted note">Instant</span> : null}</td>
                     <td className="num">{money(i.amount)}</td>
                     <td>{i.bank_last4 ? `•••• ${i.bank_last4}` : "—"}</td>
                     <td className="muted">{i.status_code ?? "—"}</td>

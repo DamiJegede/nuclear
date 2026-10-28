@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { easternDate } from "./dates";
 import { limiterFor, sweep } from "./throttle";
 import { purge } from "./retention";
+import { refreshStaleBanks } from "./banks";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
@@ -36,11 +37,13 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const programs = await runDuePrograms(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("programs failed", err), null));
     // Merchant settlement: pay out (or collect) every active merchant's net for the day that just ended, and poll runs the bank still owes
     // an answer for. Never blocks the reset; the run claims its date, so the second cron of the day does nothing new.
+    // Bank directory answers that are missing or old (so a payout picks its rail from a fresh answer); best effort, never blocks settlement.
+    const banks = await refreshStaleBanks(env, sql).catch((err) => (console.error("bank refresh failed", err), null));
     const settlement = await runSettlement(env, sql, easternDate(new Date(scheduledTime))).catch((err) => (console.error("settlement failed", err), null));
     const polled = await pollSubmittedSettlements(env, sql).catch((err) => (console.error("settlement poll failed", err), null));
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
     await pruneCounters(env, addDays(today, -3)).catch(() => null);
-    return { swept, reminders, programs, settlement, polled, snapshots, reconciled, purged };
+    return { swept, reminders, programs, banks, settlement, polled, snapshots, reconciled, purged };
   } finally {
     await sql.end();
   }

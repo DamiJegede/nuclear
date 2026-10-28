@@ -49,6 +49,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     admins: vi.fn().mockResolvedValue([]),
     createAdmin: vi.fn(),
     merchants: vi.fn().mockResolvedValue(pg("merchants", [])),
+    banks: vi.fn().mockResolvedValue({ banks: [], next_cursor: null, total: 0, needs_logo: 0 }),
     users: vi.fn().mockResolvedValue(pg("users", [])),
     transactions: vi.fn().mockResolvedValue({ counts: { all: 0, sends: 0, taps: 0, funds: 0, agents: 0 }, totals: { completed_count: 0, completed_volume: 0 }, transactions: [], next_cursor: null }),
     uploadModelPhoto: vi.fn().mockResolvedValue(null),
@@ -1078,6 +1079,17 @@ describe("roles", () => {
     await signIn(fakeApi(), vi.fn().mockResolvedValue(as(role, pages)));
     await waitFor(() => expect(window.location.pathname).toBe(path));
     expect(navLinks()).toEqual(links);
+  });
+
+  it("a role with the Banks page sees it with a badge for the banks that need a logo, and the Overview says so too", async () => {
+    const banks = vi.fn().mockResolvedValue({ banks: [], next_cursor: null, total: 0, needs_logo: 2 });
+    const user = await signIn(fakeApi({ banks }), vi.fn().mockResolvedValue(as("admin", ["overview", "banks"])));
+    const link = await screen.findByRole("link", { name: /^Banks/ });
+    expect(await within(link).findByLabelText("2 banks need a logo")).toHaveTextContent("2");
+    expect(await screen.findByText(/2 banks need a logo\./)).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Add Logos" }));
+    expect(await screen.findByRole("heading", { name: "Banks" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/banks");
   });
 
   it("an address a role may not open sends it to its landing page (a Tags person typing /admins)", async () => {

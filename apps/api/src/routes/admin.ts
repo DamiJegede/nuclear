@@ -8,7 +8,7 @@ import { amountOrZero, n } from "../lib/money";
 import { achProvider } from "../lib/ach";
 import { easternDate } from "../lib/dates";
 import { confirmSettlement, runSettlement } from "../lib/settlement";
-import { SETTLEMENT_ADMINS, SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
+import { BANK_WRITERS, SETTLEMENT_ADMINS, SHOP_WRITERS, MERCHANT_ADMINS, MERCHANT_WRITERS, PAGES, USER_ADMINS, USER_WRITERS, ROLES, ROLE_PAGES, TAG_WRITERS, canSee, isRole, landing, type Page, type Role } from "../lib/roles";
 import { approvePending, rejectPending } from "../lib/refund";
 import { clientIp, reset as resetThrottle } from "../lib/throttle";
 import { adminLog, log } from "../lib/audit";
@@ -18,6 +18,7 @@ import { MAX_DOWNLOAD_BYTES, deleteUpload, downloadExt, getUpload, mimeOfPath, p
 import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } from "../lib/images";
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
+import { bankList } from "../lib/adminBanks";
 import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { decodeTimeCursor, pageLimit } from "../lib/paging";
@@ -169,6 +170,8 @@ admin.use("/merchants/*", requirePage("merchants"));
 admin.use("/terminals/*", requirePage("merchants"));
 admin.use("/organizations", requirePage("organizations"));
 admin.use("/organizations/*", requirePage("organizations"));
+admin.use("/banks", requirePage("banks"));
+admin.use("/banks/*", requirePage("banks"));
 admin.use("/users", requirePage("users"));
 admin.use("/users/*", requirePage("users"));
 admin.use("/wallets/*", requirePage("users"));
@@ -457,6 +460,49 @@ admin.get("/users", async (c) => {
   const cursor = decodeTimeCursor(q.data.cursor);
   if (cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
   return c.json(await userList(c.get("sql"), q.data.q || null, q.data.limit, cursor));
+});
+
+// ---- Banks: every routing number we have seen (lib/banks.ts), with its name and logo. Admin and Merchants roles upload logos; others only look.
+const bankQuery = z.object({ q: z.string().trim().max(80).optional(), needs_logo: z.enum(["1", "true"]).optional(), limit: pageLimit, cursor: z.string().max(200).optional() });
+admin.get("/banks", async (c) => {
+  const q = bankQuery.safeParse(c.req.query());
+  const cursor = q.success ? decodeTimeCursor(q.data.cursor) : null;
+  if (!q.success || cursor === "invalid") return c.json({ error: "invalid_request" }, 400);
+  return c.json(await bankList(c.get("sql"), q.data.q || null, !!q.data.needs_logo, q.data.limit, cursor));
+});
+const bankWriteDenied = (c: any) => {
+  const a = c.get("adminAuth");
+  return a.kind === "admin" && !BANK_WRITERS.includes(a.role) ? c.json({ error: "forbidden_role" }, 403) : null;
+};
+admin.patch("/banks/:id", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id")), b = z.object({ name: z.string().trim().min(1).max(120) }).safeParse(await c.req.json().catch(() => null));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  const [r] = await c.get("sql")<{ routing_number: string }[]>`update banks set name = ${b.data.name} where id = ${id.data} returning routing_number`;
+  if (!r) return c.json({ error: "not_found" }, 404);
+  await adminLog(c, "bank.renamed", { type: "bank", id: id.data, label: b.data.name }, { routing_number: r.routing_number });
+  return c.body(null, 204);
+});
+admin.put("/banks/:id/icon", async (c) => {
+  const denied = bankWriteDenied(c); if (denied) return denied;
+  const id = merchantId.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (type !== "image/png") return c.json({ error: "unsupported_image_type" }, 415);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.length === 0) return c.json({ error: "invalid_request" }, 400);
+  if (bytes.length > MAX_IMAGE_BYTES) return c.json({ error: "image_too_large" }, 413);
+  if (!isPng(bytes)) return c.json({ error: "invalid_image" }, 400);
+  const sql = c.get("sql");
+  const [m] = await sql<{ name: string | null; routing_number: string; icon: string | null }[]>`select name, routing_number, icon from banks where id = ${id.data}`;
+  if (!m) return c.json({ error: "not_found" }, 404);
+  const key = newImageKey("banks", id.data, "png");
+  if (!(await putPng(c.env, key, bytes))) return c.json({ error: "storage_unavailable" }, 503);
+  await sql`update banks set icon = ${key} where id = ${id.data}`;
+  if (m.icon) await deleteImage(c.env, m.icon);
+  await adminLog(c, "bank.icon_uploaded", { type: "bank", id: id.data, label: m.name ?? m.routing_number });
+  return c.body(null, 204);
 });
 
 // ---- One merchant, for support: profile and numbers, terminals, staff, products, payments and refunds ----
@@ -839,15 +885,15 @@ admin.get("/settlements/:id", async (c) => {
   const id = c.req.param("id");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(id) || Number.isNaN(Date.parse(id))) return c.json({ error: "not_found" }, 404);
   const sql = c.get("sql");
-  const items = await sql<{ id: string; merchant_id: string; merchant: string; amount: bigint; status: string; failure_code: string | null; direction: string; last4: string | null; provider_reference: string | null }[]>`
-    select s.id, s.merchant_account_id as merchant_id, a.name as merchant, s.amount, s.status, s.failure_code, s.direction, ba.last4, s.provider_reference
+  const items = await sql<{ id: string; merchant_id: string; merchant: string; amount: bigint; status: string; failure_code: string | null; direction: string; last4: string | null; provider_reference: string | null; source: string; rail: string }[]>`
+    select s.id, s.merchant_account_id as merchant_id, a.name as merchant, s.amount, s.status, s.failure_code, s.direction, ba.last4, s.provider_reference, s.source, s.rail
       from settlements s join accounts a on a.id = s.merchant_account_id left join bank_accounts ba on ba.id = s.bank_account_id
      where s.settle_date = ${id}::date order by s.amount desc, s.id`;
   if (!items.length) return c.json({ error: "not_found" }, 404);
   const open = items.some((i) => i.status === "submitted");
   return c.json({
     settlement: { id, cutoff_date: id, status: open ? "submitted" : items.every((i) => i.status === "failed") ? "failed" : "completed", provider_reference: items.find((i) => i.provider_reference)?.provider_reference ?? null },
-    items: items.map((i) => ({ id: i.id, merchant_id: i.merchant_id, merchant: i.merchant, kind: i.direction === "credit" ? "payout" : "collection", amount: Number(i.amount), status: i.status, status_code: i.failure_code, bank_last4: i.last4 })),
+    items: items.map((i) => ({ id: i.id, merchant_id: i.merchant_id, merchant: i.merchant, kind: i.direction === "credit" ? "payout" : "collection", amount: Number(i.amount), status: i.status, status_code: i.failure_code, bank_last4: i.last4, source: i.source, rail: i.rail })),
   });
 });
 

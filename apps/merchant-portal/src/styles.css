@@ -468,3 +468,12 @@ dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: ri
 .payout-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; }
 .payout-list li { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto auto; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .payout-list li:last-child { border-bottom: 0; }
+
+/* Overview: the Close Out button sits inside a card that is a stretched link, so it needs to rise above the link. */
+.tile-actions { margin-top: 14px; position: relative; z-index: 2; }
+.tile-actions .sub { margin: 0; }
+.linkcard:hover .tile-actions button.ghost, .linkcard:focus-within .tile-actions button.ghost { color: var(--pop-text); border-color: var(--pop-muted); }
+.bank-line { display: flex; align-items: center; gap: 10px; margin: 6px 0 0; }
+.bank-line .bank-icon { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; background: #fff; border: 1px solid var(--line); }
+.bank-line .bank-glyph { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--soft, rgba(127,127,127,.15)); font-size: 16px; }
+.bank-line .bank-name { font-weight: 600; }

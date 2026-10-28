@@ -260,8 +260,15 @@ export type SettlementRun = {
 };
 export type SettlementItem = {
   id: string; merchant_id: string; merchant: string; kind: "payout" | "collection"; amount: number; status: "submitted" | "settled" | "returned" | "failed";
-  status_code: string | null; bank_last4: string | null;
+  status_code: string | null; bank_last4: string | null; source?: "nightly" | "close_out"; rail?: "instant" | "ach";
 };
+
+/** A bank by routing number: what we know about it. `instant` null = not checked yet or the lookup failed. */
+export type BankRow = {
+  id: string; routing_number: string; name: string | null; icon: string | null; instant: boolean | null; networks: string[];
+  refreshed_at: string | null; created_at: string; accounts: number;
+};
+export type BankPage = { banks: BankRow[]; next_cursor: string | null; total: number; needs_logo: number };
 export type SettlementRunResult =
   | { ran: false; reason: "no_provider" | "already_done" }
   | { ran: true; cutoff_date: string; created: number; payouts: number; collections: number; payout_total: number; collection_total: number; status: string };
@@ -432,6 +439,17 @@ export function createApi(token: string, base: string = API_URL) {
     provisionTags: (id: string, uids: string[]) =>
       request<ProvisionResult>("POST", `/v1/admin/tag-models/${encodeURIComponent(id)}/tags`, { uids }),
     /** Uploads the (already resized) photo for a model. */
+    banks: (o: { q?: string; needsLogo?: boolean; cursor?: string; limit?: number } = {}) => {
+      const p = new URLSearchParams();
+      if (o.q) p.set("q", o.q);
+      if (o.needsLogo) p.set("needs_logo", "1");
+      if (o.cursor) p.set("cursor", o.cursor);
+      if (o.limit) p.set("limit", String(o.limit));
+      const t = p.toString();
+      return request<BankPage>("GET", `/v1/admin/banks${t ? `?${t}` : ""}`);
+    },
+    renameBank: (id: string, name: string) => request<null>("PATCH", `/v1/admin/banks/${encodeURIComponent(id)}`, { name }),
+    uploadBankIcon: (id: string, icon: Blob) => request<null>("PUT", `/v1/admin/banks/${encodeURIComponent(id)}/icon`, icon),
     uploadModelPhoto: (id: string, photo: Blob) => request<null>("PUT", `/v1/admin/tag-models/${encodeURIComponent(id)}/photo`, photo),
     createModel: async (m: NewModel) => (await request<{ model: TagModel }>("POST", "/v1/admin/tag-models", m)).model,
   };

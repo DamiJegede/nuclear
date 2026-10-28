@@ -13,6 +13,10 @@ import { PROGRAM_TZ } from "../lib/dates";
 import { soldToday } from "../lib/txn";
 import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
+import { closeOut } from "../lib/settlement";
+import { RULES, byAccount, rateLimit } from "../lib/throttle";
+import { BANK_COLS, bankView, ensureBank, refreshBank, type BankRow } from "../lib/banks";
+import type { Sql } from "../db";
 
 /**
  * Everything a business owner manages from the merchant portal that is not a terminal, staff or refund (those have their own routes):
@@ -32,7 +36,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 business.get("/overview", async (c) => {
   const sql = c.get("sql");
   const id = c.get("auth").accountId;
-  const [bal, term, pend, staff, orders, prof, cats, prods, best, tx] = await Promise.all([
+  const [bal, term, pend, staff, orders, prof, cats, prods, best, tx, payout] = await Promise.all([
     sql<{ balance: bigint; balance_pending: bigint }[]>`select balance, balance_pending from balances where account_id = ${id}`,
     sql<{ n: number; paired: number }[]>`select count(*)::int as n, (count(*) filter (where t.orb_uid is not null))::int as paired from terminals t where t.account_id = ${id}`,
     sql<{ n: number; v: bigint }[]>`select count(*)::int as n, coalesce(sum(amount), 0) as v from refunds where merchant_account_id = ${id} and status = 'pending'`,
@@ -43,15 +47,23 @@ business.get("/overview", async (c) => {
     sql<{ n: number }[]>`select count(*)::int as n from products where account_id = ${id}`,
     // Today's best seller: the product with the most units sold today (the counter resets at 00:00 New York); ties go to the bigger lifetime seller.
     sql<{ name: string; sold_today: number }[]>`select name, ${sql.unsafe(soldToday)} as sold_today from products where account_id = ${id} and ${sql.unsafe(soldToday)} > 0 order by 2 desc, total_sold desc, name limit 1`,
-    // Today (since 00:00 New York) and yesterday, from the account's payments and refunds, read once.
-    sql<{ today_n: number; y_pay: bigint; y_ref: bigint }[]>`
+    // Today and yesterday, from the account's payments and refunds, read once. Today starts at 00:00 New York, or at the moment the merchant closed
+    // out today if that is later: whatever is sold after a close-out belongs to the next day.
+    sql<{ today_n: number; since: Date; closed_out_at: Date | null; y_pay: bigint; y_ref: bigint }[]>`
       with d as (select ((now() at time zone ${PROGRAM_TZ})::date)::timestamp at time zone ${PROGRAM_TZ} as t0,
-                        (((now() at time zone ${PROGRAM_TZ})::date - 1)::timestamp at time zone ${PROGRAM_TZ}) as y0)
-      select (count(*) filter (where x."timestamp" >= d.t0))::int as today_n,
-             coalesce(sum(x.amount) filter (where x.type = 'pay' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_pay,
-             coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= d.y0 and x."timestamp" < d.t0), 0) as y_ref
-        from txn x, d
-       where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= d.y0`,
+                        (((now() at time zone ${PROGRAM_TZ})::date - 1)::timestamp at time zone ${PROGRAM_TZ}) as y0,
+                        (select max(s.created_at) from settlements s where s.merchant_account_id = ${id} and s.source = 'close_out'
+                            and s.settle_date = (now() at time zone ${PROGRAM_TZ})::date) as closed),
+           e as (select t0, y0, closed, greatest(t0, coalesce(closed, t0)) as since from d)
+      select (count(*) filter (where x."timestamp" >= e.since))::int as today_n, min(e.since) as since, min(e.closed) as closed_out_at,
+             coalesce(sum(x.amount) filter (where x.type = 'pay' and x.status = 'completed' and x."timestamp" >= e.y0 and x."timestamp" < e.t0), 0) as y_pay,
+             coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= e.y0 and x."timestamp" < e.t0), 0) as y_ref
+        from txn x, e
+       where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= e.y0`,
+    sql<(BankRow & { last4: string })[]>`
+      select ${sql.unsafe(BANK_COLS.split(", ").map((c) => `k.${c}`).join(", "))}, ba.last4
+        from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.status = 'active' left join banks k on k.id = ba.bank_id
+       where b.account_id = ${id}`,
   ]);
   return c.json({
     balance: Number(bal[0]?.balance ?? 0n), balance_pending: Number(bal[0]?.balance_pending ?? 0n),
@@ -62,7 +74,8 @@ business.get("/overview", async (c) => {
     city: prof[0]?.city ?? null, state: prof[0]?.state ?? null,
     categories: cats[0]!.n, products: prods[0]!.n,
     best_seller: best[0] ? { name: best[0].name, sold_today: best[0].sold_today } : null,
-    today: { transactions: tx[0]!.today_n },
+    today: { transactions: tx[0]!.today_n, since: tx[0]!.since ?? null, closed_out_at: tx[0]!.closed_out_at ?? null },
+    payout_bank: payout[0] ? { last4: payout[0].last4, institution: bankView(payout[0].id ? payout[0] : null) } : null,
     yesterday: { net: Number(tx[0]!.y_pay) - Number(tx[0]!.y_ref) },
   });
 });
@@ -131,17 +144,27 @@ business.put("/profile", async (c) => {
 });
 
 // ---- Payout bank (where settlements will go; settlement itself is not built) ----------------------------
-const bankJson = (r: { id: string; last4: string; status: string; created_at: Date } | undefined) => (r ? { id: r.id, last4: r.last4, status: r.status, created_at: r.created_at } : null);
+type BankAccountRow = { id: string; last4: string; status: string; created_at: Date; bank_id: string | null };
+const bankJson = (r: BankAccountRow | undefined, bank: BankRow | null = null) =>
+  r ? { id: r.id, last4: r.last4, status: r.status, created_at: r.created_at, institution: bankView(bank) } : null;
 const abaOk = (r: string) => { const d = [...r].map(Number); return (3 * (d[0]! + d[3]! + d[6]!) + 7 * (d[1]! + d[4]! + d[7]!) + (d[2]! + d[5]! + d[8]!)) % 10 === 0; };
 
+const bankById = async (sql: Sql, id: string | null): Promise<BankRow | null> => {
+  if (!id) return null;
+  const [b] = await sql<BankRow[]>`select ${sql.unsafe(BANK_COLS)} from banks where id = ${id}`;
+  return b ?? null;
+};
+
 business.get("/bank", async (c) => {
-  const [r] = await c.get("sql")<{ id: string; last4: string; status: string; created_at: Date }[]>`
-    select ba.id, ba.last4, ba.status, ba.created_at from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.account_id = b.account_id
+  const sql = c.get("sql");
+  const [r] = await sql<BankAccountRow[]>`
+    select ba.id, ba.last4, ba.status, ba.created_at, ba.bank_id from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.account_id = b.account_id
      where b.account_id = ${c.get("auth").accountId} and ba.status = 'active'`;
-  return c.json({ bank: bankJson(r) });
+  return c.json({ bank: bankJson(r, await bankById(sql, r?.bank_id ?? null)) });
 });
 
-// Set or replace the payout bank: the previous one is marked removed. Needs the business profile first.
+// Set or replace the payout bank: the previous one is marked removed. Needs the business profile first. The bank (by routing number) is looked up
+// once for everyone (lib/banks.ts): the answer says whether payouts can be instant; a lookup that fails or is slow never blocks saving the bank.
 business.put("/bank", async (c) => {
   const b = z.object({ routing_number: z.string().trim().regex(/^\d{9}$/), account_number: z.string().trim().regex(/^\d{4,17}$/) }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request" }, 400);
@@ -152,19 +175,22 @@ business.put("/bank", async (c) => {
   if (!c.env.BANK_ENCRYPTION_KEY) return c.json({ error: "encryption_unavailable" }, 503);
   const routing = b.data.routing_number;
   const account = encryptBankField(c.env.BANK_ENCRYPTION_KEY, accountId, "account", b.data.account_number);
-  const out = await c.get("sql").begin(async (tx) => {
+  const sql = c.get("sql");
+  let bank = await ensureBank(sql, routing);
+  const out = await sql.begin(async (tx) => {
     const [p] = await tx<{ bank_account_id: string | null }[]>`select bank_account_id from businesses where account_id = ${accountId} for no key update`;
     if (!p) return { error: "profile_required" as const };
-    const [n] = await tx<{ id: string; last4: string; status: string; created_at: Date }[]>`
-      insert into bank_accounts (account_id, routing_number, account_number, last4)
-      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}) returning id, last4, status, created_at`;
+    const [n] = await tx<BankAccountRow[]>`
+      insert into bank_accounts (account_id, routing_number, account_number, last4, bank_id)
+      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}, ${bank.id}) returning id, last4, status, created_at, bank_id`;
     await tx`update businesses set bank_account_id = ${n!.id} where account_id = ${accountId}`;
     if (p.bank_account_id) await tx`update bank_accounts set status = 'removed' where id = ${p.bank_account_id} and account_id = ${accountId}`;
     return { bank: n! };
   });
   if ("error" in out) return c.json({ error: out.error }, 409);
-  await customerLog(c, accountId, null, "business.bank_saved", { last4: out.bank.last4 });
-  return c.json({ bank: bankJson(out.bank) }, 201);
+  bank = await refreshBank(c.env, sql, bank);                                   // answers right away when it can; never throws
+  await customerLog(c, accountId, null, "business.bank_saved", { last4: out.bank.last4, bank_id: bank.id });
+  return c.json({ bank: bankJson(out.bank, bank) }, 201);
 });
 
 // Settlements to and from the payout bank: type 'settle' transactions (a positive daily net is a payout to the bank, a negative one a collection
@@ -173,14 +199,26 @@ business.get("/payouts", async (c) => {
   const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).safeParse(c.req.query());
   if (!q.success) return c.json({ error: "invalid_request" }, 400);
   const id = c.get("auth").accountId;
-  const rows = await c.get("sql")<{ id: string; amount: bigint; status: string; failure_code: string | null; ts: Date; resolved_at: Date | null; direction: string; last4: string | null }[]>`
-    select s.id, s.amount, s.status, s.failure_code, s.created_at as ts, s.resolved_at, s.direction, ba.last4
+  const rows = await c.get("sql")<{ id: string; amount: bigint; status: string; failure_code: string | null; ts: Date; resolved_at: Date | null; direction: string; last4: string | null; source: string; rail: string }[]>`
+    select s.id, s.amount, s.status, s.failure_code, s.created_at as ts, s.resolved_at, s.direction, ba.last4, s.source, s.rail
       from settlements s left join bank_accounts ba on ba.id = s.bank_account_id
      where s.merchant_account_id = ${id}
      order by s.settle_date desc, s.id desc limit ${q.data.limit}`;
   // The merchant's view keeps its words: a payout or collection is completed once the bank has settled it.
   const word = (s: string) => (s === "settled" ? "completed" : s === "submitted" ? "pending" : s);
-  return c.json({ payouts: rows.map((r) => ({ id: r.id, kind: r.direction === "credit" ? "payout" : "collection", amount: Number(r.amount), status: word(r.status), status_code: r.failure_code, timestamp: r.ts, completed_at: r.resolved_at, bank_last4: r.last4 })) });
+  return c.json({ payouts: rows.map((r) => ({ id: r.id, kind: r.direction === "credit" ? "payout" : "collection", amount: Number(r.amount), status: word(r.status), status_code: r.failure_code, timestamp: r.ts, completed_at: r.resolved_at, bank_last4: r.last4, source: r.source, rail: r.rail })) });
+});
+
+// Close out: end the day now. The whole balance is paid to the payout bank at once (instantly where the bank supports it, else same-day ACH) and
+// anything sold afterwards belongs to the next day. One per day; the owner only (staff sign-in is not built).
+business.post("/close-out", rateLimit("close-out", RULES.closeOut, byAccount), async (c) => {
+  const { accountId } = c.get("auth");
+  const r = await closeOut(c.env, c.get("sql"), accountId);
+  if (!r.ok) {
+    const status = r.error === "payouts_unavailable" ? 503 : 409;
+    return c.json({ error: r.error, ...(r.owed !== undefined ? { owed: r.owed } : {}) }, status);
+  }
+  return c.json({ settlement: { ...r.settlement, status: r.settlement.status === "settled" ? "completed" : r.settlement.status === "submitted" ? "pending" : r.settlement.status } }, 201);
 });
 
 business.delete("/bank", async (c) => {

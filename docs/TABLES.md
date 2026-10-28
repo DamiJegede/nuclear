@@ -4,7 +4,7 @@ Updated October 23, 2026. This is the schema the code is built on: one initial m
 
 ## Current decisions
 
-**29 tables.** Identity and access: accounts, balances, wallets, devices, businesses, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
+**30 tables.** Identity and access: accounts, balances, wallets, devices, businesses, banks, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
 
 - **`transactions` is the source of truth and is immutable.** Every transaction is from one wallet to one wallet and is written once with a final outcome, `completed` or `declined`; nothing ever updates it. A correction is a new transaction (refund, fund_return, settle_return, adjustment). There is no ledger table: balances are checked against what the transactions did (reconciliation, below).
 - **Every account has a balance** (consumers, merchants, organizations, and the system account).
@@ -276,6 +276,23 @@ Every sign-in failure (unknown id, wrong password, wrong code, disabled, locked)
 | created_at | Creation timestamp. |
 | last_used_at | Nullable last use. |
 
+## banks
+
+One row per routing number (migration 0005), shared by every payout bank and, later, every linked consumer bank, so a bank is looked up once and not once per account (`lib/banks.ts`). Created the first time anyone adds an account at that routing number.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key. |
+| routing_number | Unique, 9 digits (the ABA checksum is checked before an account is saved). |
+| name | The institution's name: filled from the bank directory when empty, editable by an admin (the admin's name is never overwritten). NULL when no directory entry exists (a bank that is not on an instant network has none). |
+| icon | R2 key `banks/<id>-<epoch ms>.png` (CHECK), uploaded by an admin on the Banks page; the API returns the full URL. The directory has no pictures. |
+| instant | `true` = the bank receives instant payments (RTP `CRDT`, FedNow `CTRO`/`CTSR`), `false` = it does not, **NULL = not known** (never checked, or the lookup failed). NULL is treated as "not instant" when a payout is sent. |
+| networks | `{RTP, FedNow}` subset the bank takes (a FedNow-only payout is capped at $500K, RTP $1M). |
+| refreshed_at | When the directory was last read **successfully**; an answer older than 30 days is read again (at bank-add, and by the nightly job for banks in use). |
+| created_at, updated_at | Timestamps. |
+
+A failed lookup never blocks a bank: it is saved with `instant` NULL and tried again after an hour (an attempt marker per routing number in `system`, key `bank_lookup:<routing>`), so a rush of merchants adding one bank causes one lookup.
+
 ## bank_accounts
 
 | Field | Description |
@@ -285,6 +302,7 @@ Every sign-in failure (unknown id, wrong password, wrong code, disabled, locked)
 | routing_number | The 9-digit routing number, stored as **plain text** (it is public: the Fed publishes the directory; migrations 0027/0028 enforce the format). Customer sandbox loads hold the placeholder `SANDBOX`. Not returned by the merchant endpoints (only `last4` of the account number is). |
 | account_number | The account number, stored **encrypted** (AES-256-GCM, `v1.` prefix, bound to the account and field), kept so settlements can be originated and the payout bank can move to another provider. Only `last4` is ever shown; full reads go through one audited function. |
 | last4 | Last four digits for display. |
+| bank_id | Nullable foreign key to `banks` (migration 0005): the bank this routing number belongs to. NULL only for the `SANDBOX` placeholder. |
 | provider_account_id | Nullable linked-bank-account resource identifier assigned by the banking provider. |
 | status | Bank-link operational status. |
 | created_at | Creation timestamp. |
@@ -539,10 +557,12 @@ One row per merchant per day: the payout (credit) or collection (debit) the sett
 | Field | Description |
 | --- | --- |
 | id | Primary key. |
-| settle_date | The program date (America/New_York) being settled. Unique with merchant_account_id: a rerun or a second cron cannot settle a merchant twice for a day. |
+| settle_date | The program date (America/New_York) being settled. Unique with merchant_account_id: a rerun, a second cron or a second close-out cannot settle a merchant twice for a day (a close-out takes today's date, so the nightly run skips that merchant for the day). |
 | merchant_account_id | The merchant. |
 | bank_account_id | The payout bank used (composite foreign key with the merchant). |
 | direction | `credit` (a payout to the bank) or `debit` (a collection from it). |
+| source | `nightly` (the daily job) or `close_out` (the merchant ended its day). Migration 0005. |
+| rail | `instant` (RTP or FedNow) or `ach` (same-day for a close-out, standard for the nightly run). A collection is always `ach`. An instant payment the bank cannot take is moved to `ach` on the same row. Migration 0005. |
 | amount | Positive bigint cents. |
 | status | `submitted` (sent to the bank, waiting), `settled`, `returned` (the bank returned it) or `failed` (the batch was refused). `resolved_at` is set exactly when the status is not `submitted`. |
 | provider_reference | Bank or ACH batch identifier. |

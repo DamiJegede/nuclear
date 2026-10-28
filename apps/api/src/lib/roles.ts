@@ -5,7 +5,7 @@
 export const ROLES = ["admin", "accounting", "sales", "support", "tags", "merchants"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const PAGES = ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions", "shop", "audit"] as const;
+export const PAGES = ["overview", "merchants", "organizations", "users", "tags", "admins", "transactions", "shop", "audit", "banks"] as const;
 export type Page = (typeof PAGES)[number];
 
 /** Pages per role. Every role can also open its own Security page (its own two-step verification). */
@@ -15,8 +15,11 @@ export const ROLE_PAGES: Record<Role, readonly Page[]> = {
   sales: ["users", "merchants", "organizations", "tags", "shop"],
   support: ["users", "organizations", "transactions"],
   tags: ["tags"],
-  merchants: ["merchants"],
+  merchants: ["merchants", "banks"],
 };
+
+/** Roles that may rename a bank and upload its logo. Everyone else with the Banks page only looks. */
+export const BANK_WRITERS: readonly Role[] = ["admin", "merchants"];
 
 /** Shop items (our merch): Admin and Sales change them; the Audit Log is for Admin only (via the pages above). */
 export const SHOP_WRITERS: readonly Role[] = ["admin", "sales"];
