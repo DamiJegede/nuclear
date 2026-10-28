@@ -27,6 +27,25 @@ export type RoutingRow = {
 export const ROUTING_COLS = "r.id, r.routing_number, r.directory_name, r.institution_id, r.instant, r.networks, r.refreshed_at, r.created_at, coalesce(i.name, r.directory_name) as name, i.icon";
 export const ROUTING_FROM = "routing_numbers r left join institutions i on i.id = r.institution_id";
 
+/**
+ * A merchant's bank account as the apps see it: the routing number's facts plus the institution to show, which is the merchant's own pick
+ * (`bank_accounts.institution_id`, a brand such as Mercury) before the routing number's institution (the partner bank, Column), and whether that
+ * institution has brands to pick from (`has_brands`, one index lookup on `institution_hosts_host_idx`). Two primary-key joins and no scan.
+ */
+export type AccountBank = RoutingRow & { picked_id: string | null; has_brands: boolean };
+export const ACCOUNT_BANK_COLS = `r.id, r.routing_number, r.directory_name, r.institution_id, r.instant, r.networks, r.refreshed_at, r.created_at,
+  coalesce(p.name, i.name, r.directory_name) as name, coalesce(p.icon, i.icon) as icon, ba.institution_id as picked_id,
+  exists (select 1 from institution_hosts h where h.host_id = r.institution_id) as has_brands`;
+export const ACCOUNT_BANK_FROM = `bank_accounts ba join routing_numbers r on r.id = ba.routing_number_id left join institutions i on i.id = r.institution_id
+  left join institutions p on p.id = ba.institution_id`;
+
+/** The choices a merchant gets when the routing number's institution has brands: each brand, then the partner bank itself ("none of these"). */
+export async function bankChoices(sql: Sql, b: Pick<AccountBank, "institution_id" | "has_brands">) {
+  if (!b.has_brands || !b.institution_id) return [];
+  const [host] = await sql<{ id: string; name: string; icon: string | null }[]>`select id, name, icon from institutions where id = ${b.institution_id}`;
+  return [...(await brandChoices(sql, b.institution_id)), ...(host ? [{ id: host.id, name: host.name, icon: imageUrl(host.icon) }] : [])];
+}
+
 /** How long a directory answer is trusted, and how long to wait before trying a bank again after a failed lookup. */
 export const STALE_DAYS = 30;
 export const RETRY_AFTER_FAILURE_HOURS = 1;
@@ -69,30 +88,50 @@ export async function ensureRouting(sql: Sql, routing: string): Promise<RoutingR
 
 const norm = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
 
-/** The institution whose name or alias is the longest whole-word match inside a directory name ("JPMORGAN CHASE BANK, NATIONAL ASSOCIATION" finds Chase through the alias "jpmorgan chase"). */
-export async function matchInstitution(sql: Sql, directoryName: string | null): Promise<string | null> {
-  if (!directoryName) return null;
-  const hay = norm(directoryName);
-  const rows = await sql<{ id: string; name: string; aliases: string[] }[]>`select id, name, aliases from institutions`;
-  let best: { id: string; len: number } | null = null;
-  for (const i of rows) {
-    for (const c of [i.name, ...textArray(i.aliases)]) {
-      const n = norm(c);
-      if (n.trim() && hay.includes(n) && (!best || n.length > best.len)) best = { id: i.id, len: n.length };
-    }
-  }
-  return best?.id ?? null;
+/**
+ * Matches a directory name against every institution's name and aliases with ONE read of the (small) institutions table, then in memory: the longest
+ * whole-word match wins ("JPMORGAN CHASE BANK, NATIONAL ASSOCIATION" finds Chase through the alias "jpmorgan chase"). A brand that runs on partner
+ * banks (`institution_hosts`) is skipped: the merchant picks it, a directory name never names it. Matching happens when a routing number is first
+ * seen or refreshed (the result is stored on the routing number), never when a bank is read.
+ */
+export async function institutionMatcher(sql: Sql): Promise<(directoryName: string | null) => string | null> {
+  const rows = await sql<{ id: string; name: string; aliases: string[] }[]>`
+    select i.id, i.name, i.aliases from institutions i where not exists (select 1 from institution_hosts h where h.brand_id = i.id)`;
+  const cands = rows.flatMap((i) => [i.name, ...textArray(i.aliases)].map((c) => ({ id: i.id, n: norm(c) })).filter((c) => c.n.trim()));
+  return (directoryName) => {
+    if (!directoryName) return null;
+    const hay = norm(directoryName);
+    let best: { id: string; len: number } | null = null;
+    for (const c of cands) if (hay.includes(c.n) && (!best || c.n.length > best.len)) best = { id: c.id, len: c.n.length };
+    return best?.id ?? null;
+  };
 }
 
-/** Links every routing number that has no institution yet and whose directory name matches one. Returns how many were linked. */
+export async function matchInstitution(sql: Sql, directoryName: string | null): Promise<string | null> {
+  return directoryName ? (await institutionMatcher(sql))(directoryName) : null;
+}
+
+/** Links every routing number that has no institution yet and whose directory name matches one: one read of the institutions, one of the unlinked numbers. Returns how many were linked. */
 export async function autoLinkInstitutions(sql: Sql): Promise<number> {
   const rows = await sql<{ id: string; directory_name: string }[]>`select id, directory_name from routing_numbers where institution_id is null and directory_name is not null`;
+  if (!rows.length) return 0;
+  const match = await institutionMatcher(sql);
   let linked = 0;
   for (const r of rows) {
-    const inst = await matchInstitution(sql, r.directory_name);
+    const inst = match(r.directory_name);
     if (inst && (await sql`update routing_numbers set institution_id = ${inst} where id = ${r.id} and institution_id is null returning id`).length) linked += 1;
   }
   return linked;
+}
+
+/** The normalised form of a name or alias, for comparing: lower case, words only. */
+export const aliasKey = (s: string) => norm(s).trim();
+
+/** The brands that run on a host institution (what the merchant picks from), most used first is not needed: alphabetical. */
+export async function brandChoices(sql: Sql, hostId: string) {
+  const rows = await sql<{ id: string; name: string; icon: string | null }[]>`
+    select b.id, b.name, b.icon from institution_hosts h join institutions b on b.id = h.brand_id where h.host_id = ${hostId} order by b.name`;
+  return rows.map((r) => ({ id: r.id, name: r.name, icon: imageUrl(r.icon) }));
 }
 
 /** A text[] column as the driver here returns it (the raw `{a,"b c"}` literal, or already an array): the list of strings. */
@@ -160,6 +199,7 @@ export async function refreshStaleBanks(env: Env, sql: Sql, limit = 50): Promise
   return { checked: rows.length, refreshed };
 }
 
-/** What the apps and portals get to know about a bank: its institution's name and logo (the directory's name until it has one) and whether it takes instant payouts. `instant` null = not known. */
-export const bankView = (b: Pick<RoutingRow, "id" | "name" | "icon" | "instant"> | null | undefined) =>
-  b ? { id: b.id, name: b.name, icon: imageUrl(b.icon), instant: b.instant } : null;
+/** What the apps and portals get to know about a bank: its institution's name and logo (the directory's name until it has one) and whether it takes instant payouts. `instant` null = not known.
+ *  `choices` (brands to pick from, the partner bank last) and `needs_choice` are there only when the routing number belongs to a partner bank with brands. */
+export const bankView = (b: Pick<RoutingRow, "id" | "name" | "icon" | "instant"> | null | undefined, choices: { id: string; name: string; icon: string | null }[] = [], picked = false) =>
+  b ? { id: b.id, name: b.name, icon: imageUrl(b.icon), instant: b.instant, ...(choices.length ? { choices, needs_choice: !picked } : {}) } : null;

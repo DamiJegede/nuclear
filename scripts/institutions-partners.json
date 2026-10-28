@@ -1,0 +1,15 @@
+[
+  {"name": "Column", "domain": "column.com", "aliases": ["column"]},
+  {"name": "Choice Financial Group", "aliases": ["choice financial group"]},
+  {"name": "Thread Bank", "aliases": ["thread bank"]},
+  {"name": "Stride Bank", "aliases": ["stride bank"]},
+  {"name": "Piermont Bank", "aliases": ["piermont bank"]},
+  {"name": "Coastal Community Bank", "aliases": ["coastal community bank"]},
+  {"name": "Middlesex Federal Savings", "aliases": ["middlesex federal savings"]},
+  {"name": "Lead Bank", "aliases": ["lead bank"]},
+  {"name": "Evolve Bank", "aliases": ["evolve bank"]},
+  {"name": "Sutton Bank", "domain": "suttonbank.com", "aliases": ["sutton bank"]},
+  {"name": "Lincoln Savings Bank", "aliases": ["lincoln savings bank"]},
+  {"name": "Community Federal Savings Bank", "aliases": ["community federal savings bank"]},
+  {"name": "Green Dot Bank", "domain": "greendot.com", "aliases": ["green dot bank"]}
+]

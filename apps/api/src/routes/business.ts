@@ -15,7 +15,7 @@ import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { closeOut } from "../lib/settlement";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
-import { abaOk, ROUTING_COLS, ROUTING_FROM, bankView, ensureRouting, refreshBank, type RoutingRow } from "../lib/banks";
+import { abaOk, ACCOUNT_BANK_COLS, ACCOUNT_BANK_FROM, bankChoices, bankView, ensureRouting, refreshBank, type AccountBank } from "../lib/banks";
 import type { Sql } from "../db";
 
 /**
@@ -60,10 +60,10 @@ business.get("/overview", async (c) => {
              coalesce(sum(x.amount) filter (where x.type = 'refund' and x.status = 'completed' and x."timestamp" >= e.y0 and x."timestamp" < e.t0), 0) as y_ref
         from txn x, e
        where ((x.to_account_id = ${id} and x.type = 'pay') or (x.from_account_id = ${id} and x.type = 'refund')) and x."timestamp" >= e.y0`,
-    sql<(RoutingRow & { last4: string })[]>`
-      select ${sql.unsafe(ROUTING_COLS)}, ba.last4
+    sql<(AccountBank & { last4: string })[]>`
+      select ${sql.unsafe(ACCOUNT_BANK_COLS)}, ba.last4
         from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.status = 'active'
-        join routing_numbers r on r.id = ba.routing_number_id left join institutions i on i.id = r.institution_id
+        join routing_numbers r on r.id = ba.routing_number_id left join institutions i on i.id = r.institution_id left join institutions p on p.id = ba.institution_id
        where b.account_id = ${id}`,
   ]);
   return c.json({
@@ -146,21 +146,39 @@ business.put("/profile", async (c) => {
 
 // ---- Payout bank (where settlements will go; settlement itself is not built) ----------------------------
 type BankAccountRow = { id: string; last4: string; status: string; created_at: Date; routing_number_id: string | null };
-const bankJson = (r: BankAccountRow | undefined, bank: RoutingRow | null = null) =>
-  r ? { id: r.id, last4: r.last4, status: r.status, created_at: r.created_at, institution: bankView(bank) } : null;
+const bankJson = async (sql: Sql, r: BankAccountRow | undefined, bank: AccountBank | null) =>
+  r ? { id: r.id, last4: r.last4, status: r.status, created_at: r.created_at, institution: bankView(bank, bank ? await bankChoices(sql, bank) : [], !!bank?.picked_id) } : null;
 
-const bankById = async (sql: Sql, id: string | null): Promise<RoutingRow | null> => {
-  if (!id) return null;
-  const [b] = await sql<RoutingRow[]>`select ${sql.unsafe(ROUTING_COLS)} from ${sql.unsafe(ROUTING_FROM)} where r.id = ${id}`;
+/** One bank account of this business with its routing number and the institution to show (the merchant's own pick before the routing number's). */
+const accountBank = async (sql: Sql, bankAccountId: string, accountId: string): Promise<AccountBank | null> => {
+  const [b] = await sql<AccountBank[]>`select ${sql.unsafe(ACCOUNT_BANK_COLS)} from ${sql.unsafe(ACCOUNT_BANK_FROM)} where ba.id = ${bankAccountId} and ba.account_id = ${accountId}`;
   return b ?? null;
 };
 
 business.get("/bank", async (c) => {
-  const sql = c.get("sql");
+  const sql = c.get("sql"), accountId = c.get("auth").accountId;
   const [r] = await sql<BankAccountRow[]>`
     select ba.id, ba.last4, ba.status, ba.created_at, ba.routing_number_id from businesses b join bank_accounts ba on ba.id = b.bank_account_id and ba.account_id = b.account_id
-     where b.account_id = ${c.get("auth").accountId} and ba.status = 'active'`;
-  return c.json({ bank: bankJson(r, await bankById(sql, r?.routing_number_id ?? null)) });
+     where b.account_id = ${accountId} and ba.status = 'active'`;
+  return c.json({ bank: await bankJson(sql, r, r ? await accountBank(sql, r.id, accountId) : null) });
+});
+
+// The merchant says which brand this bank account is when its routing number belongs to a partner bank that several brands run on (Column: Mercury,
+// Brex...). Only the brands of that partner, or the partner itself, are accepted; the pick belongs to this bank account alone.
+business.put("/bank/institution", async (c) => {
+  const b = z.object({ institution_id: uuid }).safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request" }, 400);
+  const sql = c.get("sql"), accountId = c.get("auth").accountId;
+  const [r] = await sql<BankAccountRow[]>`
+    select ba.id, ba.last4, ba.status, ba.created_at, ba.routing_number_id from businesses bz join bank_accounts ba on ba.id = bz.bank_account_id and ba.account_id = bz.account_id
+     where bz.account_id = ${accountId} and ba.status = 'active'`;
+  const cur = r ? await accountBank(sql, r.id, accountId) : null;
+  if (!r || !cur) return c.json({ error: "no_bank" }, 404);
+  const choices = await bankChoices(sql, cur);
+  if (!choices.some((x) => x.id === b.data.institution_id)) return c.json({ error: "invalid_choice" }, 422);
+  await sql`update bank_accounts set institution_id = ${b.data.institution_id} where id = ${r.id} and account_id = ${accountId}`;
+  await customerLog(c, accountId, null, "business.bank_brand", { institution_id: b.data.institution_id });
+  return c.json({ bank: await bankJson(sql, r, await accountBank(sql, r.id, accountId)) });
 });
 
 // Set or replace the payout bank: the previous one is marked removed. Needs the business profile first. The bank (by routing number) is looked up
@@ -176,7 +194,7 @@ business.put("/bank", async (c) => {
   const routing = b.data.routing_number;
   const account = encryptBankField(c.env.BANK_ENCRYPTION_KEY, accountId, "account", b.data.account_number);
   const sql = c.get("sql");
-  let bank = await ensureRouting(sql, routing);
+  const bank = await ensureRouting(sql, routing);
   const out = await sql.begin(async (tx) => {
     const [p] = await tx<{ bank_account_id: string | null }[]>`select bank_account_id from businesses where account_id = ${accountId} for no key update`;
     if (!p) return { error: "profile_required" as const };
@@ -188,9 +206,9 @@ business.put("/bank", async (c) => {
     return { bank: n! };
   });
   if ("error" in out) return c.json({ error: out.error }, 409);
-  bank = await refreshBank(c.env, sql, bank);                                   // answers right away when it can; never throws
+  await refreshBank(c.env, sql, bank);                                          // answers right away when it can; never throws
   await customerLog(c, accountId, null, "business.bank_saved", { last4: out.bank.last4, routing_number_id: bank.id });
-  return c.json({ bank: bankJson(out.bank, bank) }, 201);
+  return c.json({ bank: await bankJson(sql, out.bank, await accountBank(sql, out.bank.id, accountId)) }, 201);
 });
 
 // Settlements to and from the payout bank: type 'settle' transactions (a positive daily net is a payout to the bank, a negative one a collection

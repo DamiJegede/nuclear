@@ -59,7 +59,9 @@ export type Overview = {
   payout_bank: { last4: string; institution: Institution | null } | null;
 };
 /** A bank by routing number: its name and logo when we have them, and whether it takes instant payouts (null = not known). */
-export type Institution = { id: string; name: string | null; icon: string | null; instant: boolean | null };
+/** The bank a payout goes to. `choices` (brands, the partner bank last) is there when the routing number belongs to a partner bank several brands run on, `needs_choice` until the merchant says which. */
+export type BankChoice = { id: string; name: string; icon: string | null };
+export type Institution = { id: string; name: string | null; icon: string | null; instant: boolean | null; choices?: BankChoice[]; needs_choice?: boolean };
 export type CloseOutResult = { settlement: { id: string; date: string; amount: number; rail: "instant" | "ach"; status: string; arrival: "instant" | "today" | "next_business_day" } };
 export type TxKind = "all" | "payments" | "refunds" | "pending";
 export type TxRow = {
@@ -152,6 +154,7 @@ export function createApi(token: string, base: string = API_URL) {
     saveBank: async (input: { routing_number: string; account_number: string }) => (await request<{ bank: PayoutBank }>("PUT", "/v1/business/bank", input)).bank,
     payouts: async () => (await request<{ payouts: Payout[] }>("GET", "/v1/business/payouts")).payouts,
     closeOut: async () => (await request<CloseOutResult>("POST", "/v1/business/close-out")).settlement,
+    chooseBank: async (institution_id: string) => (await request<{ bank: PayoutBank }>("PUT", "/v1/business/bank/institution", { institution_id })).bank,
     removeBank: () => request<null>("DELETE", "/v1/business/bank"),
     categories: async () => (await request<{ categories: Category[] }>("GET", "/v1/business/categories")).categories,
     createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,

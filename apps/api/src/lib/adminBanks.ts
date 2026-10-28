@@ -7,7 +7,8 @@ import { textArray } from "./banks";
 type Cursor = { ts: string; id: string } | null;
 
 /** In use = at least one live bank account sits on one of the institution's routing numbers (or on this routing number). */
-const instInUse = (sql: Sql) => sql`exists (select 1 from routing_numbers r join bank_accounts a on a.routing_number_id = r.id and a.status = 'active' where r.institution_id = i.id)`;
+const instInUse = (sql: Sql) => sql`(exists (select 1 from routing_numbers r join bank_accounts a on a.routing_number_id = r.id and a.status = 'active' where r.institution_id = i.id)
+    or exists (select 1 from bank_accounts a where a.institution_id = i.id and a.status = 'active'))`;
 const rnInUse = (sql: Sql) => sql`exists (select 1 from bank_accounts a where a.routing_number_id = r.id and a.status = 'active')`;
 
 /** What needs an admin: institutions in use without a logo, and routing numbers in use that no institution claims yet. */
@@ -26,11 +27,13 @@ export async function institutionList(sql: Sql, q: string | null, needsLogo: boo
   const [cnt] = await sql<{ total: number }[]>`select count(*)::int as total from institutions i where ${where}`;
   const rows = await sql<{
     id: string; name: string; icon: string | null; domain: string | null; aliases: string[]; created_at: Date;
-    routing_numbers: number; accounts: number; ts_key: string;
+    routing_numbers: number; accounts: number; hosts: { id: string; name: string }[]; brands: number; ts_key: string;
   }[]>`
     select i.id, i.name, i.icon, i.domain, i.aliases, i.created_at, i.created_at::text as ts_key,
            (select count(*) from routing_numbers r where r.institution_id = i.id)::int as routing_numbers,
-           (select count(*) from routing_numbers r join bank_accounts a on a.routing_number_id = r.id and a.status = 'active' where r.institution_id = i.id)::int as accounts
+           (select count(*) from routing_numbers r join bank_accounts a on a.routing_number_id = r.id and a.status = 'active' where r.institution_id = i.id)::int as accounts,
+           (select coalesce(json_agg(json_build_object('id', h.id, 'name', h.name) order by h.name), '[]'::json) from institution_hosts x join institutions h on h.id = x.host_id where x.brand_id = i.id) as hosts,
+           (select count(*) from institution_hosts x where x.host_id = i.id)::int as brands
       from institutions i
      where ${where}
        ${cursor ? sql`and (i.created_at, i.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}

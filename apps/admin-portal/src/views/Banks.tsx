@@ -66,6 +66,10 @@ function Institutions({ api, canWrite, onError, onAttention }: { api: Api; canWr
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
   const [aliases, setAliases] = useState("");
+  const [hosts, setHosts] = useState<{ id: string; name: string }[]>([]);
+  const [hostQ, setHostQ] = useState("");
+  const [hostHits, setHostHits] = useState<{ id: string; name: string }[]>([]);
+  const hostTerm = useDebounced(hostQ);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -73,20 +77,27 @@ function Institutions({ api, canWrite, onError, onAttention }: { api: Api; canWr
   const input = useRef<HTMLInputElement>(null);
 
   function open(i: InstitutionRow | "new") {
-    setEdit(i); setError(null);
-    setName(i === "new" ? "" : i.name); setDomain(i === "new" ? "" : i.domain ?? ""); setAliases(i === "new" ? "" : i.aliases.join(", "));
+    setEdit(i); setError(null); setHostQ(""); setHostHits([]);
+    setName(i === "new" ? "" : i.name); setDomain(i === "new" ? "" : i.domain ?? ""); setAliases(i === "new" ? "" : i.aliases.join(", ")); setHosts(i === "new" ? [] : i.hosts);
   }
+  // Search for a partner bank to add to "Runs on": other institutions that are not themselves brands, not already chosen.
+  useEffect(() => {
+    if (!edit || !hostTerm) { setHostHits([]); return; }
+    let live = true;
+    api.institutions({ q: hostTerm, limit: 6 }).then((r) => { if (live) setHostHits(r.institutions.filter((x) => x.hosts.length === 0 && (edit === "new" || x.id !== edit.id) && !hosts.some((h) => h.id === x.id)).map((x) => ({ id: x.id, name: x.name }))); }).catch(() => { if (live) setHostHits([]); });
+    return () => { live = false; };
+  }, [api, edit, hostTerm, hosts]);
   async function save() {
     if (!edit) return;
     setBusy(true); setError(null);
-    const body = { name: name.trim(), domain: domain.trim() || null, aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean) };
+    const body = { name: name.trim(), domain: domain.trim() || null, aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean), hosts: hosts.map((h) => h.id) };
     try {
       const r = edit === "new" ? await api.createInstitution(body) : await api.updateInstitution(edit.id, body);
       setEdit(null); retry();
       if (r.linked > 0) setNotice(`${r.linked} routing number${r.linked === 1 ? " was" : "s were"} linked by name.`);
     } catch (e) {
       onError(e);
-      setError(e instanceof ApiError && e.code === "institution_exists" ? "An institution with that name already exists." : e instanceof ApiError && e.code === "invalid_request" ? "Check the name, the website (like chase.com) and the aliases." : "Couldn't save. Try again.");
+      setError(e instanceof ApiError && e.code === "alias_taken" ? "That name or alias already belongs to another institution." : e instanceof ApiError && e.code === "host_is_brand" ? "A partner bank can't itself be a brand." : e instanceof ApiError && e.code === "has_brands" ? "Other brands run on this institution, so it can't be a brand." : e instanceof ApiError && e.code === "institution_exists" ? "An institution with that name already exists." : e instanceof ApiError && e.code === "invalid_request" ? "Check the name, the website (like chase.com) and the aliases." : "Couldn't save. Try again.");
     } finally { setBusy(false); }
   }
   async function chosen(file: File | undefined) {
@@ -131,7 +142,7 @@ function Institutions({ api, canWrite, onError, onAttention }: { api: Api; canWr
                     <td className="num">{int(i.routing_numbers)}</td>
                     <td className="num">{int(i.accounts)}</td>
                   </>}>
-                    <p className="tx-line">Institution ID: <span className="tx-id">{i.id}</span> • Aliases: {i.aliases.length ? i.aliases.join(", ") : "none"}</p>
+                    <p className="tx-line">Institution ID: <span className="tx-id">{i.id}</span> • Aliases: {i.aliases.length ? i.aliases.join(", ") : "none"}{i.hosts.length ? <> • Runs on: {i.hosts.map((h) => h.name).join(", ")}</> : null}{i.brands ? <> • Brands: {int(i.brands)}</> : null}</p>
                     <p className="row-actions">
                       {canWrite
                         ? <>
@@ -155,7 +166,13 @@ function Institutions({ api, canWrite, onError, onAttention }: { api: Api; canWr
               <label className="wide">Website<input value={domain} placeholder="chase.com" onChange={(e) => setDomain(e.target.value)} autoComplete="off" /></label>
               <label className="wide">Aliases<input value={aliases} placeholder="jpmorgan chase, chase bank" onChange={(e) => setAliases(e.target.value)} autoComplete="off" /></label>
             </div>
-            <p className="hint">Aliases are matched as whole words inside the name the bank directory gives a routing number. Separate them with commas.</p>
+            <p className="hint">Aliases are matched as whole words inside the name the bank directory gives a routing number. Separate them with commas. A name or alias belongs to one institution only.</p>
+            <label className="wide">Runs on (for a brand such as Mercury)
+              <input value={hostQ} placeholder="Search a partner bank, like Column" onChange={(e) => setHostQ(e.target.value)} autoComplete="off" />
+            </label>
+            {hostHits.length > 0 && <p className="chips">{hostHits.map((h) => <button key={h.id} type="button" className="ghost" onClick={() => { setHosts((x) => [...x, h]); setHostQ(""); }}>Add {h.name}</button>)}</p>}
+            {hosts.length > 0 && <p className="chips">{hosts.map((h) => <button key={h.id} type="button" className="chip on" aria-label={`Remove ${h.name}`} onClick={() => setHosts((x) => x.filter((y) => y.id !== h.id))}>{h.name} ×</button>)}</p>}
+            <p className="hint">A brand that runs on partner banks is never matched from a directory name: the merchant picks it when their routing number belongs to one of these banks, so it also isn't matched by its own aliases.</p>
             {error && <p className="error" role="alert">{error}</p>}
             <div className="modal-actions">
               <button type="submit" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save Institution"}</button>

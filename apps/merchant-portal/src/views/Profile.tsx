@@ -299,6 +299,14 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [choosing, setChoosing] = useState(false);
+
+  async function choose(id: string) {
+    setBusy(true); setError(null);
+    try { const saved = await api.chooseBank(id); setChoosing(false); setNotice(speedNotice(saved.institution)); retry(); }
+    catch (err) { onError(err); setError("Couldn't save your choice. Try again."); }
+    finally { setBusy(false); }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -310,6 +318,7 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
       const saved = await api.saveBank({ routing_number: routing, account_number: account });
       setNotice(speedNotice(saved.institution));
       setAdding(false); setEditing(false); setRouting(""); setAccount(""); retry();
+      if (saved.institution?.needs_choice) setChoosing(true);
     }
     catch (err) {
       onError(err);
@@ -334,12 +343,14 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
           </p>
           <p className="big small">•••• {data.last4} <span className="pill available">{data.status}</span></p>
           <p className="sub">{data.institution?.instant === true ? "Instant payouts" : "Same-day ACH payouts"}</p>
+          {data.institution?.needs_choice && <p className="hint">Is this {data.institution.name} or a bank built on it? <button type="button" className="link" onClick={() => { setError(null); setChoosing(true); }}>Choose Your Bank</button></p>}
         </>
       ) : data === null && failed ? null : <p className="dim">No payout bank yet.</p>}
       {notice && <p role="status" className="hint">{notice}</p>}
       {editing && (
         <div className="modal-actions left">
           <button type="button" className="ghost" onClick={() => { setError(null); setAdding(true); }}>{data ? "Replace Bank" : "Add Bank"}</button>
+          {data?.institution?.choices?.length ? <button type="button" className="ghost" onClick={() => { setError(null); setChoosing(true); }}>Change Bank Name</button> : null}
           {data && <button type="button" className="ghost" onClick={() => { setError(null); setRemoving(true); }}>Remove</button>}
         </div>
       )}
@@ -373,6 +384,23 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
               <button type="button" className="ghost" disabled={busy} onClick={() => setAdding(false)}>Cancel</button>
             </div>
           </form>
+        </Modal>
+      )}
+      {choosing && data?.institution?.choices && (
+        <Modal title="Which Bank Is This?" onClose={() => setChoosing(false)} locked={busy}>
+          <p>Your routing number belongs to {data.institution.choices[data.institution.choices.length - 1]?.name}, which other banks and apps are built on. Choose the one you bank with.</p>
+          <ul className="bank-choices">
+            {data.institution.choices.map((c) => (
+              <li key={c.id}>
+                <button type="button" className="ghost bank-choice" disabled={busy} onClick={() => void choose(c.id)}>
+                  {c.icon ? <img className="bank-icon" src={c.icon} alt="" /> : <span className="bank-glyph" aria-hidden="true">🏦</span>}
+                  <span>{c.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="modal-actions"><button type="button" className="ghost" disabled={busy} onClick={() => setChoosing(false)}>Not Now</button></div>
         </Modal>
       )}
       {removing && (

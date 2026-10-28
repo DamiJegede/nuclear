@@ -266,6 +266,8 @@ export type SettlementItem = {
 /** An institution (Chase, Wells Fargo...): the name and logo shown for every routing number that belongs to it. */
 export type InstitutionRow = {
   id: string; name: string; icon: string | null; domain: string | null; aliases: string[]; created_at: string; routing_numbers: number; accounts: number;
+  /** The partner banks this brand runs on (a brand is picked by the merchant, never matched by name) and, for a partner bank, how many brands run on it. */
+  hosts: { id: string; name: string }[]; brands: number;
 };
 /** A 9-digit routing number: what the bank directory says about it (`instant` null = not known) and the institution it is linked to, if any. */
 export type RoutingNumberRow = {
@@ -457,8 +459,8 @@ export function createApi(token: string, base: string = API_URL) {
     bankAttention: () => request<BankAttention>("GET", "/v1/admin/banks/attention"),
     institutions: (o: { q?: string; needsLogo?: boolean; cursor?: string; limit?: number } = {}) =>
       request<InstitutionPage>("GET", `/v1/admin/institutions${bankQuery({ q: o.q, needs_logo: o.needsLogo ? "1" : undefined, cursor: o.cursor, limit: o.limit })}`),
-    createInstitution: (b: { name: string; domain?: string | null; aliases?: string[] }) => request<{ institution: { id: string }; linked: number }>("POST", "/v1/admin/institutions", b),
-    updateInstitution: (id: string, b: { name?: string; domain?: string | null; aliases?: string[] }) => request<{ linked: number }>("PATCH", `/v1/admin/institutions/${encodeURIComponent(id)}`, b),
+    createInstitution: (b: { name: string; domain?: string | null; aliases?: string[]; hosts?: string[] }) => request<{ institution: { id: string }; linked: number }>("POST", "/v1/admin/institutions", b),
+    updateInstitution: (id: string, b: { name?: string; domain?: string | null; aliases?: string[]; hosts?: string[] }) => request<{ linked: number }>("PATCH", `/v1/admin/institutions/${encodeURIComponent(id)}`, b),
     uploadInstitutionIcon: (id: string, icon: Blob) => request<null>("PUT", `/v1/admin/institutions/${encodeURIComponent(id)}/icon`, icon),
     routingNumbers: (o: { q?: string; unlinked?: boolean; cursor?: string; limit?: number } = {}) =>
       request<RoutingPage>("GET", `/v1/admin/routing-numbers${bankQuery({ q: o.q, unlinked: o.unlinked ? "1" : undefined, cursor: o.cursor, limit: o.limit })}`),

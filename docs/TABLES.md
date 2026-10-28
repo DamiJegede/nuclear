@@ -4,7 +4,7 @@ Updated October 23, 2026. This is the schema the code is built on: one initial m
 
 ## Current decisions
 
-**31 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
+**32 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, institution_hosts, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
 
 - **`transactions` is the source of truth and is immutable.** Every transaction is from one wallet to one wallet and is written once with a final outcome, `completed` or `declined`; nothing ever updates it. A correction is a new transaction (refund, fund_return, settle_return, adjustment). There is no ledger table: balances are checked against what the transactions did (reconciliation, below).
 - **Every account has a balance** (consumers, merchants, organizations, and the system account).
@@ -286,8 +286,17 @@ The banks people know (Chase, Wells Fargo...), one row each (migration 0006): th
 | name | Display name, unique (1-120 characters). |
 | icon | R2 key `institutions/<id>-<epoch ms>.png` (CHECK), uploaded by an admin; the API returns the full URL. The bank directory has no pictures. |
 | domain | The institution's website (`chase.com`), used to find a logo. |
-| aliases | `text[]` of lower-case names the bank directory uses for it ("jpmorgan chase"); a routing number whose directory name contains one as whole words is linked to this institution automatically (the longest match wins). |
+| aliases | `text[]` of lower-case names the bank directory uses for it ("jpmorgan chase"); a routing number whose directory name contains one as whole words is linked to this institution automatically (the longest match wins). **A name or alias belongs to one institution** (the admin API refuses a duplicate, compared as plain words: `alias_taken`), and a brand that has hosts (below) is never matched by name. Matching happens when a routing number is first seen or refreshed and the result is stored on the routing number: the institutions are read once per batch and compared in memory, never when a bank is read. |
 | created_at, updated_at | Timestamps. |
+
+## institution_hosts
+
+Brands and the banks they run on (migration 0007). A neobank such as Mercury or Brex keeps its customers' money at a partner bank (Column, Choice Financial Group), so a routing number names the partner and cannot say which brand the customer uses. The partner is an institution of its own (the **host**: what the routing number links to and what is shown until the merchant says otherwise); a **brand** lists its hosts here. When a merchant's routing number belongs to a host with brands, the portal asks "Which bank is this?" (the brands, then the host itself) and the pick is stored on that merchant's `bank_accounts.institution_id`: nobody else on the same routing number is affected. A host cannot itself be a brand and a brand cannot be its own host (the admin API refuses both). The partner relationships are entered by admins (Banks page, "Runs on" in the institution window) or `scripts/seed-institutions.mjs` (`institutions-partners.json`, `institutions-neobanks.json`, whose partner-bank relationships come from memory: check them).
+
+| Field | Description |
+| --- | --- |
+| brand_id | Foreign key to `institutions` (ON DELETE CASCADE): the brand (Mercury). Part of the primary key. |
+| host_id | Foreign key to `institutions` (ON DELETE CASCADE): the partner bank (Column); indexed (`institution_hosts_host_idx`) because "does this institution have brands" is asked when a bank is read. Part of the primary key. |
 
 ## routing_numbers
 
@@ -316,6 +325,7 @@ A failed lookup never blocks a bank: it is saved with `instant` NULL and tried a
 | account_number | The account number, stored **encrypted** (AES-256-GCM, `v1.` prefix, bound to the account and field), kept so settlements can be originated and the payout bank can move to another provider. Only `last4` is ever shown; full reads go through one audited function. |
 | last4 | Last four digits for display. |
 | routing_number_id | Nullable foreign key to `routing_numbers` (migration 0005 as `bank_id`, renamed in 0006). NULL only for the `SANDBOX` placeholder. |
+| institution_id | Nullable foreign key to `institutions` (ON DELETE SET NULL, migration 0007): the brand the merchant picked when the routing number's institution has brands (`institution_hosts`). It takes priority over the routing number's institution for what this account shows; NULL = no pick (the partner bank is shown and the merchant is asked). |
 | provider_account_id | Nullable linked-bank-account resource identifier assigned by the banking provider. |
 | status | Bank-link operational status. |
 | created_at | Creation timestamp. |

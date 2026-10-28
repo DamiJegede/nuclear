@@ -18,6 +18,8 @@ let down = false;
 const directory: Record<string, DirectoryAnswer> = {
   "110000000": { found: true, name: "TEST NATIONAL BANK, N.A.", instant: true, networks: ["RTP", "FedNow"] },
   "021000021": { found: true, name: "Bigger Bank", instant: true, networks: ["FedNow"] },
+  "101050001": { found: true, name: "COLUMN N.A.", instant: true, networks: ["RTP"] },
+  "091000022": { found: true, name: "CHOICE FINANCIAL GROUP", instant: false, networks: [] },
   "011000015": { found: false, name: null, instant: false, networks: [] },
 };
 const client: BankingClient = { lookupBank: async (r) => { calls.push(r); if (down) throw new Error("banking server unreachable"); return directory[r] ?? { found: false, name: null, instant: false, networks: [] }; } };
@@ -115,7 +117,7 @@ eq("a merchant now sees the institution's name instead of the directory's spelli
   return [before.name, before.icon, up.status, after.name, after.icon.includes("/v1/photos/institutions/"), (await call("GET", "/v1/business/overview", { token: A.session_token })).json.payout_bank.institution.name];
 })(), ["Test National", null, 204, "Test National", true, "Test National"]);
 eq("both merchants at that routing number share the one logo (an institution is uploaded once)", (await q("select count(*)::int n from institutions where icon is not null"))[0].n, 1);
-eq("a second institution with the same name is refused", (await call("POST", "/v1/admin/institutions", { token: R.admin, body: { name: "Test National" } })).json.error, "institution_exists");
+eq("a second institution with a name already in use is refused (a name is an alias of its owner)", (await call("POST", "/v1/admin/institutions", { token: R.admin, body: { name: "Test National" } })).json.error, "alias_taken");
 eq("an institution's name alone never matches a stray letter: aliases are read as a list", await matchInstitution(sql, "A B C N"), null);
 eq("the institution list: routing numbers, live accounts, aliases", (await get("admin", "institutions")).json.institutions.map((i: any) => [i.name, i.routing_numbers, i.accounts, i.aliases, i.domain]), [["Test National", 1, 2, ["test national bank", "tnb"], "testnational.example"]]);
 
@@ -172,5 +174,62 @@ eq("sales reading is forbidden, but writes also need the Merchants or Admin role
 eq("logos, renames and links are in the audit log", (await q("select distinct action from logs where action like 'institution.%' or action like 'routing_number.%' order by action")).map((l: any) => l.action), ["institution.created", "institution.icon_uploaded", "institution.updated", "routing_number.added", "routing_number.linked"]);
 eq("without the storage binding an upload is 503", (await call("PUT", `/v1/admin/institutions/${inst}/icon`, { token: R.admin, bytes: PNG, env: { ...env, IMAGES: undefined } })).status, 503);
 eq("the icon column only accepts an institution key", await q("update institutions set icon = 'accounts/x.png' where id = $1", [inst]).then(() => "accepted", () => "refused"), "refused");
+
+
+// ---- brands: a partner bank (Column) is what the routing number names; the merchant says which brand, and only their own account changes
+const idOf = async (name: string) => (await q("select id from institutions where name=$1", [name]))[0].id as string;
+const mk = (body: any) => call("POST", "/v1/admin/institutions", { token: R.admin, body });
+const column = (await mk({ name: "Column", aliases: ["column"] })).json.institution.id;
+const choice = (await mk({ name: "Choice Financial Group", aliases: ["choice financial group"] })).json.institution.id;
+const mercury = (await mk({ name: "Mercury", aliases: ["mercury"], hosts: [column, choice] })).json.institution.id;
+const brex = (await mk({ name: "Brex", aliases: ["brex"], hosts: [column] })).json.institution.id;
+eq("brands list the partner banks they run on, and a partner bank counts its brands", (await get("admin", "institutions?q=mercury")).json.institutions[0].hosts.map((h: any) => h.name), ["Choice Financial Group", "Column"]);
+eq("a partner bank counts its brands", (await get("admin", "institutions?q=column")).json.institutions.find((i: any) => i.name === "Column").brands, 2);
+eq("a brand is never matched from a directory name, the partner bank is", [await matchInstitution(sql, "MERCURY TECHNOLOGIES BANK"), await matchInstitution(sql, "COLUMN N.A.") === column], [null, true]);
+eq("an alias or name another institution already uses is refused, naming the owner", [
+  (await call("POST", "/v1/admin/institutions", { token: R.admin, body: { name: "Other", aliases: ["Column"] } })).json,
+  (await call("PATCH", `/v1/admin/institutions/${brex}`, { token: R.admin, body: { aliases: ["choice  financial group"] } })).json,
+  (await call("POST", "/v1/admin/institutions", { token: R.admin, body: { name: "COLUMN" } })).status], [{ error: "alias_taken", alias: "column", institution: "Column" }, { error: "alias_taken", alias: "choice  financial group", institution: "Choice Financial Group" }, 409]);
+eq("an institution may keep its own name as an alias", (await call("PATCH", `/v1/admin/institutions/${column}`, { token: R.admin, body: { aliases: ["column", "Column"] } })).status, 200);
+eq("hosts are checked: unknown, a brand as a host, itself, a host becoming a brand", [
+  (await call("PATCH", `/v1/admin/institutions/${brex}`, { token: R.admin, body: { hosts: ["00000000-0000-7000-8000-00000000dead"] } })).json.error,
+  (await call("PATCH", `/v1/admin/institutions/${brex}`, { token: R.admin, body: { hosts: [mercury] } })).json.error,
+  (await call("PATCH", `/v1/admin/institutions/${brex}`, { token: R.admin, body: { hosts: [brex] } })).json.error,
+  (await call("PATCH", `/v1/admin/institutions/${column}`, { token: R.admin, body: { hosts: [choice] } })).json.error], ["host_not_found", "host_is_brand", "self", "has_brands"]);
+
+const G = await merchant("Golf", "g@x.test"), H = await merchant("Hotel", "h@x.test"), I2 = await merchant("India", "i@x.test");
+const rg = await addBank(G, "101050001");
+eq("a routing number at a partner bank shows the partner and asks which brand (brands first, the partner last)", [rg.json.bank.institution.name, rg.json.bank.institution.needs_choice, rg.json.bank.institution.choices.map((x: any) => x.name)], ["Column", true, ["Brex", "Mercury", "Column"]]);
+eq("a bank that is not a partner has no choices", [(await call("GET", "/v1/business/bank", { token: A.session_token })).json.bank.institution.choices, (await call("GET", "/v1/business/bank", { token: A.session_token })).json.bank.institution.needs_choice], [undefined, undefined]);
+const pick = await call("PUT", "/v1/business/bank/institution", { token: G.session_token, body: { institution_id: mercury } });
+eq("picking Mercury: the bank now reads Mercury and no longer asks", [pick.status, pick.json.bank.institution.name, pick.json.bank.institution.needs_choice, pick.json.bank.institution.choices.length], [200, "Mercury", false, 3]);
+const rh = await addBank(H, "101050001", "0000555566");
+eq("another merchant on the same routing number is unaffected: still Column, still asked", [rh.json.bank.institution.name, rh.json.bank.institution.needs_choice], ["Column", true]);
+await call("PUT", "/v1/business/bank/institution", { token: H.session_token, body: { institution_id: brex } });
+eq("each merchant's pick is their own", [(await call("GET", "/v1/business/bank", { token: G.session_token })).json.bank.institution.name, (await call("GET", "/v1/business/bank", { token: H.session_token })).json.bank.institution.name], ["Mercury", "Brex"]);
+eq("the overview's payout bank shows the pick too", [(await call("GET", "/v1/business/overview", { token: G.session_token })).json.payout_bank.institution.name, (await call("GET", "/v1/business/overview", { token: H.session_token })).json.payout_bank.institution.name], ["Mercury", "Brex"]);
+eq("a brand that does not run on this partner, the choice of a bank without brands, and no bank are all refused", [
+  (await call("PUT", "/v1/business/bank/institution", { token: I2.session_token, body: { institution_id: mercury } })).json.error,
+  (await addBank(I2, "091000022").then(() => call("PUT", "/v1/business/bank/institution", { token: I2.session_token, body: { institution_id: brex } }))).json.error,
+  (await call("PUT", "/v1/business/bank/institution", { token: A.session_token, body: { institution_id: mercury } })).json.error,
+  (await call("PUT", "/v1/business/bank/institution", { token: G.session_token, body: { institution_id: "nope" } })).json.error], ["no_bank", "invalid_choice", "invalid_choice", "invalid_request"]);
+eq("Choice Financial Group lists Mercury, not Brex: Mercury is accepted there", (await call("PUT", "/v1/business/bank/institution", { token: I2.session_token, body: { institution_id: mercury } })).json.bank.institution.name, "Mercury");
+eq("the partner itself is a valid choice (a direct customer)", (await call("PUT", "/v1/business/bank/institution", { token: G.session_token, body: { institution_id: column } })).json.bank.institution.name, "Column");
+await call("PUT", "/v1/business/bank/institution", { token: G.session_token, body: { institution_id: mercury } });
+eq("a replaced bank starts again without a pick", [(await addBank(G, "101050001", "0000999900")).json.bank.institution.needs_choice, (await q("select count(*)::int n from bank_accounts where institution_id is not null and status='active'"))[0].n], [true, 2]);
+eq("brands in use count as in use (no logo needed notice) and the routing number list still shows the partner", [(await get("admin", "banks/attention")).json.needs_logo >= 3, (await get("admin", "routing-numbers?q=101050001")).json.routing_numbers[0].institution], [true, "Column"]);
+
+// matching reads the institutions once per batch, however many routing numbers wait; reading a bank does no matching at all
+for (let n = 0; n < 40; n++) await q("insert into routing_numbers (routing_number, directory_name) values ($1, 'ZZZ UNKNOWN BANK') on conflict do nothing", [String(900000000 + n)]);
+const seen: string[] = [];
+(globalThis as any).__sqlTrace = (st: string) => seen.push(st.replace(/\s+/g, " "));
+const traced = connect(env);
+const { autoLinkInstitutions } = await import("../src/lib/banks.ts");
+await autoLinkInstitutions(traced);
+eq("linking 40 waiting routing numbers: one read of the numbers, one of the institutions, no writes", [seen.length, seen.filter((x) => /from institutions/.test(x)).length], [2, 1]);
+seen.length = 0;
+const gb = await app.fetch(new Request("http://x/v1/business/bank", { headers: { authorization: `Bearer ${G.session_token}` } }), { ...env, HYPERDRIVE: env.HYPERDRIVE }, ctx);
+eq("reading a bank never scans or matches institutions", [gb.status, seen.filter((x) => /aliases/.test(x)).length], [200, 0]);
+(globalThis as any).__sqlTrace = undefined;
 
 console.log(`\n${pass} passed, ${fail} failed`); await adm.end(); process.exit(fail ? 1 : 0);

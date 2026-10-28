@@ -446,6 +446,37 @@ describe("close out and the payout bank", () => {
     }
   });
 
+  it("a routing number at a partner bank asks which brand; the choice is saved and the card shows it", async () => {
+    const choices = [{ id: "m1", name: "Mercury", icon: null }, { id: "b1", name: "Brex", icon: null }, { id: "c1", name: "Column", icon: null }];
+    const inst = (name: string, needs: boolean) => ({ id: "k", name, icon: null, instant: true, choices, needs_choice: needs });
+    const row = (name: string, needs: boolean) => ({ id: "b1", last4: "6789", status: "active", created_at: "2026-10-16T00:00:00Z", institution: inst(name, needs) });
+    const saveBank = vi.fn().mockResolvedValue(row("Column", true));
+    const chooseBank = vi.fn().mockResolvedValue(row("Mercury", false));
+    const bank = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(row("Column", true));
+    const { user } = await signIn(fakeApi({ bank, saveBank, chooseBank }));
+    await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    await user.click(within(card("Payout Bank")).getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Add Bank" }));
+    const dlg = screen.getByRole("dialog");
+    await user.type(within(dlg).getByLabelText("Routing number"), "101050001");
+    await user.type(within(dlg).getByLabelText("Account number"), "000123456789");
+    await user.click(within(dlg).getByRole("button", { name: "Save Bank" }));
+    const pick = await screen.findByRole("dialog", { name: "Which Bank Is This?" });
+    expect(within(pick).getAllByRole("button").map((b) => b.textContent!.replace("🏦", ""))).toEqual(["Mercury", "Brex", "Column", "Not Now"]);
+    await user.click(within(pick).getByRole("button", { name: "Mercury" }));
+    await waitFor(() => expect(chooseBank).toHaveBeenCalledWith("m1"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Which Bank Is This?" })).toBeNull());
+  });
+
+  it("a bank still waiting for a brand choice offers it on the card", async () => {
+    const choices = [{ id: "m1", name: "Mercury", icon: null }, { id: "c1", name: "Column", icon: null }];
+    const bank = vi.fn().mockResolvedValue({ id: "b1", last4: "6789", status: "active", created_at: "2026-10-16T00:00:00Z", institution: { id: "k", name: "Column", icon: null, instant: true, choices, needs_choice: true } });
+    const { user } = await signIn(fakeApi({ bank }));
+    await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    await user.click(await within(card("Payout Bank")).findByRole("button", { name: "Choose Your Bank" }));
+    expect(await screen.findByRole("dialog", { name: "Which Bank Is This?" })).toBeInTheDocument();
+  });
+
   it("the bank shows its name, logo and speed", async () => {
     const bank = vi.fn().mockResolvedValue({ id: "b1", last4: "4321", status: "active", created_at: "2026-10-01T00:00:00Z", institution: { id: "k1", name: "Test National Bank", icon: "https://x.test/v1/photos/banks/k1.png", instant: true } });
     const { user } = await signIn(fakeApi({ bank }));

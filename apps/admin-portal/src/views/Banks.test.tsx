@@ -6,7 +6,7 @@ import { Banks } from "./Banks";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const inst = (o: Partial<InstitutionRow> = {}): InstitutionRow => ({ id: "i1", name: "Test National", icon: null, domain: "testnational.example", aliases: ["test national bank"], created_at: "2026-10-01T12:00:00Z", routing_numbers: 2, accounts: 3, ...o });
+const inst = (o: Partial<InstitutionRow> = {}): InstitutionRow => ({ id: "i1", name: "Test National", icon: null, domain: "testnational.example", aliases: ["test national bank"], created_at: "2026-10-01T12:00:00Z", routing_numbers: 2, accounts: 3, hosts: [], brands: 0, ...o });
 const rn = (o: Partial<RoutingNumberRow> = {}): RoutingNumberRow => ({ id: "r1", routing_number: "110000000", directory_name: "TEST NATIONAL BANK, N.A.", institution_id: "i1", institution: "Test National", icon: null, instant: true, networks: ["RTP", "FedNow"], refreshed_at: "2026-10-20T12:00:00Z", created_at: "2026-10-01T12:00:00Z", accounts: 3, ...o });
 const instPage = (items: InstitutionRow[], o: object = {}) => ({ institutions: items, next_cursor: null, total: items.length, needs_logo: items.filter((i) => !i.icon && i.accounts > 0).length, unlinked: 1, ...o });
 const rnPage = (items: RoutingNumberRow[], o: object = {}) => ({ routing_numbers: items, next_cursor: null, total: items.length, needs_logo: 1, unlinked: items.filter((r) => !r.institution_id).length, ...o });
@@ -51,8 +51,36 @@ describe("Banks: institutions", () => {
     await user.type(within(dlg).getByLabelText("Website"), "chase.com");
     await user.type(within(dlg).getByLabelText("Aliases"), "jpmorgan chase, chase bank");
     await user.click(within(dlg).getByRole("button", { name: "Save Institution" }));
-    await waitFor(() => expect(createInstitution).toHaveBeenCalledWith({ name: "Chase", domain: "chase.com", aliases: ["jpmorgan chase", "chase bank"] }));
+    await waitFor(() => expect(createInstitution).toHaveBeenCalledWith({ name: "Chase", domain: "chase.com", aliases: ["jpmorgan chase", "chase bank"], hosts: [] }));
     expect(await screen.findByText("2 routing numbers were linked by name.")).toBeInTheDocument();
+  });
+
+  it("a brand is given the partner banks it runs on, found by search", async () => {
+    const createInstitution = vi.fn().mockResolvedValue({ institution: { id: "i9" }, linked: 0 });
+    const institutions = vi.fn().mockImplementation(async (o: { q?: string } = {}) => instPage(o.q ? [inst({ id: "col", name: "Column" }), inst({ id: "mer", name: "Mercury", hosts: [{ id: "col", name: "Column" }] })] : [inst()]));
+    const user = userEvent.setup();
+    render(<Banks api={api({ createInstitution, institutions })} canWrite onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Add Institution" }));
+    const dlg = screen.getByRole("dialog", { name: "Add Institution" });
+    await user.type(within(dlg).getByLabelText("Name"), "Brex");
+    await user.type(within(dlg).getByLabelText(/Runs on/), "col");
+    expect(await within(dlg).findByRole("button", { name: "Add Column" })).toBeInTheDocument();
+    expect(within(dlg).queryByRole("button", { name: "Add Mercury" })).toBeNull();      // a brand cannot be a partner bank
+    await user.click(within(dlg).getByRole("button", { name: "Add Column" }));
+    await user.click(within(dlg).getByRole("button", { name: "Save Institution" }));
+    await waitFor(() => expect(createInstitution).toHaveBeenCalledWith({ name: "Brex", domain: null, aliases: [], hosts: ["col"] }));
+  });
+
+  it("a name already used by another institution is explained", async () => {
+    const { ApiError } = await import("../api");
+    const createInstitution = vi.fn().mockRejectedValue(new ApiError(409, "alias_taken"));
+    const user = userEvent.setup();
+    render(<Banks api={api({ createInstitution })} canWrite onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Add Institution" }));
+    const dlg = screen.getByRole("dialog", { name: "Add Institution" });
+    await user.type(within(dlg).getByLabelText("Name"), "Column");
+    await user.click(within(dlg).getByRole("button", { name: "Save Institution" }));
+    expect(await within(dlg).findByText("That name or alias already belongs to another institution.")).toBeInTheDocument();
   });
 
   it("choosing a logo fits it into the square and uploads it for that institution", async () => {

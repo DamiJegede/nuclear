@@ -477,3 +477,7 @@ dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: ri
 .bank-line .bank-icon { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; background: #fff; border: 1px solid var(--line); }
 .bank-line .bank-glyph { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--soft, rgba(127,127,127,.15)); font-size: 16px; }
 .bank-line .bank-name { font-weight: 600; }
+.bank-choices { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.bank-choice { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; }
+.bank-choice .bank-icon { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; background: #fff; border: 1px solid var(--line); }
+.bank-choice .bank-glyph { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--soft, rgba(127,127,127,.15)); font-size: 16px; }

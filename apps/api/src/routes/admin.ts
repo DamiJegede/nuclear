@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
+import type { Sql } from "../db";
 import { amountOrZero, n } from "../lib/money";
 import { achProvider } from "../lib/ach";
 import { easternDate } from "../lib/dates";
@@ -19,7 +20,7 @@ import { deleteImage, imageUrl, isPng, newImageKey, putPng, MAX_IMAGE_BYTES } fr
 import { USER_TX_KINDS, userDetail, userDevices, userFunding, userOrders, userTags, userTransactions, userWallets, type UserTxKind } from "../lib/userSupport";
 import { MERCHANT_TX_KINDS, merchantDetail, merchantProducts, merchantStaff, merchantTerminals, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { attention, institutionList, routingList } from "../lib/adminBanks";
-import { abaOk, autoLinkInstitutions } from "../lib/banks";
+import { abaOk, aliasKey, autoLinkInstitutions, textArray } from "../lib/banks";
 import { organizationDetail, organizationEmployees, organizationList, organizationRuns } from "../lib/orgSupport";
 import { TX_KINDS, merchantList, transactionFeed, userList, type TxKind } from "../lib/adminLists";
 import { decodeTimeCursor, pageLimit } from "../lib/paging";
@@ -487,16 +488,50 @@ const institutionBody = z.object({
   name: z.string().trim().min(1).max(120),
   domain: z.string().trim().toLowerCase().regex(/^[a-z0-9.-]{3,100}$/).nullish().transform((v) => v ?? null),
   aliases: aliasList.default([]),
+  hosts: z.array(uuid).max(10).transform((a) => [...new Set(a)]).default([]),   // the partner-bank institutions this brand runs on
 });
+const aliasArray = (a: string[]) => `{${a.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")}}`;
+
+/** A name or alias belongs to one institution: another one already using it (as name or alias, compared as plain words) is a conflict. */
+async function aliasConflict(sql: Sql, names: string[], exceptId: string | null): Promise<{ alias: string; owner: string } | null> {
+  const rows = await sql<{ id: string; name: string; aliases: string[] }[]>`select id, name, aliases from institutions`;
+  const owner = new Map<string, string>();
+  for (const r of rows) if (r.id !== exceptId) for (const n of [r.name, ...textArray(r.aliases)]) owner.set(aliasKey(n), r.name);
+  for (const n of names) { const o = owner.get(aliasKey(n)); if (o) return { alias: n, owner: o }; }
+  return null;
+}
+
+/** The hosts a brand is to run on: they must exist, must not be brands themselves, and a host that has brands cannot become a brand. */
+async function hostProblem(sql: Sql, brandId: string | null, hosts: string[]): Promise<"not_found" | "host_is_brand" | "has_brands" | "self" | null> {
+  if (!hosts.length) return null;
+  if (brandId && hosts.includes(brandId)) return "self";
+  const found = await sql<{ id: string }[]>`select id from institutions where id = any(${`{${hosts.join(",")}}`}::uuid[])`;
+  if (found.length !== hosts.length) return "not_found";
+  if ((await sql`select 1 from institution_hosts where brand_id = any(${`{${hosts.join(",")}}`}::uuid[]) limit 1`).length) return "host_is_brand";
+  if (brandId && (await sql`select 1 from institution_hosts where host_id = ${brandId} limit 1`).length) return "has_brands";
+  return null;
+}
+const setHosts = async (sql: Sql, brandId: string, hosts: string[]) => {
+  await sql.begin(async (tx) => {
+    await tx`delete from institution_hosts where brand_id = ${brandId}`;
+    if (hosts.length) await tx`insert into institution_hosts (brand_id, host_id) select ${brandId}, unnest(${`{${hosts.join(",")}}`}::uuid[])`;
+  });
+};
+
 admin.post("/institutions", async (c) => {
   const denied = bankWriteDenied(c); if (denied) return denied;
   const b = institutionBody.safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request" }, 400);
   const sql = c.get("sql");
+  const clash = await aliasConflict(sql, [b.data.name, ...b.data.aliases], null);
+  if (clash) return c.json({ error: "alias_taken", alias: clash.alias, institution: clash.owner }, 409);
+  const bad = await hostProblem(sql, null, b.data.hosts);
+  if (bad) return c.json({ error: bad === "not_found" ? "host_not_found" : bad }, 422);
   const [i] = await sql<{ id: string }[]>`
-    insert into institutions (name, domain, aliases) values (${b.data.name}, ${b.data.domain}, ${`{${b.data.aliases.map((a) => `"${a.replace(/["\\]/g, "")}"`).join(",")}}`}::text[])
+    insert into institutions (name, domain, aliases) values (${b.data.name}, ${b.data.domain}, ${aliasArray(b.data.aliases)}::text[])
     on conflict (name) do nothing returning id`;
   if (!i) return c.json({ error: "institution_exists" }, 409);
+  await setHosts(sql, i.id, b.data.hosts);
   const linked = await autoLinkInstitutions(sql);
   await adminLog(c, "institution.created", { type: "institution", id: i.id, label: b.data.name }, { linked });
   return c.json({ institution: { id: i.id }, linked }, 201);
@@ -508,14 +543,21 @@ admin.patch("/institutions/:id", async (c) => {
   if (!b.success || Object.keys(b.data).length === 0) return c.json({ error: "invalid_request" }, 400);
   const sql = c.get("sql");
   const d = b.data;
+  const [cur] = await sql<{ name: string }[]>`select name from institutions where id = ${id.data}`;
+  if (!cur) return c.json({ error: "not_found" }, 404);
+  const clash = d.name || d.aliases ? await aliasConflict(sql, [...(d.name ? [d.name] : []), ...(d.aliases ?? [])], id.data) : null;
+  if (clash) return c.json({ error: "alias_taken", alias: clash.alias, institution: clash.owner }, 409);
+  const bad = d.hosts ? await hostProblem(sql, id.data, d.hosts) : null;
+  if (bad) return c.json({ error: bad === "not_found" ? "host_not_found" : bad }, 422);
   try {
     const [r] = await sql<{ name: string }[]>`
       update institutions set name = coalesce(${d.name ?? null}, name),
         domain = ${"domain" in d ? d.domain ?? null : sql`domain`},
-        aliases = ${d.aliases ? `{${d.aliases.map((a) => `"${a.replace(/["\\]/g, "")}"`).join(",")}}` : sql`aliases`}${d.aliases ? sql`::text[]` : sql``}
+        aliases = ${d.aliases ? aliasArray(d.aliases) : sql`aliases`}${d.aliases ? sql`::text[]` : sql``}
        where id = ${id.data} returning name`;
     if (!r) return c.json({ error: "not_found" }, 404);
-    const linked = d.aliases || d.name ? await autoLinkInstitutions(sql) : 0;
+    if (d.hosts) await setHosts(sql, id.data, d.hosts);
+    const linked = d.aliases || d.name || d.hosts ? await autoLinkInstitutions(sql) : 0;
     await adminLog(c, "institution.updated", { type: "institution", id: id.data, label: r.name }, { fields: Object.keys(d), linked });
     return c.json({ linked });
   } catch (err) {
