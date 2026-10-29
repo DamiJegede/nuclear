@@ -87,7 +87,7 @@ export async function reconciliationStats(sql: Sql): Promise<Reconciliation> {
   const [eff] = await sql<Record<string, bigint>[]>`
     select coalesce(sum(delta), 0)::bigint as funded, coalesce(sum(credit_delta), 0)::bigint as credit,
            (select coalesce(sum(case type when 'fund' then amount when 'fund_return' then -amount when 'purchase' then -amount
-                                          when 'settle' then -amount when 'settle_return' then amount when 'collect' then amount
+                                          when 'settle' then -amount when 'collect_return' then -amount when 'settle_return' then amount when 'collect' then amount
                                           when 'adjustment' then (case when (select type from wallets where id = from_wallet_id) = 'system' and (select type from wallets where id = to_wallet_id) <> 'system' then amount
                                                                        when (select type from wallets where id = to_wallet_id) = 'system' and (select type from wallets where id = from_wallet_id) <> 'system' then -amount else 0 end)
                                           else 0 end), 0)::bigint

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createCipheriv, randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
 import { connect } from "../src/db.ts";
@@ -9,8 +9,9 @@ import { migrate, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
 const q = async (s: string, p: unknown[] = []) => (await adm.unsafe(s, p as any)) as any[];
+const tagKey = randomBytes(16);
 const OP = "op-" + randomBytes(16).toString("hex");
-const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64") };
+const env: any = { STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64"), TAG_KEY_V1: tagKey.toString("hex") };
 const live: any = { ...env, SANDBOX_FUNDING: undefined };
 const ctx: any = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}), passThroughOnException() {} };
 let pass = 0, fail = 0;
@@ -117,6 +118,34 @@ eq("a nightly payout to an instant bank is instant too; a collection never is", 
   await runSettlement(env, sql, addDays(today, 6), provider);
   return seen.filter((i) => i.accountId === I.account_id || i.accountId === J.account_id).map((i) => [i.direction, i.rail, i.serviceType]).sort();
 })(), [["credit", "instant", "Standard"], ["debit", "ach", "Standard"]]);
+
+// ---- the merchant's staff closes out from the terminal with a tap (write staff only)
+const urlFor = (uid: string, counter: number) => {
+  const pt = Buffer.alloc(16, 0x55);
+  pt[0] = 0xc7; Buffer.from(uid, "hex").copy(pt, 1); pt.writeUIntLE(counter, 8, 3);
+  const c = createCipheriv("aes-128-cbc", tagKey, Buffer.alloc(16)); c.setAutoPadding(false);
+  return `https://tag.nclr.app/v1/${Buffer.concat([c.update(pt), c.final()]).toString("hex")}`;
+};
+const tagModel = (await q("insert into tag_models(type,name,price,quantity) values('band','Band',1000,100) returning id"))[0].id;
+let uid = 0x20;
+const tagFor = async (person: any) => { const u = ("04" + (uid++).toString(16).padStart(2, "0").repeat(6)).toUpperCase(); await q("insert into tags(uid,model_id,wallet_id) values($1,$2,$3)", [u, tagModel, person.default_wallet_id]); return u; };
+const T = await merchant("Tango Tacos", "tango@x.test");
+const termToken = (await call("POST", `/v1/terminals/${T.term}/session`, { token: T.session_token })).json.session_token;
+const writer = await sign("Wanda Writer", "wanda@x.test"), reader = await sign("Rita Reader", "rita@x.test"), stranger = await sign("Sam Stranger", "sam@x.test");
+await call("POST", "/v1/staff", { token: T.session_token, body: { staff_account_id: writer.account_id, role: "write" } });
+await call("POST", "/v1/staff", { token: T.session_token, body: { staff_account_id: reader.account_id, role: "read" } });
+const [wTag, rTag, sTag] = [await tagFor(writer), await tagFor(reader), await tagFor(stranger)];
+const staffClose = (u: string | null, token = termToken) => call("POST", "/v1/terminal/close-out", { token, body: u === null ? {} : { approval: { credential: { type: "tag", url: u } } } });
+await sale(T, 900);
+eq("a tap by read-only staff cannot close out: 403, the balance stays", [(await staffClose(urlFor(rTag, 5))).status, (await staffClose(urlFor(sTag, 5))).status, await bal(T)], [403, 403, 900]);
+eq("no tap, a bad tap and an owner token on the terminal route are refused", [(await staffClose(null)).status, (await staffClose("https://tag.nclr.app/v1/zz")).status, (await staffClose(urlFor(wTag, 6), T.session_token)).status], [400, 400, 401]);
+eq("a replayed tap is refused and a refused tap is still burned", [(await staffClose(urlFor(rTag, 5))).status, (await q("select counter::int c from tags where uid=$1", [rTag]))[0].c], [409, 5]);
+const sc = await staffClose(urlFor(wTag, 7));
+eq("a tap by write staff closes out: the whole balance, 201, settled by the (sandbox) bank", [sc.status, sc.json.settlement.amount, sc.json.settlement.status, await bal(T)], [201, 900, "completed", 0]);
+eq("the log says which staff member did it", (await q("select actor_id, details from logs where action = 'merchant.closed_out_by_staff'"))[0].actor_id, writer.account_id);
+eq("the same tap again is a replay", (await staffClose(urlFor(wTag, 7))).status, 409);
+await sale(T, 100);
+eq("a fresh tap the same day, after a later sale, is 409 already_closed_out and the sale stays in the balance", [(await staffClose(urlFor(wTag, 8))).json.error, await bal(T)], ["already_closed_out", 100]);
 
 // ---- when it arrives
 const at = (iso: string) => new Date(iso);

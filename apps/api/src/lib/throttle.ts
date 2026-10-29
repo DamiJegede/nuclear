@@ -19,7 +19,8 @@ export const RULES = {
   lookupEmail: { limit: 30, windowSec: 60 * 60 },      // recipient lookup by email, per account (stops enumeration)
   lookupHandle: { limit: 60, windowSec: 60 },
   tagClaim: { limit: 20, windowSec: 60 * 60 },
-  closeOut: { limit: 5, windowSec: 60 * 60 },           // a merchant closing out (one settlement a day goes through; this stops hammering)
+  closeOut: { limit: 5, windowSec: 60 * 60 },
+  terminalCloseOut: { limit: 20, windowSec: 60 * 60 },   // taps at a terminal, wrong ones included (a mistaken tap must not lock the merchant out of closing)           // a merchant closing out (one settlement a day goes through; this stops hammering)
   orbBind: { limit: 20, windowSec: 60 * 60 },           // bind authorizations per terminal
   shopOrder: { limit: 10, windowSec: 60 },
   agentRequests: { limit: 120, windowSec: 60 },         // every request by an agent key

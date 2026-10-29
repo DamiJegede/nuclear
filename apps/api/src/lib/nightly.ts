@@ -32,7 +32,7 @@ export async function nightlyCheck(sql: Sql, date: string, prev: PrevDay) {
   const [edge] = await sql<{ flows: bigint }[]>`
     with b as (select (${date}::date)::timestamp at time zone ${PROGRAM_TZ} as s, (${date}::date + 1)::timestamp at time zone ${PROGRAM_TZ} as e)
     select coalesce(sum(case t.type when 'fund' then t.amount when 'fund_return' then -t.amount when 'purchase' then -t.amount
-                                    when 'settle' then -t.amount when 'settle_return' then t.amount when 'collect' then t.amount
+                                    when 'settle' then -t.amount when 'collect_return' then -t.amount when 'settle_return' then t.amount when 'collect' then t.amount
                                     when 'adjustment' then (case when fw.type = 'system' and tw.type <> 'system' then t.amount
                                                                  when tw.type = 'system' and fw.type <> 'system' then -t.amount else 0 end)
                                     else 0 end), 0)::bigint as flows

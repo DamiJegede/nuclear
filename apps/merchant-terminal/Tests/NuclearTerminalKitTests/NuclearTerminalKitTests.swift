@@ -89,6 +89,30 @@ final class NuclearTerminalKitTests: XCTestCase {
         XCTAssertNil(body?["approval"])
     }
 
+    func testCloseOutSendsTheStaffTapAndDecodesTheSettlement() async throws {
+        var path: String?, body: [String: Any]?
+        MockProtocol.handler = { req in
+            path = req.url?.path
+            let data = req.httpBody ?? req.httpBodyStream.flatMap { s -> Data in
+                s.open(); defer { s.close() }
+                var d = Data(); var buf = [UInt8](repeating: 0, count: 1024)
+                while s.hasBytesAvailable { let n = s.read(&buf, maxLength: buf.count); if n <= 0 { break }; d.append(buf, count: n) }
+                return d
+            }
+            body = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            return (201, #"{"settlement":{"id":"s1","date":"2026-10-28","amount":1500,"rail":"instant","status":"completed","arrival":"instant"}}"#)
+        }
+        let r = try await client().closeOut(tapURL: "https://tag.nclr.app/v1/abc")
+        XCTAssertEqual(path, "/v1/terminal/close-out")
+        XCTAssertEqual(((body?["approval"] as? [String: Any])?["credential"] as? [String: Any])?["url"] as? String, "https://tag.nclr.app/v1/abc")
+        XCTAssertEqual(r, CloseOut(id: "s1", date: "2026-10-28", amount: 1500, rail: "instant", status: "completed", arrival: "instant"))
+    }
+
+    func testCloseOutRefusedForNonWriteStaff() async throws {
+        MockProtocol.handler = { _ in (403, #"{"error":"approver_not_authorized"}"#) }
+        do { _ = try await client().closeOut(tapURL: "x"); XCTFail("should throw") } catch let e as APIError { XCTAssertEqual(e.code, "approver_not_authorized") }
+    }
+
     func testOrbFramesRoundTrip() throws {
         let frames: [OrbFrame] = [
             .hello(uid: [0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22], model: "Orb 2", firmware: "1.4.2"),

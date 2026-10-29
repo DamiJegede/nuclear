@@ -58,7 +58,7 @@ type Tapped =
  * Resolve a staff tap inside the caller's transaction. The proof is burned (counter consumed) as soon
  * as its counter checks out, even when the tag is unassigned/locked or the person is not authorized.
  */
-async function tapStaff(tx: TransactionSql<{ bigint: bigint }>, proof: TagProof, merchantId: string): Promise<Tapped> {
+export async function tapStaff(tx: TransactionSql<{ bigint: bigint }>, proof: TagProof, merchantId: string): Promise<Tapped> {
   const tag = await loadTag(tx, proof.uid, true);
   if (!tag) return { kind: "error", error: "tag_not_found", status: 404 };
   if (!isFresh(tag, proof.counter)) return { kind: "error", error: "proof_replayed", status: 409 };
@@ -75,7 +75,7 @@ async function tapStaff(tx: TransactionSql<{ bigint: bigint }>, proof: TagProof,
   return st ? { kind: "staff", accountId: tag.account_id } : { kind: "not_staff" };
 }
 
-async function proofFrom(env: Env, cred: z.infer<typeof credential>): Promise<TagProof | "pass" | null> {
+export async function proofFrom(env: Env, cred: z.infer<typeof credential>): Promise<TagProof | "pass" | null> {
   if (cred.type === "pass") return "pass";
   return decryptTagUrl(env, cred.url);
 }

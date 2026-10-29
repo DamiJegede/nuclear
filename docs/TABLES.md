@@ -366,18 +366,18 @@ The source of truth for money: every movement, and every declined attempt. **Imm
 | Field | Description |
 | --- | --- |
 | id | Primary key. An approved refund request keeps its own id. |
-| type | fund, fund_return, send, pay, refund, purchase, allocate, claim, move, settle, settle_return, collect or adjustment (effects below). |
+| type | fund, fund_return, send, pay, refund, purchase, allocate, claim, move, settle, settle_return, collect, collect_return or adjustment (effects below). |
 | status | `completed` or `declined`. The API reports a declined row as `failed`. |
 | status_code | The reason when declined (insufficient_balance, spend_limit_exceeded, wallet_balance_exceeded, exceeds_refundable, ...); NULL exactly when completed (CHECK). |
 | from_wallet_id, to_wallet_id | Not null, foreign keys to wallets.id, different unless the type is `move`. |
 | amount | Positive bigint: the full amount the receiving side is credited. |
 | credit_amount | Part of the amount covered by approved credit (pay), repaid credit (fund), restored credit (refund) or credit drawn again (fund_return); 0 otherwise. Never more than amount. |
-| related_id | The transaction this one corrects: refund to its pay, fund_return to its fund, settle_return to its settle, adjustment to any. |
+| related_id | The transaction this one corrects: refund to its pay, fund_return to its fund, settle_return to its settle, collect_return to its collect, adjustment to any. |
 | tag_id, pass_id | The credential of a tap payment (pay only; at most one). |
 | terminal_id | The terminal of a pay or refund; a trigger requires it to belong to the merchant. |
 | checkout_id | The checkout a pay settled or a refund refunds; a trigger requires it to belong to the merchant. |
 | funding_id | The funding a fund or fund_return belongs to. |
-| settlement_id | The settlement row of a settle, settle_return or collect. |
+| settlement_id | The settlement row of a settle, settle_return, collect or collect_return. |
 | account_id | The account that acted or approved: the sender of a send, the payer of an in-app payment, the merchant of a terminal payment, the approving owner or staff member of a refund, the claimant of a claim, the account holder of a load; the system account for automated jobs and admin actions (the admin is named in meta). |
 | reference | Nullable merchant order reference (1-64 characters); pay and refund only. |
 | idem | One unique key per attempt, scoped by type: `send:<from account>:<key>`, `pay:<merchant>:<attempt>` (terminal attempts `t:<attempt>`, customer-confirmed `c:<payer>:<key>`), `refund:<merchant>:<key>`, `purchase:<account>:<key>`, `fund:<account>:<key>`, `move:<account>:<key>`, `settle:<merchant>:<date>` (and `settle_return`, `collect`), `benefit:<run id>:<n>`, `claim:<employee row>`. Completed and declined attempts alike, so a retry replays the recorded outcome and a retry that differs is a mismatch. |
@@ -400,6 +400,7 @@ The source of truth for money: every movement, and every declined attempt. **Imm
 | settle | merchant balance `- amount` | Nuclear Bank |
 | settle_return | Nuclear Bank | merchant balance `+ amount` |
 | collect | Nuclear Bank | merchant balance `+ amount` |
+| collect_return | merchant | merchant balance `- amount` (a collection the bank returned after it arrived: the debt is back) |
 | adjustment | an admin-made correction, any wallets, reason in meta | |
 
 A declined row has no effect on anything. **Indexes** (8, each justified by a query): primary key; `UNIQUE (idem)`; `(from_wallet_id, created_at DESC, id DESC)` and `(to_wallet_id, created_at DESC, id DESC)` (a wallet's activity, limits, a person's or merchant's history); `(created_at DESC, id DESC)` (the admin feed and the nightly snapshot's day range); `UNIQUE (checkout_id) WHERE type = 'pay' AND status = 'completed'` (one completed payment per checkout); `(related_id) WHERE related_id IS NOT NULL` (refunds against a payment); `(terminal_id, created_at DESC) WHERE terminal_id IS NOT NULL`.
@@ -592,7 +593,7 @@ One row per merchant per day: the payout (credit) or collection (debit) the sett
 | failure_code | Why a returned or failed row did not settle. |
 | created_at, resolved_at, updated_at | Timestamps. |
 
-A payout writes its `settle` transaction when it is submitted (the money has left the balance); a bank return writes a `settle_return` and ends the row `returned`. A collection writes nothing until the bank confirms, then a `collect` transaction; collections in flight count against the debt so it is never collected twice. The job claims a day in `system.settled_day` only when the day is done, so a run that stopped half way is finished by the next call.
+A payout writes its `settle` transaction when it is submitted (the money has left the balance); a bank return writes a `settle_return` and ends the row `returned`. A collection writes nothing until the bank confirms, then a `collect` transaction (if the bank returns it later, a `collect_return` takes the money back and the row ends `returned`); collections in flight count against the debt so it is never collected twice. The job claims a day in `system.settled_day` only when the day is done, so a run that stopped half way is finished by the next call.
 
 ## refunds
 

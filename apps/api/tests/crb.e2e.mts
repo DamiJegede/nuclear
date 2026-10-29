@@ -51,7 +51,7 @@ const fakeFetch: typeof fetch = async (input, init) => {
   return json({ results: [...bank.pays.values()].filter((p) => p.kind === kind && p.body.clientIdentifier === cid).map((p) => ({ id: p.id, status: p.status })) });
 };
 
-const WH = "whsec_" + randomBytes(8).toString("hex");
+const WH = randomBytes(24).toString("base64");   // the bank's webhook secret is base64; the HMAC key is its decoded bytes
 const OP = "op-" + randomBytes(16).toString("hex");
 const env: any = {
   STATS_TTL_SECONDS: "0", HYPERDRIVE: { connectionString: PG_URL }, JWT_SECRET: "x".repeat(40), ADMIN_API_TOKEN: OP, SANDBOX_FUNDING: "true", BANK_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
@@ -84,7 +84,7 @@ const bal = async (m: any) => Number((await q("select balance from balances wher
 const closeOut = (m: any) => call("POST", "/v1/business/close-out", { token: m.session_token });
 const rows = (m: any) => q("select status, rail, direction, amount::int amount, provider_reference ref, failure_code code from settlements where merchant_account_id=$1 order by created_at", [m.account_id]);
 const recon = async () => (await call("GET", "/v1/admin/stats", { token: OP })).json.reconciliation;
-const sig = (body: string, secret = WH, t = Math.floor(Date.now() / 1000), asBase64Key = false) =>
+const sig = (body: string, secret = WH, t = Math.floor(Date.now() / 1000), asBase64Key = true) =>
   `t:${t}, v1:${createHmac("sha256", asBase64Key ? Buffer.from(secret, "base64") : secret).update(`${t}.${body}`).digest("base64")}`;
 const hook = async (ev: unknown, header?: string | null) => {
   const body = JSON.stringify(ev);
@@ -190,21 +190,37 @@ await closeOut(N);
 const np = [...bank.pays.values()].filter((p) => p.body.receiver?.accountNumber === "7770005");
 eq("a lost answer ends with exactly one payment at the bank and the row pointing at it", [np.length, (await rows(N))[0].ref === `ach:${np[0]!.id}`], [1, true]);
 
+eq("the books reconcile before the debt test", await recon().then((r: any) => [r.ledger_balanced, r.balances_match_ledger]), [true, true]);
+// ---- a collection the bank returns after it arrived: the debt comes back, once, and is collected again
+const P = await merchant("Papa Pies", "papa@x.test", "110000000", "7770007");
+await q("update balances set balance = -500 where account_id=$1", [P.account_id]);
+await runSettlement(env, sql, addDays(today, 3));
+const pull = [...bank.pays.values()].filter((p) => p.body.receiver?.accountNumber === "7770007")[0]!;
+eq("a debt is collected by an ACH pull, waiting for the bank", [pull.body.transactionType, pull.body.amount, (await rows(P)).map((r: any) => [r.direction, r.status])], ["Pull", 500, [["debit", "submitted"]]]);
+pull.status = "Completed";
+await hook({ id: randomUUID(), eventName: "Ach.Payment.Sent", resources: [`/ach/v1/payments/${pull.id}`] });
+eq("when the pull completes the debt is cleared", [(await rows(P))[0].status, await bal(P)], ["settled", 0]);
+const pret: Pay = { id: randomUUID(), kind: "ach", body: {}, idem: null, status: "Completed", original: pull.id, returnCode: "R01" };
+bank.pays.set(pret.id, pret);
+const pev = { id: randomUUID(), eventName: "Ach.Return.Received", resources: [`/ach/v1/payments/${pret.id}`] };
+await hook(pev);
+eq("the return after it arrived puts the debt back: balance -500, the row returned with the bank's code", [await bal(P), (await rows(P))[0].status, (await rows(P))[0].code], [-500, "returned", "R01"]);
+eq("one collect_return, from the merchant to the bank, related to the collect and keyed by the day", (await q("select t.type, t.amount::int a, t.related_id = c.id rel, t.idem from transactions t join transactions c on c.settlement_id = t.settlement_id and c.type = 'collect' where t.type = 'collect_return'"))[0], { type: "collect_return", a: 500, rel: true, idem: `collect_return:${P.account_id}:${addDays(today, 2)}` });
+await hook(pev);
+eq("a repeat of the return changes nothing", [await bal(P), (await q("select count(*)::int n from transactions where type='collect_return'"))[0].n], [-500, 1]);
+eq("the transactions still balance against each other (the -500 debt was set directly, so account balances are not compared)", await recon().then((r: any) => r.ledger_balanced), true);
+
 // ---- the webhook route: the signature is the only authority
 const evb = { id: randomUUID(), eventName: "Ach.Payment.Sent", resources: [] };
 const body = JSON.stringify(evb);
 eq("no signature: 401", (await hook(evb, null)).status, 401);
-eq("a wrong signature: 401", (await hook(evb, sig(body, "other-secret"))).status, 401);
+eq("a wrong signature: 401", (await hook(evb, sig(body, randomBytes(24).toString("base64")))).status, 401);
 eq("a body changed after signing: 401", (await hook({ ...evb, id: randomUUID() }, sig(body))).status, 401);
 eq("an old timestamp (25 minutes): 401", (await hook(evb, sig(body, WH, Math.floor(Date.now() / 1000) - 25 * 60))).status, 401);
 eq("a fresh signature: 200", (await hook(evb)).status, 200);
 eq("a ping answers 200", (await hook({ id: randomUUID(), eventName: "Ping", isPing: true, resources: [] })).status, 200);
 eq("an event about a payment we do not know is acknowledged (the registration must not be suspended)", (await hook({ id: randomUUID(), eventName: "Ach.Payment.Sent", resources: [`/ach/v1/payments/${randomUUID()}`] })).status, 200);
-const b64secret = randomBytes(24).toString("base64");
-const envB64 = { ...env, CR_WH_SEC: b64secret };
-const body2 = JSON.stringify(evb);
-const r2 = await app.fetch(new Request("http://x/v1/bank-hooks/crb", { method: "POST", headers: { "cos-signature": sig(body2, b64secret, undefined, true) }, body: body2 }), envB64, ctx);
-eq("a secret the bank's sample decodes from base64 is accepted too", r2.status, 200);
+eq("a secret read as plain text instead of base64 is refused", (await hook(evb, sig(body, WH, undefined, false))).status, 401);
 const none = await app.fetch(new Request("http://x/v1/bank-hooks/crb", { method: "POST", body }), { ...env, CR_WH_SEC: undefined }, ctx);
 eq("without a webhook secret the route is off (503)", none.status, 503);
 
@@ -215,7 +231,6 @@ const saved = env.CR_PAYOUTS; env.CR_PAYOUTS = "false";
 const rs = await closeOut(S);
 env.CR_PAYOUTS = saved;
 eq("with CR_PAYOUTS off the sandbox stand-in settles it and the bank is not called", [rs.json.settlement.status, [...bank.pays.values()].filter((p) => p.body.receiver?.accountNumber === "7770006").length], ["completed", 0]);
-eq("the books reconcile at the end", await recon().then((r: any) => [r.ledger_balanced, r.balances_match_ledger]), [true, true]);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end(); await sql.end?.();

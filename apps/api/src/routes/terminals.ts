@@ -11,6 +11,8 @@ import { requireOwner, requireSession, requireTerminal } from "../session";
 import type { Sql } from "../db";
 import { ORB_NONCE, ORB_UID, authorizeBind, orbKey } from "../lib/orbKeys";
 import { log } from "../lib/audit";
+import { closeOut } from "../lib/settlement";
+import { proofFrom, tapStaff } from "./refunds";
 import { RULES, rateLimit } from "../lib/throttle";
 
 const nameSchema = z.string().trim().min(1).max(80);
@@ -341,6 +343,33 @@ terminalSelf.post("/lookup", async (c) => {
 
   if ("error" in result) return c.json({ error: result.error }, result.status);
   return c.json({ account: result.account });
+});
+
+// Close out from the terminal: the merchant's staff ends the day. Needs a tap by staff with the `write` role (the proof is burned either way), then
+// runs the same whole-balance close-out as the owner's (`POST /v1/business/close-out`): one settlement a day, paid to the payout bank at once.
+terminalSelf.post("/close-out", rateLimit("terminal-close-out", RULES.terminalCloseOut, (c) => c.get("terminal")?.accountId ?? null), async (c) => {
+  const body = z.object({ approval: z.object({ credential: credentialSchema }) }).safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request" }, 400);
+  const proof = await proofFrom(c.env, body.data.approval.credential);
+  if (proof === "pass") return c.json({ error: "pass_verification_unavailable" }, 501);
+  if (!proof) return c.json({ error: "invalid_tag" }, 400);
+  const sql = c.get("sql"), { accountId } = c.get("terminal");
+  type R = { error: string; status: 403 | 404 | 409 | 422 } | { staff: string };
+  const tap = (await sql.begin(async (tx): Promise<R> => {
+    const t = await tapStaff(tx, proof, accountId);
+    if (t.kind === "error") return t;
+    if (t.kind === "not_staff") return { error: "approver_not_authorized", status: 403 };
+    return { staff: t.accountId };
+  })) as R;
+  if ("error" in tap) return c.json({ error: tap.error }, tap.status);
+
+  const r = await closeOut(c.env, sql, accountId);
+  if (!r.ok) {
+    const status = r.error === "payouts_unavailable" ? 503 : 409;
+    return c.json({ error: r.error, ...(r.owed !== undefined ? { owed: r.owed } : {}) }, status);
+  }
+  await log(sql, { actor: { type: "customer", id: tap.staff }, action: "merchant.closed_out_by_staff", target: { type: "settlement", id: r.settlement.id, label: r.settlement.date }, details: { merchant_id: accountId, terminal_id: c.get("terminal").terminalId, amount: r.settlement.amount } });
+  return c.json({ settlement: { ...r.settlement, status: r.settlement.status === "settled" ? "completed" : r.settlement.status === "submitted" ? "pending" : r.settlement.status } }, 201);
 });
 
 // ---- Catalogue on the terminal ----------------------------------------------------------------

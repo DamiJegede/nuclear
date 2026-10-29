@@ -280,18 +280,34 @@ async function finishItem(sql: Sql, item: AchItem, code: string | null, outcome:
 }
 
 /**
- * The bank sent a payout back after it had arrived (an ACH return can come days later): the money goes back into the merchant's balance, as when a
- * payout is returned before it settles. A collection that arrived and is returned later is not reversed here (it would put the debt back): it is
- * logged for an operator. `settled` and `submitted` rows are both accepted; a repeat finds a `returned` row and does nothing.
+ * The bank sent an item back after it had arrived (an ACH return can come days later). A payout goes back into the merchant's balance, as when a
+ * payout is returned before it settles. A collection that had arrived is taken back out: a `collect_return` transaction (merchant to Nuclear Bank,
+ * related to the `collect`) puts the debt back and the next nightly run collects it again. `settled` and `submitted` rows are both accepted; a
+ * repeat finds a `returned` row and does nothing.
  */
-export async function returnItem(sql: Sql, settlementId: string, code: string): Promise<"returned" | "ignored" | "needs_operator"> {
+export async function returnItem(sql: Sql, settlementId: string, code: string): Promise<"returned" | "ignored"> {
   const [item] = await sql<(AchItem & { status: string })[]>`select ${sql.unsafe(ITEM_COLS)}, status from settlements where id = ${settlementId}`;
   if (!item || (item.status !== "submitted" && item.status !== "settled")) return "ignored";
-  if (item.direction === "debit" && item.status === "settled") {
-    await log(sql, { actor: { type: "system", label: "settlement" }, action: "settlement.return_needs_operator", target: { type: "settlement", id: settlementId }, details: { code } });
-    return "needs_operator";
-  }
+  if (item.direction === "debit" && item.status === "settled") return takeBackCollection(sql, item, code);
   return (await finishItem(sql, item, code, "returned", ["submitted", "settled"])) ? "returned" : "ignored";
+}
+
+async function takeBackCollection(sql: Sql, item: AchItem, code: string): Promise<"returned" | "ignored"> {
+  return sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Tx;
+    const [s] = await tx<{ id: string; settle_date: string }[]>`select id, settle_date::text from settlements where id = ${item.itemId} and status = 'settled' for no key update`;
+    if (!s) return "ignored";
+    await tx`select 1 from balances where account_id = ${item.accountId} for no key update`;
+    const [wallet] = await tx<{ id: string }[]>`select id from wallets where account_id = ${item.accountId} and type = 'default'`;
+    const [collected] = await tx<{ id: string }[]>`select id from transactions where settlement_id = ${s.id} and type = 'collect'`;
+    const amt = item.amountCents.toString();
+    await Promise.all([
+      tx`update balances set balance = balance - ${amt} where account_id = ${item.accountId}`,
+      insertTx(tx, { type: "collect_return", from: wallet!.id, to: BANK_WALLET, amount: item.amountCents, related: collected!.id, settlement: s.id, account: SYSTEM_ACCOUNT, idem: `collect_return:${item.accountId}:${s.settle_date}` }),
+      tx`update settlements set status = 'returned', failure_code = ${code}, resolved_at = now() where id = ${s.id}`,
+    ]);
+    return "returned";
+  }) as Promise<"returned" | "ignored">;
 }
 
 /** The whole batch was refused: give every payout back and fail every waiting row. */

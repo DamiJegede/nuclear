@@ -24,7 +24,7 @@ const same = (a: string, b: string) => {
   return d === 0;
 };
 
-/** True when the signature is valid and fresh. The bank's sample decodes the secret from base64 first; both readings are accepted until the first live event settles which. */
+/** True when the signature is valid and fresh. The webhook secret is base64: the HMAC key is its decoded bytes (confirmed against the bank's own ping, 2026-10-28). */
 export async function verifyCrbSignature(secret: string, header: string | undefined, body: string, now = Date.now()): Promise<boolean> {
   if (!header) return false;
   const parts = Object.fromEntries(header.split(",").map((p) => { const i = p.indexOf(":"); return [p.slice(0, i).trim(), p.slice(i + 1).trim()]; }));
@@ -33,14 +33,10 @@ export async function verifyCrbSignature(secret: string, header: string | undefi
   const n = Number(t);
   const ms = Number.isFinite(n) ? (n < 1e11 ? n * 1000 : n) : Date.parse(t);
   if (!Number.isFinite(ms) || Math.abs(now - ms) > TOLERANCE_MS) return false;
-  const keys = [new TextEncoder().encode(secret)];
-  const decoded = b64decode(secret);
-  if (decoded && decoded.length > 0) keys.push(decoded);
-  for (const raw of keys) {
-    const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    if (same(b64(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${body}`))), sig)) return true;
-  }
-  return false;
+  const raw = b64decode(secret);
+  if (!raw || raw.length === 0) return false;
+  const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return same(b64(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${body}`))), sig);
 }
 
 export type CrbEvent = { id?: string; eventName?: string; isPing?: boolean; resources?: unknown };

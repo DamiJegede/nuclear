@@ -95,3 +95,16 @@ public struct RefundLine: Codable, Equatable {
     public init(checkoutItemId: String, quantity: Int) { self.checkoutItemId = checkoutItemId; self.quantity = quantity }
     enum CodingKeys: String, CodingKey { case checkoutItemId = "checkout_item_id", quantity }
 }
+
+/// The result of ending the day (`POST /v1/terminal/close-out`): the whole balance paid to the payout bank.
+public struct CloseOut: Codable, Equatable {
+    public let id: String
+    public let date: String
+    public let amount: Int
+    /// `instant` or `ach`.
+    public let rail: String
+    /// `completed` once the bank has settled it, `pending` while it is on its way.
+    public let status: String
+    /// `instant`, `today` or `next_business_day`.
+    public let arrival: String
+}

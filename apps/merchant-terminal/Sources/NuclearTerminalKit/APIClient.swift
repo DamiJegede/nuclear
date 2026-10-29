@@ -136,4 +136,13 @@ public final class TerminalClient {
         guard [200, 201, 202].contains(s) else { throw APIError(status: s, code: ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["error"] as? String) ?? "http_\(s)") }
         return (s, d)
     }
+
+    // MARK: Close out
+
+    /// Ends the merchant's day: the whole balance is paid to the payout bank now. Needs a tap by staff with the write role (HTTP 403 `approver_not_authorized` otherwise);
+    /// a second close-out the same day is 409 `already_closed_out`.
+    public func closeOut(tapURL: String) async throws -> CloseOut {
+        let (s, d) = try await send(request("POST", "v1/terminal/close-out", body: ["approval": ["credential": ["type": "tag", "url": tapURL]]]))
+        return try decode(CloseOut.self, s, d, unwrap: "settlement")
+    }
 }
