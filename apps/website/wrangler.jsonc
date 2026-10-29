@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nclr",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "account_id": "2e328fde1db62ab22f16e8f464562d3c",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "nclr.app", "custom_domain": true },
+    { "pattern": "www.nclr.app", "custom_domain": true }
+  ]
+}
