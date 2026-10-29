@@ -7,11 +7,14 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "triggers": { "crons": ["1 4 * * *", "1 5 * * *"] },
+  // Custom domain (2026-10-28): nclr.app is a Cloudflare zone in this account. The workers.dev address keeps working.
+  "workers_dev": true,
+  "routes": [{ "pattern": "api.nclr.app", "custom_domain": true }],
   "vars": {
     // Browser origins allowed to call /v1/admin/* (comma-separated). Add the admin portal's real URL
     // (the hosted one is already listed). The operator token is still required on every call.
     // The address image keys are turned into full URLs on (unset = the address of the request).
-    "PUBLIC_URL": "https://nuclear-api.a-space.workers.dev",
+    "PUBLIC_URL": "https://api.nclr.app",
     // The merchant portal (local dev and hosted) may call the business API from the browser.
     "MERCHANT_ORIGINS": "http://localhost:5174,https://nuclear-merchant.a-space.workers.dev",
     // The organization portal (local dev and hosted).
@@ -22,6 +25,10 @@
     // Where emailed links (verify email, reset password) open for businesses and organizations.
     "MERCHANT_PORTAL_URL": "https://nuclear-merchant.a-space.workers.dev",
     "ORG_PORTAL_URL": "https://nuclear-organization.a-space.workers.dev",
+    // Cross River, through the forwarder on the banking server (docs/CROSS-RIVER.md). Secrets: BANK_PROXY_KEY, CR_CLIENT_ID, CR_CLIENT_SEC, CR_WH_SEC, CR_ACCOUNT.
+    // CR_PAYOUTS ("true") would make settlement pay through the bank; unset, the sandbox stand-in settles. CRNow is the instant network the sandbox account has.
+    "BANK_PROXY_URL": "https://bank.nclr.app",
+    "CR_RTP_NETWORK": "CRNow",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },

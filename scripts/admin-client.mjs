@@ -1,7 +1,7 @@
 // Shared by the operator scripts: reads API_URL and ADMIN_API_TOKEN from the environment.
 // Never put the token on the command line (it would land in shell history).
 export function client() {
-  const base = (process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev").replace(/\/$/, "");
+  const base = (process.env.API_URL ?? "https://api.nclr.app").replace(/\/$/, "");
   const token = process.env.ADMIN_API_TOKEN;
   if (!token) {
     console.error("ADMIN_API_TOKEN is not set. Export it in your shell (do not pass it as an argument).");

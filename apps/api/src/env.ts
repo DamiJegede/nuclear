@@ -2,7 +2,7 @@ export interface Env {
   HYPERDRIVE: Hyperdrive;
   /** R2 bucket for uploaded images (tag and shop pictures). */
   IMAGES?: R2Bucket;
-  /** Public address of this API, put in front of image keys (e.g. https://nuclear-api.a-space.workers.dev). Unset = the address of the request. */
+  /** Public address of this API, put in front of image keys (e.g. https://api.nclr.app). Unset = the address of the request. */
   PUBLIC_URL?: string;
   /** Cloudflare Images binding (wrangler `images`): resizes and compresses uploaded profile photos. */
   IMG?: ImagesBinding;
@@ -33,10 +33,23 @@ export interface Env {
    * `wrangler secret put MFA_ENCRYPTION_KEY`. Without it admin MFA enrollment and sign-in return 503.
    */
   MFA_ENCRYPTION_KEY?: string;
-  /** The banking server (the one machine on the bank's IP allowlist): its base URL and the shared secret that signs our calls to it (docs/CROSS-RIVER.md). Unset = bank lookups answer "unknown" and nothing is sent. */
-  BANKING_URL?: string;
-  BANKING_SECRET?: string;
-  /** Tests and local runs: a ready-made banking client used instead of calling BANKING_URL. */
+  /**
+   * Cross River Bank, reached through the forwarder on the banking server (the one machine on the bank's IP allowlist; docs/CROSS-RIVER.md): `BANK_PROXY_URL`
+   * (https://bank.nclr.app) and the shared key it requires, then the bank credentials. `CR_ACCOUNT` is our originating deposit account, `CR_WH_SEC` signs the
+   * bank's webhooks, `CR_RTP_NETWORK` picks the instant network (unset = the product's default; the sandbox needs `CRNow`). Unset = bank lookups answer
+   * "unknown" and nothing is sent. `CR_PAYOUTS=true` makes settlement pay through the bank instead of the sandbox stand-in.
+   */
+  BANK_PROXY_URL?: string;
+  BANK_PROXY_KEY?: string;
+  CR_CLIENT_ID?: string;
+  CR_CLIENT_SEC?: string;
+  CR_WH_SEC?: string;
+  CR_ACCOUNT?: string;
+  CR_RTP_NETWORK?: string;
+  CR_PAYOUTS?: string;
+  /** Tests: a stand-in for the bank proxy's HTTP, used instead of `fetch`. */
+  CRB_FETCH?: typeof fetch;
+  /** Tests and local runs: a ready-made banking client used instead of the bank directory. */
   BANKING_CLIENT?: import("./lib/banks").BankingClient;
   /** AES-256 key (base64, 32 bytes) encrypting bank routing and account numbers at rest. Losing it makes every stored number unrecoverable: keep a copy in the password manager. Without it, saving a payout bank returns 503. */
   BANK_ENCRYPTION_KEY?: string;

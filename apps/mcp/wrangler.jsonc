@@ -10,6 +10,6 @@
   "services": [{ "binding": "API", "service": "nuclear-api" }],
   "vars": {
     // Used only when the service binding is absent (local runs).
-    "API_URL": "https://nuclear-api.a-space.workers.dev"
+    "API_URL": "https://api.nclr.app"
   }
 }

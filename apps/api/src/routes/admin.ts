@@ -1037,7 +1037,7 @@ admin.post("/settlements/:id/confirm", async (c) => {
   const denied = settlementAdmin(c); if (denied) return denied;
   const id = c.req.param("id");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(id) || Number.isNaN(Date.parse(id))) return c.json({ error: "not_found" }, 404);
-  const provider = achProvider(c.env);
+  const provider = achProvider(c.env, c.get("sql"));
   if (!provider) return c.json({ error: "no_payment_provider" }, 503);
   const r = await confirmSettlement(c.get("sql"), id, provider);
   if (r.status === "missing") return c.json({ error: "not_found" }, 404);

@@ -299,7 +299,7 @@ const listQuery = (q?: string, cursor?: string) => {
   return t ? `?${t}` : "";
 };
 
-export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefined) ?? "https://nuclear-api.a-space.workers.dev";
+export const API_URL: string = (import.meta.env?.VITE_API_URL as string | undefined) ?? "https://api.nclr.app";
 
 async function send<T>(base: string, token: string | null, method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;

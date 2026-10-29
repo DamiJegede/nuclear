@@ -19,7 +19,7 @@ const N_USERS = Number(flag("users", 1000));
 const N_MERCHANTS = Number(flag("merchants", 25));
 const BACKDATE = !args.includes("--no-backdate");
 const RUN = flag("run", Date.now().toString(36));          // makes emails unique per run
-const API = (process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev").replace(/\/$/, "");
+const API = (process.env.API_URL ?? "https://api.nclr.app").replace(/\/$/, "");
 const PASSWORD = "Seed-demo-password-1";
 
 const vars = Object.fromEntries(

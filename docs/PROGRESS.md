@@ -21,7 +21,7 @@ The money core, the schema and the sessions were rebuilt on a local Postgres fol
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://nuclear-api.a-space.workers.dev | `9c0faff8` |
+| API Worker `nuclear-api` | https://api.nclr.app | `9c0faff8` |
 | Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `3539d557` |
 | Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `dadc40ba` |
 | Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |

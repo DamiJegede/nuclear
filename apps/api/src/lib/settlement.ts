@@ -40,7 +40,7 @@ export type RunSummary =
   | { ran: true; cutoff_date: string; created: number; payouts: number; collections: number; payout_total: number; collection_total: number; status: string };
 
 /** Settles the program day before `today`. Safe to call repeatedly. */
-export async function runSettlement(env: Env, sql: Sql, today: string, provider: AchProvider | null = achProvider(env)): Promise<RunSummary> {
+export async function runSettlement(env: Env, sql: Sql, today: string, provider: AchProvider | null = achProvider(env, sql)): Promise<RunSummary> {
   if (!provider) return { ran: false, reason: "no_provider" };
   const date = addDays(today, -1);
   const [done] = await sql<{ value: string }[]>`select value from system where key = 'settled_day'`;
@@ -135,6 +135,11 @@ const ITEM_COLS = `id as "itemId", direction, amount as "amountCents", bank_acco
 /** Sends items to the bank and remembers its reference on exactly those rows. Throws when the bank accepted nothing. */
 async function submitItems(sql: Sql, provider: AchProvider, batchKey: string, items: AchItem[]) {
   const sub = await provider.submit(batchKey, items);
+  if (sub.references) {
+    const refs = Object.entries(sub.references);
+    await sql.begin((tx) => refs.map(([id, ref]) => tx`update settlements set provider_reference = ${ref} where id = ${id} and status = 'submitted'`));
+    return;
+  }
   await sql`update settlements set provider_reference = ${sub.reference} where id = any(${pgUuidArray(items.map((i) => i.itemId))}::uuid[]) and status = 'submitted'`;
 }
 
@@ -158,7 +163,7 @@ export function arrivalOf(rail: "instant" | "ach", now: Date): "instant" | "toda
  * to the next day. The balance drops under the lock before anything is sent (so a double click, or a sale a moment later, cannot pay the same money
  * twice); if the bank cannot be reached the row simply stays `submitted` and the next run sends it (the bank sees our row id as the idempotency key).
  */
-export async function closeOut(env: Env, sql: Sql, accountId: string, provider: AchProvider | null = achProvider(env), now = new Date()): Promise<CloseOutResult> {
+export async function closeOut(env: Env, sql: Sql, accountId: string, provider: AchProvider | null = achProvider(env, sql), now = new Date()): Promise<CloseOutResult> {
   if (!provider) return { ok: false, error: "payouts_unavailable" };
   const date = easternDate(now);
   const sweep = await sweepMerchant(sql, date, accountId, "close_out");
@@ -240,11 +245,11 @@ export async function confirmItems(sql: Sql, provider: AchProvider, ids: string[
  * Applies the bank's answer to one waiting row (a repeat finds nothing waiting and does nothing).
  * `code` null = settled; otherwise the bank returned it (`outcome` is the status the row ends in: `returned`, or `failed` when the batch was refused).
  */
-async function finishItem(sql: Sql, item: AchItem, code: string | null, outcome: "returned" | "failed"): Promise<boolean> {
+async function finishItem(sql: Sql, item: AchItem, code: string | null, outcome: "returned" | "failed", from: string[] = ["submitted"]): Promise<boolean> {
   return sql.begin(async (txRaw) => {
     const tx = txRaw as unknown as Tx;
     const [s] = await tx<{ id: string; settle_date: string }[]>`
-      select id, settle_date::text from settlements where id = ${item.itemId} and status = 'submitted' for no key update`;
+      select id, settle_date::text from settlements where id = ${item.itemId} and status = any(${`{${from.join(",")}}`}::text[]) for no key update`;
     if (!s) return false;
     const amt = item.amountCents.toString();
     // Same lock order as the money paths: the balance row.
@@ -274,6 +279,21 @@ async function finishItem(sql: Sql, item: AchItem, code: string | null, outcome:
   }) as Promise<boolean>;
 }
 
+/**
+ * The bank sent a payout back after it had arrived (an ACH return can come days later): the money goes back into the merchant's balance, as when a
+ * payout is returned before it settles. A collection that arrived and is returned later is not reversed here (it would put the debt back): it is
+ * logged for an operator. `settled` and `submitted` rows are both accepted; a repeat finds a `returned` row and does nothing.
+ */
+export async function returnItem(sql: Sql, settlementId: string, code: string): Promise<"returned" | "ignored" | "needs_operator"> {
+  const [item] = await sql<(AchItem & { status: string })[]>`select ${sql.unsafe(ITEM_COLS)}, status from settlements where id = ${settlementId}`;
+  if (!item || (item.status !== "submitted" && item.status !== "settled")) return "ignored";
+  if (item.direction === "debit" && item.status === "settled") {
+    await log(sql, { actor: { type: "system", label: "settlement" }, action: "settlement.return_needs_operator", target: { type: "settlement", id: settlementId }, details: { code } });
+    return "needs_operator";
+  }
+  return (await finishItem(sql, item, code, "returned", ["submitted", "settled"])) ? "returned" : "ignored";
+}
+
 /** The whole batch was refused: give every payout back and fail every waiting row. */
 async function failDay(sql: Sql, date: string, code: string) {
   const items = await openItems(sql, date);
@@ -296,7 +316,7 @@ async function summarize(sql: Sql, date: string, created: number): Promise<RunSu
 }
 
 /** The daily job also polls days the bank had not answered yet. */
-export async function pollSubmittedSettlements(env: Env, sql: Sql, provider: AchProvider | null = achProvider(env)) {
+export async function pollSubmittedSettlements(env: Env, sql: Sql, provider: AchProvider | null = achProvider(env, sql)) {
   const days = await sql<{ d: string }[]>`select distinct settle_date::text as d from settlements where status = 'submitted' order by d`;
   let completed = 0;
   for (const r of days) if ((await confirmSettlement(sql, r.d, provider)).status === "completed") completed += 1;

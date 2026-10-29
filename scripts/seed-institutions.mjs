@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const args = process.argv.slice(2);
 const dir = args.find((a) => !a.startsWith("--"));
 const force = args.includes("--force"), dry = args.includes("--dry-run");
-const API = (process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev").replace(/\/$/, "");
+const API = (process.env.API_URL ?? "https://api.nclr.app").replace(/\/$/, "");
 const OP = process.env.ADMIN_API_TOKEN;
 if (!dir || !OP) { console.error("usage: ADMIN_API_TOKEN=... node scripts/seed-institutions.mjs <logos-dir> [--force] [--dry-run] [--list=institutions-neobanks.json]"); process.exit(2); }
 const listName = args.find((a) => a.startsWith("--list="))?.slice(7) ?? "institutions-top50.json";

@@ -2,11 +2,11 @@
 // Measures how many events per second the counter Durable Objects absorb (the Overview's running estimate). It calls the operator probe
 // (POST /v1/admin/stats/loadtest), which writes only to the throwaway day "loadtest", then reads the total back and deletes it.
 //
-//   ADMIN_API_TOKEN=... node scripts/load-stats.mjs [--shards 1] [--requests 40] [--events 200] [--width 6] [--api https://nuclear-api.a-space.workers.dev]
+//   ADMIN_API_TOKEN=... node scripts/load-stats.mjs [--shards 1] [--requests 40] [--events 200] [--width 6] [--api https://api.nclr.app]
 //
 // --requests parallel requests are fired together; each makes --events calls to the objects, --width at a time.
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : d; };
-const API = arg("api", process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev");
+const API = arg("api", process.env.API_URL ?? "https://api.nclr.app");
 const TOKEN = process.env.ADMIN_API_TOKEN;
 if (!TOKEN) { console.error("Set ADMIN_API_TOKEN"); process.exit(2); }
 const shards = Number(arg("shards", 1)), requests = Number(arg("requests", 40)), events = Number(arg("events", 200)), width = Number(arg("width", 6));

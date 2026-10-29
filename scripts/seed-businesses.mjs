@@ -13,7 +13,7 @@ const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : d; };
 const N_PENDING = Number(flag("pending", 6));
 const RUN = Date.now().toString(36);
-const API = (process.env.API_URL ?? "https://nuclear-api.a-space.workers.dev").replace(/\/$/, "");
+const API = (process.env.API_URL ?? "https://api.nclr.app").replace(/\/$/, "");
 const PASSWORD = "Seed-demo-password-1";
 const vars = Object.fromEntries(
   readFileSync(fileURLToPath(new URL("../apps/api/.dev.vars", import.meta.url)), "utf8")

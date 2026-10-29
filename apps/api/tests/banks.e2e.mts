@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import app from "../src/index.ts";
 import { connect } from "../src/db.ts";
-import { ensureRouting, matchInstitution, refreshBank, refreshStaleBanks, signBankingBody, type BankingClient, type DirectoryAnswer } from "../src/lib/banks.ts";
+import { ensureRouting, matchInstitution, refreshBank, refreshStaleBanks, type BankingClient, type DirectoryAnswer } from "../src/lib/banks.ts";
 import { totp } from "../src/lib/totp.ts";
 import { migrate, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
@@ -90,7 +90,6 @@ calls.length = 0;
 const nightly = await refreshStaleBanks(env, sql);
 eq("the nightly job refreshes the banks in use whose answer is missing and skips unused ones", [nightly.refreshed, calls.sort(), calls.includes("026009593")], [2, ["021000021", "110000000"], false]);
 eq("without a banking server it does nothing", await refreshStaleBanks({ ...env, BANKING_CLIENT: undefined }, sql), { checked: 0, refreshed: 0 });
-eq("the signature the real client sends is t:<seconds>,v1:<hex hmac>", (await signBankingBody("secret", "{}", 1_700_000_000_000)).replace(/v1:[0-9a-f]{64}/, "v1:HMAC"), "t:1700000000,v1:HMAC");
 
 // ---- institutions: one name and logo for every routing number that belongs to it
 const person = async (name: string, role: string) => {

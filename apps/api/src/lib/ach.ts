@@ -1,4 +1,6 @@
+import type { Sql } from "../db";
 import type { Env } from "../env";
+import { crbProvider } from "./crbAch";
 
 /** One bank movement in a settlement batch (`itemId` is the `settlements` row). `credit` pays the merchant's bank; `debit` collects from it. */
 export type AchItem = {
@@ -16,8 +18,11 @@ export type AchOutcome = { itemId: string; outcome: "settled" | "returned" | "re
  */
 export interface AchProvider {
   readonly name: string;
-  /** Sends the batch to the bank and returns its reference. Throws when nothing was accepted. */
-  submit(batchKey: string, items: AchItem[]): Promise<{ reference: string }>;
+  /**
+   * Sends the batch to the bank and returns its reference. Throws when nothing was accepted. A provider that makes one payment per item returns
+   * `references` (item id -> that payment's reference) for the items it did send; the others stay unsent and go out again with the next run.
+   */
+  submit(batchKey: string, items: AchItem[]): Promise<{ reference: string; references?: Record<string, string> }>;
   outcomes(reference: string, items: AchItem[]): Promise<AchOutcome[]>;
 }
 
@@ -28,7 +33,11 @@ export const sandboxAch: AchProvider = {
   outcomes: async (_ref, items) => items.map((i) => ({ itemId: i.itemId, outcome: "settled" as const })),
 };
 
-/** The provider for this deployment, or null when none is configured (settlement then does nothing rather than pretending to pay). */
-export function achProvider(env: Env): AchProvider | null {
+/**
+ * The provider for this deployment, or null when none is configured (settlement then does nothing rather than pretending to pay). Cross River
+ * is used when `CR_PAYOUTS` is "true" and the bank is configured; otherwise the sandbox stand-in when `SANDBOX_FUNDING` is on.
+ */
+export function achProvider(env: Env, sql: Sql): AchProvider | null {
+  if (env.CR_PAYOUTS === "true") return crbProvider(env, sql);
   return env.SANDBOX_FUNDING === "true" ? sandboxAch : null;
 }

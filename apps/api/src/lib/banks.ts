@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import type { Sql } from "../db";
+import { crbBankingClient, crbClient } from "./crb";
 import { imageUrl } from "./images";
 
 /**
@@ -7,13 +8,13 @@ import { imageUrl } from "./images";
  * per account) and the institutions they belong to (`institutions`: Chase, Wells Fargo...; the display name and the logo, uploaded once however many
  * routing numbers the institution has). `instant` is true when the bank receives instant payments (RTP or FedNow), false when it does not, and NULL when
  * we have not been able to find out; NULL is treated as "not instant" when a payout is sent (it then goes by same-day ACH), never as a reason to refuse
- * the bank. The directory (Cross River, through the banking server) gives the name as it spells it and the networks; it has no pictures, so an admin
+ * the bank. The directory (Cross River, through the bank proxy) gives the name as it spells it and the networks; it has no pictures, so an admin
  * uploads each institution's logo, and a routing number is linked to its institution by name (aliases) or by an admin.
  */
 export type Network = "RTP" | "FedNow";
 export type DirectoryAnswer = { found: boolean; name: string | null; instant: boolean; networks: Network[] };
 
-/** The banking server's side of a lookup. A real client calls it over HTTPS (signed); tests pass their own. Throws when it cannot get an answer. */
+/** The banking server's side of a lookup. The real one reads Cross River's directory (lib/crb.ts); tests pass their own. Throws when it cannot get an answer. */
 export interface BankingClient {
   lookupBank(routingNumber: string): Promise<DirectoryAnswer>;
 }
@@ -49,34 +50,12 @@ export async function bankChoices(sql: Sql, b: Pick<AccountBank, "institution_id
 /** How long a directory answer is trusted, and how long to wait before trying a bank again after a failed lookup. */
 export const STALE_DAYS = 30;
 export const RETRY_AFTER_FAILURE_HOURS = 1;
-const LOOKUP_TIMEOUT_MS = 3000;
 
-const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
-
-/** Signs a body for the banking server: `t:<seconds>,v1:<hmac-sha256 hex of "<seconds>.<body>">` (the same shape as Cross River's own signature). */
-export async function signBankingBody(secret: string, body: string, now = Date.now()): Promise<string> {
-  const t = Math.floor(now / 1000);
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return `t:${t},v1:${hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${body}`)))}`;
-}
-
-/** The client for this deployment: an injected one (tests), the HTTP client when the banking server is configured, else null (answers stay unknown). */
+/** The client for this deployment: an injected one (tests), the bank directory when Cross River is configured, else null (answers stay unknown). */
 export function bankingClient(env: Env): BankingClient | null {
   if (env.BANKING_CLIENT) return env.BANKING_CLIENT;
-  if (!env.BANKING_URL || !env.BANKING_SECRET) return null;
-  const base = env.BANKING_URL.replace(/\/+$/, ""), secret = env.BANKING_SECRET;
-  return {
-    async lookupBank(routingNumber) {
-      const body = JSON.stringify({ routing_number: routingNumber });
-      const res = await fetch(`${base}/v1/banks/lookup`, {
-        method: "POST", body, signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
-        headers: { "content-type": "application/json", "x-nuclear-signature": await signBankingBody(secret, body) },
-      });
-      if (!res.ok) throw new Error(`banking server ${res.status}`);
-      const j = (await res.json()) as Partial<DirectoryAnswer>;
-      return { found: !!j.found, name: typeof j.name === "string" && j.name ? j.name.slice(0, 120) : null, instant: !!j.instant, networks: (j.networks ?? []).filter((n): n is Network => n === "RTP" || n === "FedNow") };
-    },
-  };
+  const crb = crbClient(env);
+  return crb ? crbBankingClient(crb) : null;
 }
 
 /** The routing number's row, created on first sight (two requests at once end with the same row). */

@@ -15,7 +15,7 @@ endpoints under `/v1/admin`, and holds no database access.
 https://nuclear-admin.a-space.workers.dev (Cloudflare Pages on the unified Workers platform; static files
 from `dist/`, security headers from `public/_headers`, SPA fallback, preview URLs off). Deploy with
 `npm run deploy -w @nuclear/admin-portal` (builds, then `wrangler deploy`; config in `wrangler.jsonc`).
-The page's CSP only lets it call `https://nuclear-api.a-space.workers.dev`; change `connect-src` in
+The page's CSP only lets it call `https://api.nclr.app`; change `connect-src` in
 `public/_headers` if `VITE_API_URL` changes.
 
 ## Run it
