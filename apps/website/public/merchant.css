@@ -101,3 +101,5 @@ html:has(#free-tools:target){scroll-padding-top:0}
 
 /* Chart: bars sit on the baseline, weekday labels 10px below it; the card keeps one height across tabs. */
 .chart{margin-bottom:34px}.bar-col{position:relative;gap:0}.bar-col span{position:absolute;top:100%;left:0;right:0;margin-top:10px;transform:none;text-align:center;line-height:1}.bar-col i{border-radius:4px 4px 0 0}.dashboard-content{height:auto!important;box-sizing:border-box}
+
+.team-row>small{font-weight:700}
