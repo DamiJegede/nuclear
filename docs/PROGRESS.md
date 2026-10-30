@@ -126,3 +126,11 @@ Quality: 38 API test suites (about 1,560 checks, run on a throwaway local Postgr
 - **Passkeys** (discussed, not built): need a final domain decided first.
 - **Admin portal page cache**: only the merchant portal has it so far.
 - **Before launch**: the v2 cutover above (the rebuild into a fresh database with the consolidated migrations), and resize the database from its current 1/16 vCPU PS-5.
+
+## Website relocation — 2026-10-29
+
+Moved the approved merchant marketing website, brand assets, hologram seal, and existing Worker source/configuration from `/Users/dami/GitHub/nclr-website` into `apps/website/`. All future website work uses this directory. Static files are in `apps/website/public/`; `npm run website:dev` serves them at http://localhost:4187/. No public deployment was performed for this relocation.
+
+## Website routes and SolidJS — 2026-10-29
+
+Converted the entire website into one SolidJS/Vite app in `apps/website`. Restored the original video homepage at `/`, without links to the merchant page. The approved merchant marketing site is at `/merchant` for direct sharing. The fee calculator uses Solid signals; its existing tabs, signup dialog and demo remain working. `npm run website:dev` uses port 4187, `npm run website:build` produces `dist/`, and the existing Worker config serves that output with SPA fallback. Verified the production build, homepage video playback and lack of links, merchant direct reload, calculator, tabs and enrollment dialog locally. No public deployment.

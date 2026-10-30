@@ -26,9 +26,10 @@
     "MERCHANT_PORTAL_URL": "https://nuclear-merchant.a-space.workers.dev",
     "ORG_PORTAL_URL": "https://nuclear-organization.a-space.workers.dev",
     // Cross River, through the forwarder on the banking server (docs/CROSS-RIVER.md). Secrets: BANK_PROXY_KEY, CR_CLIENT_ID, CR_CLIENT_SEC, CR_WH_SEC, CR_ACCOUNT.
-    // CR_PAYOUTS ("true") would make settlement pay through the bank; unset, the sandbox stand-in settles. CRNow is the instant network the sandbox account has.
+    // CR_PAYOUTS "true" (set 2026-10-28) makes settlement pay through the bank; unset, the sandbox stand-in settles. CRNow is the instant network the sandbox account has.
     "BANK_PROXY_URL": "https://bank.nclr.app",
     "CR_RTP_NETWORK": "CRNow",
+    "CR_PAYOUTS": "true",
     // Sandbox only. Remove (or set to "false") before any live-money deployment.
     "SANDBOX_FUNDING": "true"
   },
