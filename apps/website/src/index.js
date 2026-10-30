@@ -6,6 +6,11 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
+    if (url.pathname === "/" || url.pathname === "/merchants" || url.pathname === "/merchants/") {
+      url.pathname = "/merchant";
+      return Response.redirect(url.toString(), 302);
+    }
+
     if (/\.(webm|mp4)$/.test(url.pathname)) {
       const range = request.headers.get("Range");
       if (range) return rangeResponse(request, env, range);
