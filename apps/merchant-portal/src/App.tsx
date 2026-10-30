@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearCache } from "./cache";
-import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, verifyEmail as realVerifyEmail, confirmPasswordReset as realConfirmReset, type Account, type Api, type Session } from "./api";
+import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, verifyEmail as realVerifyEmail, confirmPasswordReset as realConfirmReset, type Account, type Api, type Employer, type Session } from "./api";
 import { usePageTitle } from "./title";
 import { Catalog } from "./views/Catalog";
+import { StaffHome } from "./views/StaffHome";
+import { Tips } from "./views/Tips";
 import { EmailLink, emailLinkFromLocation } from "./views/EmailLink";
 import { Login } from "./views/Login";
 import { Orders } from "./views/Orders";
@@ -20,7 +22,7 @@ const KEY = "nuclear.merchant.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "refunds" | "profile";
+export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "refunds" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
@@ -30,6 +32,7 @@ export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "terminals", label: "Terminals", path: "/terminals" },
   { page: "orbs", label: "Orbs", path: "/orbs" },
   { page: "staff", label: "Staff", path: "/staff" },
+  { page: "tips", label: "Tips", path: "/tips" },
   { page: "refunds", label: "Refunds", path: "/refunds" },
 ];
 const PROFILE_PATH = "/profile";
@@ -83,6 +86,14 @@ export function App({
     try { setAccount(await api.account()); } catch (e) { onError(e); }
   }, [api, onError]);
   useEffect(() => { if (api && !account) void loadAccount(); }, [api, account, loadAccount]);
+  // A personal account can still sign in here when it belongs to a business's staff: it gets the staff view (its tips).
+  const [employers, setEmployers] = useState<Employer[] | null>(null);
+  useEffect(() => {
+    if (!api || account?.type !== "C") return;
+    let live = true;
+    api.employers().then((e) => { if (live) setEmployers(e); }).catch((e) => { onError(e); if (live) setEmployers([]); });
+    return () => { live = false; };
+  }, [api, account, onError]);
 
   const signOut = useCallback(async () => { try { await api?.logout(); } catch { /* the token is dropped locally either way */ } clear(); }, [api, clear]);
   usePageTitle(undefined);
@@ -94,8 +105,10 @@ export function App({
     return <Login signIn={signIn} signUp={signUp} notice={notice} onSignedIn={(s) => { clearCache(); writeToken(s.session_token); setNotice(null); setToken(s.session_token); }} />;
   }
   if (!account) return <div className="login"><p className="muted" role="status">Loading…</p></div>;
+  if (account.type !== "B" && employers === null) return <div className="login"><p className="muted" role="status">Loading…</p></div>;
+  if (account.type !== "B" && employers && employers.length > 0) return <StaffHome api={api} account={account} employers={employers} onError={onError} onSignOut={() => void signOut()} />;
   if (account.type !== "B") {
-    return <div className="login"><div className="card login-card"><h1>This is a personal account</h1><p className="muted">The business portal is for business accounts. Sign in with a business account.</p><button type="button" onClick={() => void signOut()}>Sign Out</button></div></div>;
+    return <div className="login"><div className="card login-card"><h1>This is a personal account</h1><p className="muted">The business portal is for business accounts and the people who work for them. Sign in with a business account, or ask your employer to add you as staff.</p><button type="button" onClick={() => void signOut()}>Sign Out</button></div></div>;
   }
   if (account.status === "pending" || account.status === "declined") {
     return <ReviewStatus api={api} account={account} onChanged={() => void loadAccount()} onSignOut={() => void signOut()} onError={onError} />;
@@ -126,6 +139,7 @@ export function App({
         {page === "terminals" && <Terminals api={api} onError={onError} />}
         {page === "orbs" && <Orbs api={api} onError={onError} />}
         {page === "staff" && <Staff api={api} onError={onError} />}
+        {page === "tips" && <Tips api={api} onError={onError} />}
         {page === "refunds" && <Refunds api={api} onError={onError} />}
         {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}
       </main>

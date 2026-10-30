@@ -14,10 +14,14 @@ export type PayRow = {
   idempotency_key: string;
   timestamp: Date;
   completed_at: Date | null;
+  /** The part of `amount` that is tip, and the staff member's account that served the payment. */
+  tip_amount: bigint;
+  served_by: string | null;
 };
 
 export const PAY_COLS = `id, status, status_code, amount, from_account_id, to_account_id,
-  from_wallet_id, tag_id, terminal_id, checkout_id, reference, idempotency_key, "timestamp", completed_at`;
+  from_wallet_id, tag_id, terminal_id, checkout_id, reference, idempotency_key, "timestamp", completed_at,
+  coalesce((select tip_amount from checkouts cc where cc.id = txn.checkout_id), 0) as tip_amount, (select served_by from checkouts cc where cc.id = txn.checkout_id) as served_by`;
 
 export type PayOutcome =
   | { kind: "ok" | "declined"; row: PayRow; replayed: boolean }
@@ -34,5 +38,6 @@ export function payRowFromJson(j: Record<string, unknown>): PayRow {
     tag_id: (j.tag_id as string | null) ?? null, terminal_id: (j.terminal_id as string | null) ?? null, checkout_id: (j.checkout_id as string | null) ?? null,
     reference: (j.reference as string | null) ?? null, idempotency_key: j.idempotency_key as string,
     timestamp: new Date(j.timestamp as string), completed_at: j.completed_at ? new Date(j.completed_at as string) : null,
+    tip_amount: BigInt((j.tip_amount as number | undefined) ?? 0), served_by: (j.served_by as string | null | undefined) ?? null,
   };
 }

@@ -56,6 +56,14 @@ const r3 = await purge(sql);
 eq("a declined transaction that just passed 90 days goes; a young declined one, a completed one and one the nightly window missed stay", [r3.declined_transactions, (await q("select substr(idem, 5) k from transactions where idem like 'ret:%' order by 1")).map((x: any) => x.k)], [1, ["old-completed", "too-old-declined", "young-declined"]]);
 eq("a completed transaction cannot be deleted at any age", (await tryq("delete from transactions where idem = 'ret:old-completed'")).includes("immutable"), true);
 
+// ---- checkouts: every payment leaves one, so the dead ones are purged
+const shopS = await sign("Shop", "shop@x.test", "B");
+for (const [k, status, days, exp] of [["old-canceled", "canceled", 100, null], ["young-canceled", "canceled", 50, null], ["long-expired", "open", 120, 100], ["open-no-expiry", "open", 120, null], ["recent-expired", "open", 60, 50], ["old-paid", "paid", 120, null]] as const) {
+  await q(`insert into checkouts (account_id, total, items, status, reference, expires_at, created_at) values ($1, 100, '[]', $2, $3, ${exp === null ? "null" : old(exp)}, ${old(days)})`, [shopS.account_id, status, k]);
+}
+const rc = await purge(sql);
+eq("old canceled and long-expired open checkouts go; young, never-expiring and paid ones stay", [rc.dead_checkouts, (await q("select reference from checkouts order by reference")).map((x: any) => x.reference)], [2, ["old-paid", "open-no-expiry", "recent-expired", "young-canceled"]]);
+
 // ---- a snapshot is final
 const day = "2026-01-10";
 await takeSnapshot(sql, day);

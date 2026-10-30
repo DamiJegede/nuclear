@@ -25,6 +25,7 @@ const createBody = z
       .optional(),
     reference: z.string().trim().min(1).max(64).optional(),
     expires_in: z.number().int().min(60).max(7 * 24 * 3600).optional(),
+    served_by: uuid.optional(),   // a staff id; default the terminal's active staff member
   })
   .refine((b) => b.amount !== undefined || b.items !== undefined, { message: "amount_or_items_required" });
 
@@ -46,8 +47,15 @@ terminalCheckouts.post("/", async (c) => {
     total = q.cart.total;
   }
 
+  // Who is serving this order: the request (a staff id) or the terminal's active staff member.
+  const [server] = await sql<{ staff_account_id: string }[]>`
+    select s.staff_account_id from staff s
+     where s.account_id = ${accountId} and s.id = ${b.served_by ?? sql`(select active_staff_id from terminals where id = ${terminalId})`}`;
+  if (b.served_by && !server) return c.json({ error: "staff_not_found" }, 404);
+
   const co = await sql.begin((tx) =>
     insertCheckout(tx, {
+      servedBy: server?.staff_account_id ?? null,
       merchantId: accountId,
       terminalId,
       reference: b.reference ?? null,

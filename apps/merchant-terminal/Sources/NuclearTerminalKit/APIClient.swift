@@ -81,15 +81,18 @@ public final class TerminalClient {
 
     // MARK: Checkouts and payments
 
-    public func createCheckout(lines: [CartLine], reference: String? = nil) async throws -> Checkout {
+    /// Creates an order. `servedBy` is a staff id (default: the terminal's active staff member); the order's tip goes to that person unless the payment says otherwise.
+    public func createCheckout(lines: [CartLine], reference: String? = nil, servedBy: String? = nil) async throws -> Checkout {
         var body: [String: Any] = ["items": lines.map { ["product_id": $0.productId, "quantity": $0.quantity] }]
         if let reference = reference { body["reference"] = reference }
+        if let by = servedBy { body["served_by"] = by }
         let (s, d) = try await send(request("POST", "v1/terminal/checkouts", body: body))
         return try decode(Checkout.self, s, d, unwrap: "checkout")
     }
-    public func createCheckout(amountCents: Int, reference: String? = nil) async throws -> Checkout {
+    public func createCheckout(amountCents: Int, reference: String? = nil, servedBy: String? = nil) async throws -> Checkout {
         var body: [String: Any] = ["amount": amountCents]
         if let reference = reference { body["reference"] = reference }
+        if let by = servedBy { body["served_by"] = by }
         let (s, d) = try await send(request("POST", "v1/terminal/checkouts", body: body))
         return try decode(Checkout.self, s, d, unwrap: "checkout")
     }
@@ -100,13 +103,28 @@ public final class TerminalClient {
 
     /// Charges a tap. `attemptId` is the idempotency key: reuse it to retry safely. `tapURL` is the payload the Orb read from the tag.
     /// A decline comes back as a result with `status == "failed"` (HTTP 422), not as a thrown error.
-    public func pay(checkoutId: String, tapURL: String, attemptId: String) async throws -> PaymentResult {
-        let req = try request("POST", "v1/terminal/payments", body: ["checkout_id": checkoutId, "credential": ["type": "tag", "url": tapURL]], idempotencyKey: attemptId)
+    /// `tipCents` is part of what the payer pays (the checkout total stays the items). Who gets it: `servedBy` (a staff id), else the terminal's active
+    /// staff member, or `tips` to split it between people (the shares add up to `tipCents`). A tip with nobody to give it to is refused (`staff_required_for_tip`).
+    public func pay(checkoutId: String, tapURL: String, attemptId: String, tipCents: Int? = nil, servedBy: String? = nil, tips: [TipShare]? = nil) async throws -> PaymentResult {
+        var body: [String: Any] = ["checkout_id": checkoutId, "credential": ["type": "tag", "url": tapURL]]
+        if let tip = tipCents, tip > 0 { body["tip"] = tip }
+        if let by = servedBy { body["served_by"] = by }
+        if let split = tips { body["tips"] = split.map { ["staff_id": $0.staffId, "amount": $0.amountCents] } }
+        let req = try request("POST", "v1/terminal/payments", body: body, idempotencyKey: attemptId)
         let (s, d) = try await send(req)
         if s == 422, let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any], obj["status_code"] != nil || obj["payment"] != nil {
             return try JSONDecoder().decode(PaymentResult.self, from: JSONSerialization.data(withJSONObject: (obj["payment"] as? [String: Any]) ?? obj))
         }
         return try decode(PaymentResult.self, s, d, unwrap: "payment")
+    }
+    /// The merchant's staff, and who is active on this terminal (new payments default their tip to that person).
+    public func staff() async throws -> StaffList {
+        let (s, d) = try await send(request("GET", "v1/terminal/staff")); return try decode(StaffList.self, s, d)
+    }
+    /// Says who is on this terminal now (a staff id), or nobody (nil).
+    public func setActiveStaff(_ staffId: String?) async throws {
+        let (s, d) = try await send(request("PUT", "v1/terminal/active-staff", body: ["staff_id": staffId as Any? ?? NSNull()]))
+        guard s == 200 else { throw APIError(status: s, code: ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["error"] as? String) ?? "http_\(s)") }
     }
     /// Recovers the outcome of an attempt after a dropped connection.
     public func payment(attemptId: String) async throws -> PaymentResult {

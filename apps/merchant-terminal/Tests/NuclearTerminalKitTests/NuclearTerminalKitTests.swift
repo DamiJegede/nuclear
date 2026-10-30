@@ -48,6 +48,71 @@ final class NuclearTerminalKitTests: XCTestCase {
         XCTAssertEqual(seen?.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
     }
 
+    func bodyOf(_ req: URLRequest) -> [String: Any]? {
+        let data = req.httpBody ?? req.httpBodyStream.flatMap { s -> Data in
+            s.open(); defer { s.close() }
+            var d = Data(); var buf = [UInt8](repeating: 0, count: 1024)
+            while s.hasBytesAvailable { let n = s.read(&buf, maxLength: buf.count); if n <= 0 { break }; d.append(buf, count: n) }
+            return d
+        }
+        return data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    func testPayCarriesTheTipAndWhoServed() async throws {
+        var body: [String: Any]?
+        MockProtocol.handler = { req in body = self.bodyOf(req); return (201, #"{"payment":{"id":"p1","status":"completed","amount":1500,"tip_amount":300,"served_by":"acct-rae"}}"#) }
+        let r = try await client().pay(checkoutId: "co1", tapURL: "u", attemptId: "a", tipCents: 300, servedBy: "staff-rae")
+        XCTAssertEqual(body?["tip"] as? Int, 300)
+        XCTAssertEqual(body?["served_by"] as? String, "staff-rae")
+        XCTAssertNil(body?["tips"])
+        XCTAssertEqual(r.tipAmount, 300)
+        XCTAssertEqual(r.servedBy, "acct-rae")
+        XCTAssertEqual(r.amount, 1500)
+    }
+
+    func testAPaymentWithoutATipSendsNoTipFields() async throws {
+        var body: [String: Any]?
+        MockProtocol.handler = { req in body = self.bodyOf(req); return (201, #"{"payment":{"id":"p1","status":"completed","amount":1200}}"#) }
+        let r = try await client().pay(checkoutId: "co1", tapURL: "u", attemptId: "a")
+        XCTAssertNil(body?["tip"]); XCTAssertNil(body?["tips"]); XCTAssertNil(body?["served_by"])
+        XCTAssertNil(r.tipAmount)
+    }
+
+    func testATipSplitsByAmounts() async throws {
+        var body: [String: Any]?
+        MockProtocol.handler = { req in body = self.bodyOf(req); return (201, #"{"payment":{"id":"p1","status":"completed","amount":3250,"tip_amount":250}}"#) }
+        _ = try await client().pay(checkoutId: "co1", tapURL: "u", attemptId: "a", tipCents: 250, tips: [TipShare(staffId: "s1", amountCents: 150), TipShare(staffId: "s2", amountCents: 100)])
+        let shares = body?["tips"] as? [[String: Any]]
+        XCTAssertEqual(shares?.map { $0["staff_id"] as? String }, ["s1", "s2"])
+        XCTAssertEqual(shares?.map { $0["amount"] as? Int }, [150, 100])
+    }
+
+    func testACheckoutCarriesWhoServesIt() async throws {
+        var body: [String: Any]?
+        MockProtocol.handler = { req in body = self.bodyOf(req); return (201, #"{"checkout":{"id":"c1","status":"open","reference":null,"total":4000,"items":[],"tip_amount":0,"served_by":"acct-sam"}}"#) }
+        let c = try await client().createCheckout(amountCents: 4000, servedBy: "staff-sam")
+        XCTAssertEqual(body?["served_by"] as? String, "staff-sam")
+        XCTAssertEqual(c.servedBy, "acct-sam")
+        XCTAssertEqual(c.tipAmount, 0)
+    }
+
+    func testStaffListAndActiveStaff() async throws {
+        var seen: [(String, String, [String: Any]?)] = []
+        MockProtocol.handler = { req in
+            seen.append((req.httpMethod ?? "", req.url?.path ?? "", self.bodyOf(req)))
+            if req.httpMethod == "GET" { return (200, #"{"staff":[{"id":"s1","staff_account_id":"a1","name":"Rae","handle":null,"role":"read"}],"active_staff_id":"s1"}"#) }
+            return (200, #"{"active_staff_id":null}"#)
+        }
+        let list = try await client().staff()
+        XCTAssertEqual(list.staff.first?.name, "Rae")
+        XCTAssertEqual(list.activeStaffId, "s1")
+        try await client().setActiveStaff(nil)
+        try await client().setActiveStaff("s1")
+        XCTAssertEqual(seen[1].1, "/v1/terminal/active-staff")
+        XCTAssertTrue(seen[1].2?["staff_id"] is NSNull)
+        XCTAssertEqual(seen[2].2?["staff_id"] as? String, "s1")
+    }
+
     func testADeclineIsAResultNotAnError() async throws {
         MockProtocol.handler = { _ in (422, #"{"error":"declined","status_code":"insufficient_balance","payment":{"id":"p2","status":"failed","status_code":"insufficient_balance"}}"#) }
         let r = try await client().pay(checkoutId: "co1", tapURL: "u", attemptId: "a")

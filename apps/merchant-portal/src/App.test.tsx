@@ -50,7 +50,7 @@ describe("sign-in", () => {
     expect(signInFn).toHaveBeenCalledWith("cafe@example.com", "correct horse battery");
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Refunds"]);
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Refunds"]);
   });
 
   it("opens straight on the sign-up form when the marketing site links with ?signup", () => {
@@ -656,5 +656,111 @@ describe("email links and forgot password", () => {
     window.history.replaceState(null, "", "/reset-password");
     render(<App />);
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
+  });
+});
+
+const TIPS = (role: "owner" | "write" | "read") => ({
+  business: { id: "a1", name: "Cafe Nero" }, role, period: { from: "2026-10-24", to: "2026-10-30" }, total: 650, count: 3,
+  staff: role === "read" ? [{ staff_account_id: "s1", name: "Rae", total: 400 }] : [{ staff_account_id: "s1", name: "Rae", total: 400 }, { staff_account_id: "s2", name: "Sam", total: 250 }],
+  tips: [
+    { id: "t1", amount: 300, created_at: "2026-10-29T18:00:00Z", transaction_id: "x1", kind: "tip" as const, staff_account_id: "s1", staff_name: "Rae", reference: null },
+    { id: "t2", amount: -50, created_at: "2026-10-29T19:00:00Z", transaction_id: "x2", kind: "refund" as const, staff_account_id: "s1", staff_name: "Rae", reference: null },
+  ],
+  days: [{ date: "2026-10-29", total: 500, count: 2 }, { date: "2026-10-28", total: 150, count: 1 }],
+  next_cursor: null,
+});
+
+describe("tips", () => {
+  it("shows the business everyone's tips for a period, and downloads the totals per person", async () => {
+    const tips = vi.fn().mockResolvedValue(TIPS("owner"));
+    const api = fakeApi({ tips });
+    const { user } = await signIn(api);
+    await user.click(await navLink("Tips"));
+    expect(await screen.findByRole("status")).toHaveTextContent("$6.50 in tips");
+    const people = screen.getAllByRole("table")[0]!;
+    expect(within(people).getByText("Rae")).toBeInTheDocument();
+    expect(within(people).getByText("Sam")).toBeInTheDocument();
+    expect(screen.getByText("-$0.50")).toBeInTheDocument();
+    expect(screen.getByText("REFUND")).toBeInTheDocument();
+    expect(tips).toHaveBeenCalledWith(expect.objectContaining({ from: expect.any(String), to: expect.any(String) }));
+    expect(screen.getByRole("button", { name: "Download Tips" })).toBeEnabled();
+  });
+
+  it("shows the tips day by day, newest first", async () => {
+    const { user } = await signIn(fakeApi({ tips: vi.fn().mockResolvedValue(TIPS("read")) }));
+    await user.click(await navLink("Tips"));
+    const byDay = await screen.findByRole("table", { name: "Tips by day" });
+    const rows = within(byDay).getAllByRole("row").slice(1).map((r) => Array.from(r.querySelectorAll("th,td")).map((c) => c.textContent));
+    expect(rows).toEqual([[expect.stringContaining("Oct 29"), "2", "$5.00"], [expect.stringContaining("Oct 28"), "1", "$1.50"]]);
+  });
+
+  it("looks at one person and back to everyone", async () => {
+    const tips = vi.fn().mockResolvedValue(TIPS("owner"));
+    const { user } = await signIn(fakeApi({ tips }));
+    await user.click(await navLink("Tips"));
+    await screen.findByText("Sam");
+    await user.click(within(screen.getAllByRole("table")[0]!).getAllByRole("button", { name: "Show" })[0]!);
+    await waitFor(() => expect(tips).toHaveBeenLastCalledWith(expect.objectContaining({ staff: "s1" })));
+    expect(await screen.findByRole("button", { name: "Show Everyone" })).toBeInTheDocument();
+  });
+
+  it("gives a staff member their own tips only, with no download and no other people", async () => {
+    const tips = vi.fn().mockResolvedValue(TIPS("read"));
+    const api = fakeApi({
+      account: vi.fn().mockResolvedValue({ ...ACCOUNT, account_id: "s1", type: "C", name: "Rae" }),
+      employers: vi.fn().mockResolvedValue([{ business_id: "a1", name: "Cafe Nero", role: "read" }]),
+      tips,
+    });
+    await signIn(api);
+    expect(await screen.findByRole("heading", { name: "My Tips" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download Tips" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
+    expect(tips).toHaveBeenCalledWith(expect.objectContaining({ business: "a1" }));
+    expect(screen.queryByText("Sam")).toBeNull();
+  });
+
+  it("gives a manager everyone's tips under the heading Tips", async () => {
+    const api = fakeApi({
+      account: vi.fn().mockResolvedValue({ ...ACCOUNT, account_id: "s2", type: "C", name: "Sam" }),
+      employers: vi.fn().mockResolvedValue([{ business_id: "a1", name: "Cafe Nero", role: "write" }]),
+      tips: vi.fn().mockResolvedValue(TIPS("write")),
+    });
+    await signIn(api);
+    expect(await screen.findByRole("heading", { name: "Tips" })).toBeInTheDocument();
+    expect(within((await screen.findAllByRole("table"))[0]!).getByText("Sam")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download Tips" })).toBeInTheDocument();
+  });
+
+  it("lets someone who works for two businesses pick one", async () => {
+    const tips = vi.fn().mockResolvedValue(TIPS("read"));
+    const api = fakeApi({
+      account: vi.fn().mockResolvedValue({ ...ACCOUNT, account_id: "s1", type: "C", name: "Rae" }),
+      employers: vi.fn().mockResolvedValue([{ business_id: "a1", name: "Cafe Nero", role: "read" }, { business_id: "b2", name: "Bar Two", role: "read" }]),
+      tips,
+    });
+    const { user } = await signIn(api);
+    await screen.findByRole("heading", { name: "My Tips" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Business" }), "b2");
+    await waitFor(() => expect(tips).toHaveBeenLastCalledWith(expect.objectContaining({ business: "b2" })));
+  });
+
+  it("still turns away a personal account that works nowhere", async () => {
+    const api = fakeApi({ account: vi.fn().mockResolvedValue({ ...ACCOUNT, type: "C" }), employers: vi.fn().mockResolvedValue([]) });
+    await signIn(api);
+    expect(await screen.findByRole("heading", { name: "This is a personal account" })).toBeInTheDocument();
+  });
+});
+
+describe("tips on the transactions list", () => {
+  it("shows the tip inside a payment's amount and who served it", async () => {
+    const transactions = vi.fn().mockResolvedValue({
+      counts: { all: 1, payments: 1, refunds: 0, pending: 0 }, totals: { payments: { count: 1, volume: 2300 }, refunds: { count: 0, volume: 0 } }, next_cursor: null,
+      transactions: [{ id: "x1", type: "pay", status: "completed", status_code: null, amount: 2300, timestamp: "2026-10-29T18:00:00Z", via: "tap", reference: null, terminal: "Counter", customer: "Ada", approved_by: null, refund_of: null, from: "Ada", to: "Cafe Nero", tip: 300, served_by: "Rae" }],
+    });
+    const { user } = await signIn(fakeApi({ transactions }));
+    await user.click(await navLink("Transactions"));
+    expect(await screen.findByText("incl. $3.00 tip")).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getByText("$23.00", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/Served by Rae/)).toBeInTheDocument();
   });
 });

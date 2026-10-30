@@ -48,7 +48,7 @@ function TxRowPair({ tx, cols, children }: { tx: TxRow; cols: number; children: 
       <tr className={`${tone} tx-detail${open ? " open" : ""}`} aria-hidden={!open}>
         <td colSpan={cols}>
           <div className="tx-collapse"><div className="tx-inner">
-            <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}</p>
+            <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}{tx.served_by ? <> • Served by {tx.served_by}</> : null}</p>
             <p className="tx-parties"><span className="tx-party">{tx.from ?? "—"}</span><span className="tx-arrow" aria-hidden>›</span><span className="tx-party">{tx.to ?? "—"}</span></p>
           </div></div>
         </td>
@@ -138,7 +138,7 @@ export function Transactions({ api, onError }: { api: Api; onError: (e: unknown)
                     <td>{t.customer ?? "—"}</td>
                     <td>{t.terminal ?? "—"}</td>
                     <td>{t.reference ?? "—"}{t.approved_by && <span className="muted note">approved by {t.approved_by}</span>}</td>
-                    <td className="num">{money(t.amount)}</td>
+                    <td className="num">{money(t.amount)}{t.tip ? <span className="muted note">incl. {money(t.tip)} tip</span> : null}</td>
                     <td className="status-col"><span className={`pill ${t.status === "completed" ? "available" : t.status === "failed" ? "closed" : "pending"}`}>{t.status}</span></td>
                   </TxRowPair>
                 ))}

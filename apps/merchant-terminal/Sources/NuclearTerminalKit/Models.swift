@@ -57,8 +57,11 @@ public struct Checkout: Codable, Equatable, Identifiable {
     public let id: String
     public let status: String          // open | paid | canceled | expired
     public let reference: String?
-    public let total: Int
+    public let total: Int              // the items; a tip is added when it is paid
     public let items: [CheckoutItem]
+    public let tipAmount: Int?         // written once, when the order is paid
+    public let servedBy: String?       // the staff member's account that serves the order
+    enum CodingKeys: String, CodingKey { case id, status, reference, total, items; case tipAmount = "tip_amount", servedBy = "served_by" }
 }
 
 /// What happened to a payment attempt. A decline is a recorded outcome (`statusCode` says why), not a transport error.
@@ -66,8 +69,31 @@ public struct PaymentResult: Codable, Equatable {
     public let id: String?
     public let status: String          // completed | failed
     public let statusCode: String?     // e.g. insufficient_balance, spend_limit_exceeded
-    public let amount: Int?
-    enum CodingKeys: String, CodingKey { case id, status, amount; case statusCode = "status_code" }
+    public let amount: Int?            // everything the payer paid, the tip included
+    public let tipAmount: Int?         // the part of `amount` that is tip
+    public let servedBy: String?       // the staff member's account that served the payment
+    enum CodingKeys: String, CodingKey { case id, status, amount; case statusCode = "status_code", tipAmount = "tip_amount", servedBy = "served_by" }
+}
+
+/// A staff member of the merchant, as the terminal lists them. `id` is what a payment's `servedBy` and a tip split name.
+public struct StaffMember: Codable, Equatable, Identifiable {
+    public let id: String
+    public let staffAccountId: String
+    public let name: String
+    public let handle: String?
+    public let role: String            // read | write
+    enum CodingKeys: String, CodingKey { case id, name, handle, role; case staffAccountId = "staff_account_id" }
+}
+public struct StaffList: Codable, Equatable {
+    public let staff: [StaffMember]
+    public let activeStaffId: String?
+    enum CodingKeys: String, CodingKey { case staff; case activeStaffId = "active_staff_id" }
+}
+/// One person's share of a tip, in cents. A tip splits by amounts that add up to the whole tip.
+public struct TipShare: Equatable {
+    public let staffId: String
+    public let amountCents: Int
+    public init(staffId: String, amountCents: Int) { self.staffId = staffId; self.amountCents = amountCents }
 }
 
 public struct TapAccount: Codable, Equatable {

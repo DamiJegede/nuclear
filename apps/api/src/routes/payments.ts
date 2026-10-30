@@ -7,6 +7,7 @@ import { uuid } from "../lib/validate";
 import type { AppContext } from "../env";
 import type { Sql } from "../db";
 import { amount, n } from "../lib/money";
+import { tipFields } from "../lib/tips";
 import { decryptTagUrl } from "../lib/tagproof";
 import { PAY_COLS, payIdem, payRowFromJson, type PayOutcome, type PayRow } from "../lib/pay";
 import { getItems, itemJson } from "../lib/checkout";
@@ -34,6 +35,8 @@ const what = {
   items: items.optional(),
   reference,
 };
+// The tip is part of what the payer pays (`amount` stays the items). The terminal says who it goes to: `served_by` (a staff id, default the terminal's active
+// staff member) or `tips` ([{staff_id, amount}], summing to `tip`) to split it. A customer's own app sends only the amount; the terminal's active staff member gets it.
 const oneOf = (b: { checkout_id?: string; amount?: bigint; items?: unknown }) =>
   (b.checkout_id !== undefined) !== (b.amount !== undefined || b.items !== undefined);
 
@@ -46,6 +49,8 @@ function paymentJson(
     status: r.status,
     status_code: r.status_code,
     amount: n(r.amount),
+    tip_amount: n(r.tip_amount),
+    served_by: r.served_by,
     reference: r.reference,
     checkout_id: r.checkout_id,
     terminal_id: r.terminal_id,
@@ -97,7 +102,7 @@ export const payments = new Hono<AppContext>();
 payments.use("*", requireSession);
 
 const confirmBody = z
-  .object({ ...what, terminal_id: uuid.optional(), from_wallet_id: uuid.optional() })
+  .object({ ...what, terminal_id: uuid.optional(), from_wallet_id: uuid.optional(), tip: tipFields.tip })
   .refine((b) => oneOf(b), { message: "checkout_id_or_amount_or_items" })
   .refine((b) => b.checkout_id !== undefined || b.terminal_id !== undefined, { message: "terminal_id_required" });
 
@@ -114,7 +119,7 @@ payments.post("/", rateLimit("agent-money", RULES.agentMoney, (c) => (c.get("aut
   const a = await callMoney<Answer>(c.get("sql"), "app_pay_app", {
     payer_account: accountId, device: deviceId, auth_wallet: walletId, from_wallet: b.from_wallet_id ?? null, checkout_id: b.checkout_id ?? null,
     terminal_id: b.terminal_id ?? null, amount: b.amount === undefined ? null : Number(b.amount), items: b.items ?? null,
-    reference: b.reference ?? null, key,
+    reference: b.reference ?? null, key, tip: b.tip === undefined ? null : Number(b.tip),
   });
   return respondAnswer(c, a);
 });
@@ -142,7 +147,7 @@ export const terminalPayments = new Hono<AppContext>();
 terminalPayments.use("*", requireTerminal);
 
 const terminalBody = z
-  .object({ ...what, credential: credentialSchema })
+  .object({ ...what, credential: credentialSchema, ...tipFields })
   .refine((b) => oneOf(b), { message: "checkout_id_or_amount_or_items" });
 
 // POS sends the tap payload; the Idempotency-Key is the attempt id (retries return the original).
@@ -168,6 +173,7 @@ terminalPayments.post("/", async (c) => {
   const a = await callMoney<Answer>(c.get("sql"), "app_pay_tap", {
     merchant: accountId, terminal_id: terminalId, uid: proof.uid, counter: proof.counter, key: `t:${key}`,
     checkout_id: b.checkout_id ?? null, amount: b.amount === undefined ? null : Number(b.amount), items: b.items ?? null, reference: b.reference ?? null,
+    tip: b.tip === undefined ? null : Number(b.tip), tips: b.tips?.map((t) => ({ staff_id: t.staff_id, amount: Number(t.amount) })) ?? null, served_by: b.served_by ?? null,
   });
   return respondAnswer(c, a);
 });

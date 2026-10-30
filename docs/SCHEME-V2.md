@@ -227,7 +227,7 @@ Two different things are called orders:
   ```
 
   `checkout_items` is gone. Per-line refunded quantities are not stored on the checkout: an item refund's transaction carries `meta.items`, and the quantities already refunded are the sum over the payment's refund transactions (the `related_id` index), read while the payment row is locked (a row lock needs no write, so the payment stays immutable). The one-payment-per-checkout rule is the partial unique index on `transactions`.
-- **An amount-only tap payment creates no checkout at all**: it is just a transaction. A payment with items from a terminal writes a checkout directly as `paid` (one insert). A merchant's Orders page lists checkouts; amount-only payments appear under Transactions.
+- **Every payment is a checkout** (changed 2026-10-30, migration 0009): an amount-only tap payment writes a checkout too (one insert, no items), directly as `paid`, like a payment with items. The checkout is the order record and carries the tip and who served it; `transactions` stays the money record. A merchant's Orders page lists checkouts; Transactions lists the money events (payments, refunds, declines) with each payment's tip and server read from its checkout.
 - **A Nuclear store order is an `orders` row** (bands, cards, merchandise, with shipping or a download). Its payment is a `purchase` transaction from the buyer's wallet to the **Nuclear Shop** system wallet, linked by `orders.transaction_id`. `shop` and `tag_models` stay as the two catalogs.
 
 ## 6. Money moves as one database call

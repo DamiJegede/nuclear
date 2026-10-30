@@ -308,18 +308,15 @@ const sam = await signup("Sam", "sam@example.com");       // will be write staff
 const rae = await signup("Rae", "rae@example.com");       // read-only staff
 const nobody = await signup("Nobody", "nobody@example.com");
 await fund(sam.session_token, 100, "fs");                  // creates Sam's (sandbox) bank account
-const samBank = (await q("select id from bank_accounts where account_id=$1", [sam.account_id]))[0].id;
-const adaBank = (await q("select id from bank_accounts where account_id=$1", [ada.account_id]))[0].id;
 eq("consumer cannot manage staff", (await call("GET", "/v1/staff", { token: A })).status, 403);
-eq("add write staff with their bank", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: sam.account_id, role: "write", bank_account_id: samBank } })).status, 201);
-eq("another account's bank rejected", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: rae.account_id, role: "read", bank_account_id: adaBank } })).json.error, "bank_account_not_found");
-eq("add read staff (no bank)", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: rae.account_id, role: "read" } })).status, 201);
+eq("add write staff", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: sam.account_id, role: "write" } })).status, 201);
+eq("add read staff", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: rae.account_id, role: "read" } })).status, 201);
 eq("duplicate staff 409", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: sam.account_id, role: "read" } })).json.error, "already_staff");
 eq("business cannot be staff", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: other.account_id, role: "write" } })).status, 404);
 eq("unknown account 404", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: "0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee", role: "write" } })).status, 404);
 eq("invalid role 400", (await call("POST", "/v1/staff", { token: S, body: { staff_account_id: nobody.account_id, role: "admin" } })).status, 400);
 const staffList = (await call("GET", "/v1/staff", { token: S })).json.staff;
-eq("list staff", staffList.map((x: any) => [x.name, x.role, x.bank_account_id === samBank ? "bank" : x.bank_account_id]), [["Sam", "write", "bank"], ["Rae", "read", null]]);
+eq("list staff (no bank field)", staffList.map((x: any) => [x.name, x.role, "bank_account_id" in x]), [["Sam", "write", false], ["Rae", "read", false]]);
 eq("other merchant sees none", (await call("GET", "/v1/staff", { token: O })).json.staff.length, 0);
 eq("other merchant cannot patch/delete", [(await call("PATCH", `/v1/staff/${staffList[0].id}`, { token: O, body: { role: "read" } })).status, (await call("DELETE", `/v1/staff/${staffList[0].id}`, { token: O })).status], [404, 404]);
 
@@ -770,7 +767,8 @@ const pErr = async (sqlText: string, params: unknown[] = []) => { try { await q(
 eq("a checkout can be settled by only one completed payment", await pErr("insert into transactions(type,status,from_wallet_id,to_wallet_id,amount,checkout_id,account_id,idem) values ('pay','completed',$1,$2,1,$3,$4,'dup-pay')", [buyer.default_wallet_id, shop.default_wallet_id, itemCoId, shop.account_id]), "transactions_checkout_paid_key");
 eq("a refund cannot point at another merchant's checkout", await pErr("insert into transactions(type,status,from_wallet_id,to_wallet_id,amount,related_id,checkout_id,account_id,idem) select 'refund','completed',$1,$2,1,t.id,$3,$4,'bad-co' from transactions t where t.idem like '%:t:ir-pay'", [other.default_wallet_id, buyer.default_wallet_id, itemCoId, other.account_id]), "23514");
 eq("a transaction is immutable: no update, no delete", [await pErr("update transactions set amount = amount + 1 where idem like '%:t:ir-pay'"), await pErr("delete from transactions where idem like '%:t:ir-pay'")], ["P0001", "P0001"]);
-eq("an amount-only payment has no checkout, and neither has its refund", [keyed.json.payment.checkout_id, (await q("select checkout_id from transactions where idem like '%:ir-10' and type='refund'"))[0].checkout_id], [null, null]);
+eq("an amount-only payment is a checkout too (no items), and its refund points at it", [keyed.json.payment.checkout_id !== null, (await q("select checkout_id from transactions where idem like '%:ir-10' and type='refund'"))[0].checkout_id === keyed.json.payment.checkout_id,
+  (await q("select status, jsonb_array_length(items) n, total from checkouts where id=$1", [keyed.json.payment.checkout_id]))[0]], [true, true, { status: "paid", n: 0, total: "300" }]);
 
 // ============ tags: claim, assign, lock, reset ============
 const claimTag = (token: string, url: string, body: object = {}) => call("POST", "/v1/tags/claim", { token, body: { url, ...body } });

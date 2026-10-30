@@ -44,6 +44,14 @@ export type Orb = { id: string; uid: string; model: string; software: string };
 export type Terminal = { id: string; name: string; allow_refunds: boolean; created_at: string; updated_at: string; orb: Orb | null };
 export type OwnedOrb = Orb & { terminal_id: string | null };
 export type StaffMember = { id: string; staff_account_id: string; handle: string | null; name: string | null; role: "read" | "write"; created_at: string };
+export type TipRow = { id: string; amount: number; created_at: string; transaction_id: string; kind: "tip" | "refund"; staff_account_id: string; staff_name: string; reference: string | null };
+export type TipsPage = {
+  business: { id: string; name: string }; role: "owner" | "write" | "read"; period: { from: string | null; to: string | null };
+  total: number; count: number; staff: { staff_account_id: string; name: string; total: number }[]; tips: TipRow[]; next_cursor: string | null;
+  /** Per program day (New York), newest first, refunds netted out. */
+  days: { date: string; total: number; count: number }[];
+};
+export type Employer = { business_id: string; name: string; role: "read" | "write" };
 export type Refund = {
   id: string; status: "pending" | "completed" | "failed"; status_code: string | null; amount: number; payment_id: string | null; payment_amount: number;
   attempt: string | null; reference: string | null; payer: { display_name: string } | null; items: unknown; requested_on_terminal_id: string | null;
@@ -67,6 +75,8 @@ export type TxKind = "all" | "payments" | "refunds" | "pending";
 export type TxRow = {
   id: string; type: string; status: string; status_code: string | null; amount: number; timestamp: string; via: "tap" | "pass" | "app" | null;
   reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null; from: string | null; to: string | null;
+  /** For a completed payment: the part of `amount` that is tip, and who served the order (from its checkout). */
+  tip?: number | null; served_by?: string | null;
 };
 export type TxPage = {
   counts: Record<TxKind, number>; totals: { payments: { count: number; volume: number }; refunds: { count: number; volume: number } };
@@ -114,6 +124,9 @@ export function createApi(token: string, base: string = API_URL) {
   };
   return {
     logout: () => request<null>("POST", "/v1/auth/logout"),
+    /** Tips for a period: everyone's (the business, or write staff) or only the caller's. A person who works for several businesses names one. */
+    tips: (o: { business?: string; staff?: string; cursor?: string } & DayRange) => request<TipsPage>("GET", `/v1/tips${qs({ business: o.business, staff: o.staff, from: o.from, to: o.to, cursor: o.cursor })}`),
+    employers: async () => (await request<{ employers: Employer[] }>("GET", "/v1/tips/employers")).employers,
     resendVerification: () => request<{ already_verified?: boolean; email?: string }>("POST", "/v1/auth/verify-email/resend"),
     account: () => request<Account>("GET", "/v1/account"),
     balance: () => request<Balance>("GET", "/v1/balance"),

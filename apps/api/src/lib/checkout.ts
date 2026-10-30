@@ -28,6 +28,10 @@ export type CheckoutRow = {
   status: string;
   expires_at: Date | null;
   created_at: Date;
+  /** Written once when the checkout is paid: the part of what the payer paid that is tip (the `total` stays the items). */
+  tip_amount: bigint;
+  /** The staff member's account that served the order (set when it is created). */
+  served_by: string | null;
 };
 
 export type ItemRow = {
@@ -45,7 +49,7 @@ export type ItemRow = {
 
 const CO_COLS = `id, account_id, terminal_id, reference, currency, total, items,
   case when status = 'open' and expires_at is not null and expires_at <= now() then 'expired' else status end as status,
-  expires_at, created_at`;
+  expires_at, created_at, tip_amount, served_by`;
 
 export const snapshotOf = (lines: CartLine[]): ItemSnapshot[] =>
   lines.map((l) => ({
@@ -66,14 +70,15 @@ export async function insertCheckout(
     total: bigint;
     lines: CartLine[];
     expiresInSeconds: number | null;
+    servedBy?: string | null;
     /** `paid` for a one-step payment that is written together with its payment. */
     status?: "open" | "paid";
   },
 ): Promise<CheckoutRow> {
   const [c] = await tx<CheckoutRow[]>`
-    insert into checkouts (account_id, terminal_id, reference, total, items, expires_at, status)
+    insert into checkouts (account_id, terminal_id, reference, total, items, expires_at, status, served_by)
     values (${i.merchantId}, ${i.terminalId}, ${i.reference}, ${i.total.toString()}, ${tx.json(snapshotOf(i.lines) as never)},
-            ${i.expiresInSeconds === null ? null : tx`now() + make_interval(secs => ${i.expiresInSeconds})`}, ${i.status ?? "open"})
+            ${i.expiresInSeconds === null ? null : tx`now() + make_interval(secs => ${i.expiresInSeconds})`}, ${i.status ?? "open"}, ${i.servedBy ?? null})
     returning ${tx.unsafe(CO_COLS)}`;
   return c!;
 }
@@ -170,6 +175,8 @@ export const checkoutJson = (c: CheckoutRow, items: ItemRow[]) => ({
   currency: c.currency,
   total: n(c.total),
   terminal_id: c.terminal_id,
+  tip_amount: n(c.tip_amount),
+  served_by: c.served_by,
   expires_at: c.expires_at,
   created_at: c.created_at,
   items: items.map(itemJson),

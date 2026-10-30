@@ -4,7 +4,7 @@ Updated October 23, 2026. This is the schema the code is built on: one initial m
 
 ## Current decisions
 
-**32 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, institution_hosts, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
+**33 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, institution_hosts, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, tips, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
 
 - **`transactions` is the source of truth and is immutable.** Every transaction is from one wallet to one wallet and is written once with a final outcome, `completed` or `declined`; nothing ever updates it. A correction is a new transaction (refund, fund_return, settle_return, adjustment). There is no ledger table: balances are checked against what the transactions did (reconciliation, below).
 - **Every account has a balance** (consumers, merchants, organizations, and the system account).
@@ -157,6 +157,7 @@ A merchant checkout device or point of sale. Owned by a business (type B) accoun
 | orb_model | The Orb's hardware model; set exactly when orb_uid is. |
 | orb_software | The Orb's firmware version; set exactly when orb_uid is. |
 | orb_paired_at | When the Orb was paired; set exactly when orb_uid is. |
+| active_staff_id | Nullable: the staff member on this terminal now (migration 0009). New payments default `served_by` and their tip to this person. A composite foreign key on (active_staff_id, account_id) to staff(id, account_id) keeps it to the same merchant; removing the staff member clears it. The POS sets it (`PUT /v1/terminal/active-staff`). |
 
 Only business accounts may own terminals; a database trigger enforces the account type. A merchant owner login creates a terminal and receives its session JWT; issuing a new JWT (re-login on a replacement tablet, or extend) replaces the stored hash, which invalidates the previous token. A terminal session authorizes only terminal endpoints and carries no owner or wallet powers.
 
@@ -173,12 +174,11 @@ Staff of a business. A staff member is a consumer account with their own wallet 
 | id | Primary key identifying the staff record. |
 | account_id | Foreign key to the employing type-B accounts.id. |
 | staff_account_id | Foreign key to the staff member's type-C accounts.id. |
-| bank_account_id | Nullable foreign key to bank_accounts.id: the staff member's own bank account. Enforced with a composite foreign key on (bank_account_id, staff_account_id). |
 | role | read, or write. Write staff may approve refunds by tapping any of their credentials on the Orb; the refund request carries the tap and the server resolves the account, so one refund route serves both direct and approved refunds. |
 | created_at | Creation timestamp. |
 | updated_at | Last update timestamp. |
 
-One staff record per (account_id, staff_account_id). A trigger enforces the account types. The tapped credential resolves to the staff member's account through its wallet; no credential is pinned to the staff record.
+One staff record per (account_id, staff_account_id), and `(id, account_id)` is unique (a terminal's active staff member must be the same merchant's). A trigger enforces the account types. **Staff carry no bank account** (migration 0009, owner decision 2026-10-30): Nuclear records and shows tips, it does not pay staff. A staff member signs in with their own Nuclear account and sees their tips (write staff and the business see everyone's); removing the record keeps their tips, which belong to their account. The tapped credential resolves to the staff member's account through its wallet; no credential is pinned to the staff record.
 
 ## categories
 
@@ -235,9 +235,28 @@ An order a merchant creates and a customer pays (by tap or in the app). Owned by
 | items | JSON array, the immutable snapshot at creation: `[{id, product_id, name, unit_price, discount, quantity}]` (id is the line's id, used by item refunds). Empty for a keyed-in amount. There is no checkout_items table. |
 | status | open, paid or canceled (written once, at the end). **Expired is derived**: an open checkout whose `expires_at` has passed reads as `expired`; no job marks it. |
 | expires_at | Nullable expiry; NULL means it never expires. |
+| tip_amount | Bigint, default 0 (migration 0009): the part of what the payer paid that is tip. `total` stays the items, the payment's amount is `total + tip_amount`. Written once, in the same write that sets `paid` (a tip only exists on a paid checkout; a declined one-step checkout is canceled with it cleared). The `tips` rows of the payment add up to it exactly. |
+| served_by | Nullable account id (migration 0009): the staff member serving the order, set when it is created (the request's staff id, else the terminal's active staff member) and never changed. The tip of this order goes to this person by default. |
 | created_at, updated_at | Timestamps. |
 
-A checkout is settled by at most one completed pay transaction (unique index on transactions.checkout_id for completed payments); declined attempts remain against it and it stays open for another try. A trigger on transactions requires a payment's or refund's checkout and terminal to belong to the merchant. **An amount-only tap or app payment creates no checkout at all** (it is just a transaction); a payment with items from a terminal writes its checkout directly as `paid` in the same call (and as `canceled` if the payment is declined). Per-line refunded quantities are not stored: an item refund's transaction carries `meta.items`, and a pending request carries them on `refunds.items`; the quantities already refunded or reserved are the sums over those, read while the payment row is locked. A merchant's Orders page lists checkouts.
+A checkout is settled by at most one completed pay transaction (unique index on transactions.checkout_id for completed payments); declined attempts remain against it and it stays open for another try. A trigger on transactions requires a payment's or refund's checkout and terminal to belong to the merchant. **Every payment is a checkout** (changed 2026-10-30, migration 0009; owner decision): an amount-only tap or app payment writes a checkout too (no items, `total` = the amount), directly as `paid` in the same call, and as `canceled` (tip cleared) if the payment is declined, exactly as a payment with items does. A completed payment therefore always has a `checkout_id` (new rows; older ones may be empty). The nightly purge removes canceled checkouts older than 97 days and open ones that expired more than 97 days ago, once nothing references them (two small partial indexes serve it). Per-line refunded quantities are not stored: an item refund's transaction carries `meta.items`, and a pending request carries them on `refunds.items`; the quantities already refunded or reserved are the sums over those, read while the payment row is locked. A merchant's Orders page lists checkouts.
+
+## tips
+
+Who a tip belongs to (migration 0009). A tip is part of the payment (`transactions.amount` includes it and the payment's checkout says how much, in `checkouts.tip_amount`); this table only records the people it goes to. **Nuclear shows tips to staff, it never pays them out**: the business pays its staff.
+
+| Field | Description |
+| --- | --- |
+| id | Primary key. |
+| transaction_id | The completed payment (positive row) or refund (negative row) this row belongs to. Unique with the staff account: one row per person per transaction. |
+| account_id | The merchant's type-B account. A trigger requires it to be the receiving side of the payment or the sending side of the refund. |
+| staff_account_id | The person's account. It is the person, not the `staff` record, so removing someone from the staff keeps their tips. |
+| amount | Nonzero bigint in cents: positive for a payment, negative for a refund. |
+| created_at | When it was written. |
+
+**Immutable** (a trigger refuses update, delete and truncate): a correction is a new row. A payment can split its tip between several people by **amounts** (cents), never ratios, so every reader gets the same sums; the payment function checks that the rows add up exactly to the checkout's `tip_amount`. **Refunds** take the non-tip part of the payment first (item refunds never reach the tip); only what a refund takes beyond it returns tip money, and it is taken back from the same people in proportion to what each was given (cumulative largest-remainder shares, spare cents to the larger remainder), written as negative rows (a payment's tip is the sum of its positive rows; what refunds returned is the sum of the negative rows of its refunds). Indexes: `(staff_account_id, account_id, created_at DESC, id DESC)` (one person's tips for a period) and `(account_id, created_at DESC, id DESC)` (the business's).
+
+API: `GET /v1/tips?business&staff&from&to&cursor&limit` (the answer has the period's total, per-person totals and per-day totals, all summed from these rows, nothing stored) and `GET /v1/tips/employers` (owner sessions; a consumer names the business; read staff see only themselves, write staff and the business see everyone and may filter by `staff`); the terminal sends `tip` with `served_by` or `tips: [{staff_id, amount}]` on `POST /v1/terminal/payments` and `tip` on the customer's `POST /v1/payments` (the active staff member gets it).
 
 ## admins
 
@@ -370,7 +389,7 @@ The source of truth for money: every movement, and every declined attempt. **Imm
 | status | `completed` or `declined`. The API reports a declined row as `failed`. |
 | status_code | The reason when declined (insufficient_balance, spend_limit_exceeded, wallet_balance_exceeded, exceeds_refundable, ...); NULL exactly when completed (CHECK). |
 | from_wallet_id, to_wallet_id | Not null, foreign keys to wallets.id, different unless the type is `move`. |
-| amount | Positive bigint: the full amount the receiving side is credited. |
+| amount | Positive bigint: the full amount the receiving side is credited. For a payment it includes the tip (the checkout says how much is tip; `transactions` has no tip columns). |
 | credit_amount | Part of the amount covered by approved credit (pay), repaid credit (fund), restored credit (refund) or credit drawn again (fund_return); 0 otherwise. Never more than amount. |
 | related_id | The transaction this one corrects: refund to its pay, fund_return to its fund, settle_return to its settle, collect_return to its collect, adjustment to any. |
 | tag_id, pass_id | The credential of a tap payment (pay only; at most one). |

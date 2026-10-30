@@ -86,11 +86,10 @@ export async function merchantTerminals(sql: Sql, id: string) {
 export async function merchantStaff(sql: Sql, id: string) {
   const rows = await sql<{
     id: string; staff_account_id: string; name: string; email: string | null; handle: string | null; role: string;
-    bank_last4: string | null; created_at: Date;
+    created_at: Date;
   }[]>`
-    select s.id, s.staff_account_id, a.name, a.email, a.handle, s.role, ba.last4 as bank_last4, s.created_at
+    select s.id, s.staff_account_id, a.name, a.email, a.handle, s.role, s.created_at
       from staff s join accounts a on a.id = s.staff_account_id
-      left join bank_accounts ba on ba.id = s.bank_account_id
      where s.account_id = ${id}
      order by s.created_at, s.id`;
   return rows;
@@ -136,7 +135,7 @@ export async function merchantTransactions(
   const rows = await sql<{
     id: string; type: string; status: string; status_code: string | null; amount: bigint; ts: Date; ts_key: string;
     via: string | null; reference: string | null; terminal: string | null; customer: string | null; approver: string | null;
-    related: string | null; from_name: string | null; to_name: string | null;
+    related: string | null; from_name: string | null; to_name: string | null; tip: bigint | null; served_by: string | null;
     from_id: string | null; from_type: string | null; from_photo: string | null; to_id: string | null; to_type: string | null; to_photo: string | null;
   }[]>`
     select t.id, t.type, t.status, t.status_code, t.amount, t."timestamp" as ts,
@@ -147,12 +146,15 @@ export async function merchantTransactions(
            coalesce(case when t.provider_reference like 'admin:%' then 'Admin ' || substr(t.provider_reference, 7) when t.provider_reference = 'operator' then 'Operator' end, ap.name) as approver,
            t.related_transaction_id as related,
            fa.name as from_name, ta.name as to_name,
+           case when t.type = 'pay' and t.status = 'completed' then co.tip_amount end as tip, sv.name as served_by,
            fa.id as from_id, fa.type as from_type, fa.photo as from_photo, ta.id as to_id, ta.type as to_type, ta.photo as to_photo
       from txn t
       left join terminals tm on tm.id = t.terminal_id
       left join accounts fa on fa.id = t.from_account_id
       left join accounts ta on ta.id = t.to_account_id
       left join accounts ap on ap.id = t.approved_by_account_id
+      left join checkouts co on co.id = t.checkout_id and t.type = 'pay'
+      left join accounts sv on sv.id = co.served_by
      where ${mine} ${filter} ${inRange}
        ${cursor ? sql`and (t."timestamp", t.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
      order by t."timestamp" desc, t.id desc
@@ -176,6 +178,7 @@ export async function merchantTransactions(
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       via: r.via, reference: r.reference, terminal: r.terminal, customer: r.customer, approved_by: r.approver, refund_of: r.related,
+      tip: r.tip === null ? null : n(r.tip), served_by: r.served_by,
       from: r.from_name, to: r.to_name, from_party: party(r.from_id, r.from_type, r.from_photo), to_party: party(r.to_id, r.to_type, r.to_photo),
     })),
     next_cursor: rows.length > limit && last ? `${last.ts_key}|${last.id}` : null,

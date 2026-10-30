@@ -239,6 +239,32 @@ terminalSelf.get("/", async (c) => {
   return c.json({ terminal: terminalJson(t, await orbFor(sql, t.id)) });
 });
 
+// Who is on this terminal. The POS lists the merchant's staff and sets the active one (a staff id, or null when nobody is); payments default their
+// `served_by` and tip recipient to it. Staff ids, never wallets or balances.
+terminalSelf.get("/staff", async (c) => {
+  const sql = c.get("sql");
+  const { accountId, terminalId } = c.get("terminal");
+  const rows = await sql<{ id: string; staff_account_id: string; name: string; handle: string | null; role: string }[]>`
+    select s.id, s.staff_account_id, a.name, a.handle, s.role
+      from staff s join accounts a on a.id = s.staff_account_id
+     where s.account_id = ${accountId} order by s.created_at, s.id`;
+  const [t] = await sql<{ active_staff_id: string | null }[]>`select active_staff_id from terminals where id = ${terminalId} and account_id = ${accountId}`;
+  return c.json({ staff: rows.map((r) => ({ id: r.id, staff_account_id: r.staff_account_id, name: r.name, handle: r.handle, role: r.role })), active_staff_id: t?.active_staff_id ?? null });
+});
+
+terminalSelf.put("/active-staff", async (c) => {
+  const body = z.object({ staff_id: uuid.nullable() }).safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
+  const sql = c.get("sql");
+  const { accountId, terminalId } = c.get("terminal");
+  if (body.data.staff_id) {
+    const [s] = await sql<{ id: string }[]>`select id from staff where id = ${body.data.staff_id} and account_id = ${accountId}`;
+    if (!s) return c.json({ error: "staff_not_found" }, 404);
+  }
+  await sql`update terminals set active_staff_id = ${body.data.staff_id} where id = ${terminalId} and account_id = ${accountId}`;
+  return c.json({ active_staff_id: body.data.staff_id });
+});
+
 terminalSelf.put("/orb", async (c) => {
   const body = claimBody.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: "invalid_request", issues: body.error.flatten() }, 400);
