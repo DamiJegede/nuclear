@@ -95,6 +95,6 @@ main{overflow-x:clip}
 /* Align the Free tools section border flush with the viewport on anchor navigation. */
 html:has(#free-tools:target){scroll-padding-top:0}
 
-/* Keep weekly payroll figures readable in the software preview. */
+/* Keep the team figures readable in the software preview. */
 .team-total{font-size:18px;gap:18px;flex-wrap:wrap}.team-total small{font-size:15px}.team-total strong{font-size:38px;line-height:1.15;white-space:nowrap}.team-row{font-size:17px;gap:12px;flex-wrap:wrap}.team-pay{font-size:23px;font-weight:700;white-space:nowrap}.team-row>small{font-size:12px}
 @media(max-width:620px){.team-total strong{font-size:32px}.team-row{font-size:16px}.team-pay{font-size:21px}.team-row>small{font-size:11px}}

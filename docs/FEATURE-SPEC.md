@@ -334,7 +334,7 @@ Orb/reader firmware must support three separately validated credential paths: NT
 | Agent spending | Owner grants with merchant/action scope, recurring/task budgets, expiry/revocation, approval thresholds; API/MCP interface | Prior product direction; exact launch actions open |
 | Exclusive | Shared family/agent controls and higher wallet capacity; $9.99 discussed, $19.99 household proposal | Pricing and entitlements unresolved |
 | Auto reload | Consent, trigger, amount, funding caps, one pending automatic load, pause and failure notifications | Prior proposal |
-| Payroll/time tracking | NFC clock-in/out, time records and exports; partner-led payroll calculations, taxes, filings, pay stubs, payouts | Prior proposal; separate rollout and partner requirements |
+| ~~Payroll/time tracking~~ | ~~NFC clock-in/out, time records and exports; partner-led payroll calculations, taxes, filings, pay stubs, payouts~~ | **Removed from the service (owner, 2026-10-30).** Nuclear does not run payroll. Employer-funded Benefits stay. Tips are a separate, undecided question |
 
 Ordinary wage payment and optional wallet reload are distinct flows. Free merchant software and 0% Nuclear merchant processing are business targets; final partner contracts, subscription economics, and payroll scope remain to be specified.
 
