@@ -1,0 +1,15 @@
+{
+  "fusion_document": "Orb Mainboard Rev C - SMT Antenna",
+  "source_components": 141,
+  "logical_nets": 100,
+  "gpio_assignments_preserved": 15,
+  "initial_airwires": 360,
+  "remaining_airwires": 297,
+  "routed_connections": 63,
+  "fusion_clearance_overlap_errors": 0,
+  "usb_annular_ring_warnings": 4,
+  "routed_wire_segments": 434,
+  "vias": 31,
+  "antenna_zone_copper_intrusions": [],
+  "status": "Engineering draft. Manual power/clock/USB/RF routing and RF/clock tuning, footprint and fabrication review remain."
+}

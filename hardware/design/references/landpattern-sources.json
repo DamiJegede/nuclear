@@ -1,0 +1,7 @@
+{
+  "esp.kicad_mod": "https://raw.githubusercontent.com/espressif/kicad-libraries/main/footprints/Espressif.pretty/ESP32-C3-MINI-1.kicad_mod",
+  "jst.kicad_mod": "https://raw.githubusercontent.com/KiCad/kicad-footprints/7ebfa6b23cc292a56f751b7b5f4a0e12eeef69dd/Connector_JST.pretty/JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal.kicad_mod",
+  "esp.pdf": "https://www.espressif.com/sites/default/files/documentation/esp32-c3-mini-1_datasheet_en.pdf",
+  "speaker.pdf": "https://www.sameskydevices.com/product/resource/cms-151103-088sp.pdf",
+  "hirose.pdf": "https://www.hirose.com/en/product/p/CL0580-0410-1-10/documents?path=%2Fapi%2Fv1%2Fproducts%2FCL0580-0410-1-10%2Fdocuments%2Fdrawing_2d%2Fcontent%3Flang%3DEN"
+}

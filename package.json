@@ -26,6 +26,7 @@
     "test:api": "npm run test -w @nuclear/api --",
     "test:admin": "npm run test -w @nuclear/admin-portal",
     "website:dev": "npm run dev -w @nuclear/website",
+    "hardware:build": "python3 hardware/src/build.py && python3 hardware/src/verify_eagle.py",
     "website:build": "npm run build -w @nuclear/website"
   }
 }

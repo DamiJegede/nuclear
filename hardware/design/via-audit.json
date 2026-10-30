@@ -1,0 +1,708 @@
+{
+  "minimum_drill_spacing_mm": 0.2,
+  "drill_spacing_violations": [],
+  "filled_capped_via_in_pad_required": [
+    {
+      "net": "ESP_VDD_RF",
+      "pad": [
+        "U1",
+        "3"
+      ],
+      "via": [
+        8.75,
+        21.19
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "3V3",
+      "pad": [
+        "U2",
+        "6"
+      ],
+      "via": [
+        -1.1,
+        -11.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "ESP_XTAL_P",
+      "pad": [
+        "U1",
+        "30"
+      ],
+      "via": [
+        10.45,
+        19.25
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U1",
+        "33"
+      ],
+      "via": [
+        8.0,
+        18.5
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U2",
+        "41"
+      ],
+      "via": [
+        2.0,
+        -11.5
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U3",
+        "9"
+      ],
+      "via": [
+        -3.8,
+        -7.58
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U4",
+        "17"
+      ],
+      "via": [
+        12.2,
+        -4.0
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U6",
+        "17"
+      ],
+      "via": [
+        -10.13,
+        14.58
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "R19",
+        "2"
+      ],
+      "via": [
+        3.95,
+        15.65
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C35",
+        "2"
+      ],
+      "via": [
+        6.22,
+        14.82
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C37",
+        "2"
+      ],
+      "via": [
+        7.5,
+        14.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C42",
+        "2"
+      ],
+      "via": [
+        11.8,
+        20.9
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C38",
+        "2"
+      ],
+      "via": [
+        11.98,
+        18.72
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "R9",
+        "2"
+      ],
+      "via": [
+        17.25,
+        -4.0
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "R10",
+        "2"
+      ],
+      "via": [
+        19.35,
+        -4.0
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C15",
+        "2"
+      ],
+      "via": [
+        -12.35,
+        -8.8
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C14",
+        "2"
+      ],
+      "via": [
+        -10.25,
+        -8.8
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C3",
+        "2"
+      ],
+      "via": [
+        -9.65,
+        -15.7
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C19",
+        "2"
+      ],
+      "via": [
+        -9.05,
+        -11.1
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "TP4",
+        "1"
+      ],
+      "via": [
+        -8.5,
+        -13.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C22",
+        "2"
+      ],
+      "via": [
+        -7.15,
+        -17.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C32",
+        "2"
+      ],
+      "via": [
+        -7.0,
+        10.0
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C18",
+        "2"
+      ],
+      "via": [
+        -6.95,
+        -11.1
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C2",
+        "2"
+      ],
+      "via": [
+        -5.45,
+        -15.7
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C17",
+        "2"
+      ],
+      "via": [
+        -4.85,
+        -11.1
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C30",
+        "2"
+      ],
+      "via": [
+        -3.55,
+        10.0
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C1",
+        "2"
+      ],
+      "via": [
+        -2.75,
+        -15.7
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C29",
+        "2"
+      ],
+      "via": [
+        -0.35,
+        9.5
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U8",
+        "3"
+      ],
+      "via": [
+        1.96,
+        11.19
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C7",
+        "2"
+      ],
+      "via": [
+        5.22,
+        6.88
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "C23",
+        "2"
+      ],
+      "via": [
+        9.65,
+        -17.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "Y1",
+        "2"
+      ],
+      "via": [
+        9.7,
+        -11.35
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U5",
+        "3"
+      ],
+      "via": [
+        10.5,
+        3.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U5",
+        "2"
+      ],
+      "via": [
+        10.5,
+        3.9
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U4",
+        "4"
+      ],
+      "via": [
+        10.8,
+        -4.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U4",
+        "6"
+      ],
+      "via": [
+        11.95,
+        -5.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "U5",
+        "8"
+      ],
+      "via": [
+        11.95,
+        3.4
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "Y2",
+        "4"
+      ],
+      "via": [
+        14.05,
+        18.7
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "R8",
+        "2"
+      ],
+      "via": [
+        15.05,
+        -3.5
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "Y2",
+        "2"
+      ],
+      "via": [
+        15.75,
+        20.9
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "GND",
+      "pad": [
+        "J1",
+        "A1"
+      ],
+      "via": [
+        -2.65,
+        26.625
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "EN",
+      "pad": [
+        "U1",
+        "7"
+      ],
+      "via": [
+        6.75,
+        20.95
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "NFC_IRQ",
+      "pad": [
+        "U1",
+        "4"
+      ],
+      "via": [
+        8.25,
+        20.71
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "I2C_SCL",
+      "pad": [
+        "U1",
+        "10"
+      ],
+      "via": [
+        5.55,
+        19.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "LED_DATA_3V3",
+      "pad": [
+        "U1",
+        "12"
+      ],
+      "via": [
+        5.31,
+        18.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "LED_DATA_3V3",
+      "pad": [
+        "U8",
+        "2"
+      ],
+      "via": [
+        1.01,
+        11.19
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "I2S_BCLK",
+      "pad": [
+        "U1",
+        "13"
+      ],
+      "via": [
+        5.79,
+        18.25
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "I2S_BCLK",
+      "pad": [
+        "U6",
+        "16"
+      ],
+      "via": [
+        -10.88,
+        16.18
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "I2S_DIN",
+      "pad": [
+        "U1",
+        "27"
+      ],
+      "via": [
+        10.45,
+        17.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "VSYS",
+      "pad": [
+        "C8",
+        "1"
+      ],
+      "via": [
+        11.55,
+        -0.35
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.5
+    },
+    {
+      "net": "CC1",
+      "pad": [
+        "R4",
+        "1"
+      ],
+      "via": [
+        -2.7,
+        25.45
+      ],
+      "drill_mm": 0.3,
+      "diameter_mm": 0.7
+    },
+    {
+      "net": "VDD_TX",
+      "pad": [
+        "U2",
+        "18"
+      ],
+      "via": [
+        3.25,
+        -14.6
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "NFC_RXN",
+      "pad": [
+        "U2",
+        "15"
+      ],
+      "via": [
+        1.75,
+        -14.6
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    },
+    {
+      "net": "NFC_XTAL2",
+      "pad": [
+        "U2",
+        "29"
+      ],
+      "via": [
+        5.1,
+        -9.75
+      ],
+      "drill_mm": 0.2,
+      "diameter_mm": 0.45
+    }
+  ]
+}

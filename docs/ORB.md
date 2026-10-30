@@ -5,7 +5,7 @@ Updated: 2026-10-21. This is the planning reference for Orb behavior, BLE, recov
 ## 1. Confirmed product and hardware decisions
 
 - Orb has no physical button.
-- ESP32-C3-MINI-1-N4X; PN7161 NFC controller; 28 addressable WS2812B LEDs (supersedes earlier 20/25 counts); exact LED revision remains to confirm.
+- ESP32-C3-MINI-1-N4X; PN7161 NFC controller; 23 addressable WS2812B LEDs (owner revision 2026-10-29: five on each upper side, thirteen below; supersedes 28); exact LED revision remains to confirm.
 - Main PCB: 69 mm diameter, rigid FR-4 with double-sided assembly. Separate 40 mm FPC NFC antenna, 40 mm tail, approximately 12 mm below the tap surface. Antenna connector: 4-position SMT FPC connector and matching tail, using two positions for RF and leaving two unconnected. Antenna turns and matching remain engineering work.
 - Battery: custom Grepow pack based on GRP7550040, same approximately 50 x 40.5 mm footprint, increased to 12 mm finished-pack thickness. Original 7.3 mm is also finished-pack thickness per owner clarification. Estimated capacity 2,400–2,500 mAh (approximately 9.1 Wh) is proportional, not supplier-confirmed. Built-in PCM; two-wire connection, no external battery NTC. Pack thermal protection must be confirmed by supplier rather than inferred from PCM.
 - Battery termination: JST PHR-2; PCB header: JST S2B-PH-SM4-TB. Pin 1 = positive/red, pin 2 = negative/black, using JST numbered drawings. MAX17048 is the proposed I2C fuel gauge; charger selection remains open. USB-C external power and native USB programming/recovery with boot/reset test pads are specified in the engineer brief.
@@ -177,13 +177,13 @@ Telemetry: percentage (with validity/unknown indication), millivolts, charging, 
 
 Report on connection, on charging/external-power changes, on >=1 percentage-point change, on warning transitions and at least every 60 s while connected. Proposed warnings: 20% once, 10% once, with hysteresis; critical refusal/shutdown uses validated hardware thresholds. Do not restart or drop a payment solely because a percentage warning crossed.
 
-Idle: NFC standby, LEDs off, amplifier shutdown, BLE connected with validated low-power scheduling. Measure real power/black-pixel draw before declaring LED power gating mandatory. Model NFC on actual active duration: historical 5 s/min and LED 10 s/min were workload assumptions, not runtime quotas. Latest workload model: 28 LEDs at full brightness, 10 seconds total animation, 5 seconds NFC activity and 1.5 audio prompts per transaction. One transaction/minute is the normal-day scenario; three/minute is the busy scenario. These are energy-budget assumptions, not fixed firmware wait times: stop NFC promptly after capture. Voice clip duration and actual illuminated-pixel coverage remain unmeasured. At estimated 9.1 Wh pack energy, approximately 24 hours normal use is a target for typical moving animations, not an all-pixels-on or measured guarantee. Busy-day estimates discussed were approximately 6–9 hours depending on coverage/color; reset polling and real electronics loads require measurement.
+Idle: NFC standby, LEDs off, amplifier shutdown, BLE connected with validated low-power scheduling. Measure real power/black-pixel draw before declaring LED power gating mandatory. Model NFC on actual active duration: historical 5 s/min and LED 10 s/min were workload assumptions, not runtime quotas. Latest workload model: 23 LEDs at full brightness, 10 seconds total animation, 5 seconds NFC activity and 1.5 audio prompts per transaction. One transaction/minute is the normal-day scenario; three/minute is the busy scenario. These are energy-budget assumptions, not fixed firmware wait times: stop NFC promptly after capture. Voice clip duration and actual illuminated-pixel coverage remain unmeasured. At estimated 9.1 Wh pack energy, approximately 24 hours normal use is a target for typical moving animations, not an all-pixels-on or measured guarantee. Busy-day estimates discussed were approximately 6–9 hours depending on coverage/color; reset polling and real electronics loads require measurement.
 
 No-button power behavior and genuine software shutdown/wake remain dependent on charger/power-latch design. A shutdown sound is only possible while firmware has energy/time to play it; do not promise sound on abrupt power loss.
 
 ## 10. Lights and audio
 
-Animations run without blocking BLE, NFC deadlines or audio/state handling: `animation.rs` is a pure function of time (`Animator::render(now, &mut [Rgb; 28])` every `ANIMATION_FRAME_MS`), a new pattern replaces the old at once, repeating the pattern on show does not restart it, normal patterns are scaled by the brightness cap and Emergency ignores it (colors and curves are first guesses to tune). Latest model uses full brightness; idle dark. Validate exact revision, peak current and animation coverage before hardware release. Connection/pairing blue, awaiting/processing orange, success green, decline red. Exact color values, timings and brightness curve remain to tune. State transitions cancel obsolete animations immediately.
+Animations run without blocking BLE, NFC deadlines or audio/state handling: `animation.rs` is a pure function of time (`Animator::render(now, &mut [Rgb; 23])` every `ANIMATION_FRAME_MS`), a new pattern replaces the old at once, repeating the pattern on show does not restart it, normal patterns are scaled by the brightness cap and Emergency ignores it (colors and curves are first guesses to tune). Latest model uses full brightness; idle dark. Validate exact revision, peak current and animation coverage before hardware release. Connection/pairing blue, awaiting/processing orange, success green, decline red. Exact color values, timings and brightness curve remain to tune. State transitions cancel obsolete animations immediately.
 
 | Asset | Trigger |
 | --- | --- |
@@ -209,14 +209,14 @@ Persistent state (`storage.rs`): a `SlotStore` trait of two fixed record slots; 
 
 One top-level configuration module (Rust constants or equivalent in the selected runtime) contains:
 
-- Hardware: LED_COUNT = 28; LED_DATA_PIN; NFC SPI SCK/MOSI/MISO/CS, IRQ and VEN pins; audio pins; power/charge sensing; optional gauge bus; USB reservations. Values remain unassigned until GPIO review.
+- Hardware: LED_COUNT = 23; LED_DATA_PIN; NFC SPI SCK/MOSI/MISO/CS, IRQ and VEN pins; audio pins; power/charge sensing; optional gauge bus; USB reservations. Values remain unassigned until GPIO review.
 - Pairing: PAIRING_TX_POWER, NORMAL_TX_POWER, PAIRING_MIN_RSSI, PAIRING_RSSI_SAMPLE_WINDOW_MS, PAIRING_PROXIMITY_HOLD_MS, HANDSHAKE_TIMEOUT_MS.
 - Liveness: TERMINAL_HEARTBEAT_INTERVAL_MS, TERMINAL_HEARTBEAT_TIMEOUT_MS.
 - Recovery: RESET_CARD_TEXT = "SAY_GOODBYE", USB_RECOVERY_WINDOW_MS, RECOVERY_POLL_INTERVAL_MS, RECOVERY_SCAN_BURST_MS.
 - Operations: SCAN_TIMEOUT_MS, PAYMENT_REMINDER_DELAY_MS = 5000, message/reassembly limits, ACK/retry limits, result-display duration.
 - Presentation/power: NORMAL_LED_BRIGHTNESS_CAP_PERCENT = 100 (aligned in config.rs 2026-10-21), battery report interval/thresholds/hysteresis, volume defaults and emergency-light limits.
 
-Pin planning is the next separately authorized discussion. NFC antenna RF conductors are not MCU GPIO assignments. No physical button pin is required. Check ESP32-C3 bootstrap, flash, USB and module antenna constraints before assigning numbers.
+**Pin plan proposed 2026-10-28 (hardware/design/pin-plan.md, checked against the module datasheet, not yet reviewed on a board):** NFC moves to I2C (shared with the gauge) because the module exposes 15 GPIOs; see config.rs. The text below predates it. Pin planning was the next separately authorized discussion. NFC antenna RF conductors are not MCU GPIO assignments. No physical button pin is required. Check ESP32-C3 bootstrap, flash, USB and module antenna constraints before assigning numbers.
 
 Plan signed BLE-relayed firmware upgrades with rollback and USB recovery if hardware supports it. Reserve flash for update slots, assets and settings within the selected 4 MB module; signing/provisioning details are pending. Only report successful installed firmware to the API after boot validation.
 
@@ -241,7 +241,7 @@ Stable device UID must be independent of BLE privacy-address rotation. Backend a
 4. Exercise first boot, weak/fluctuating RSSI, unauthorized peer connections, failed handshake, returning terminal at normal range, and replacement terminal.
 5. Exercise reset card with USB insertion (without reboot), USB absent, authenticated/unauthenticated connection, heartbeat loss, unresolved attempt, wrong NDEF text, and power failure during reset. Verify backend ownership is retained.
 6. Exercise disconnect/reboot in every operation phase, duplicate/out-of-order frames, small MTU/fragment loss, delayed outcome, reader timeout and cancellation. No duplicate debit or false success.
-7. Verify 5-second reminder is once per waiting attempt and canceled by capture; warnings do not mask outcomes; all 28 LEDs and audio remain within measured current/thermal limits.
+7. Verify 5-second reminder is once per waiting attempt and canceled by capture; warnings do not mask outcomes; all 23 LEDs and audio remain within measured current/thermal limits.
 8. Test battery reports against a reference, actual iPad reconnect/sleep behavior, BLE range, NFC antenna tuning and interrupted signed updates.
 
 ## References
@@ -258,3 +258,6 @@ These references explain capabilities; they do not establish measured Orb range,
 2. Next, still hardware independent: glue that drives `audio`, `animation`, `outbox` and `storage` from the controller's actions in one `tick`/`handle` loop with tests; a clip-finished input; storing a firmware/boot counter if needed.
 3. Finalize GPIO and board runtime, then connect drivers and secure BLE/storage transport. Resolve reboot/reconciliation recovery before production.
 4. Record and integrate audio later; validate intelligibility and energy with real hardware. Re-measure runtime against the confirmed custom pack capacity.
+
+### Hardware revision C — 2026-10-29
+Owner-approved replacement: ESP32-C3FH4X with 4 MB in-package flash, external 40 MHz crystal and Johanson 2450AT18D0100001E SMT antenna. Existing GPIO numbers remain unchanged. This supersedes the MINI module selection above. Board retains 23 LEDs; the uppermost pair moves inward for antenna clearance. See hardware/design/rf-redesign.md for circuit and release status.

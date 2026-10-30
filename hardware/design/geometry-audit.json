@@ -1,0 +1,24 @@
+{
+  "led_count": 23,
+  "upper_right": 5,
+  "upper_left": 5,
+  "lower": 13,
+  "radii_mm": [
+    27.5,
+    31.5
+  ],
+  "minimum_led_pad_gap_mm": 0.3068248047684004,
+  "minimum_gap_pair": [
+    "LED22",
+    "LED23"
+  ],
+  "different_net_pad_clearance_below_0_127_mm": [],
+  "minimum_pad_edge_clearance_mm": 0.645125904827232,
+  "courtyard_check": "passed",
+  "speaker_reserved_mm": [
+    19.5,
+    12.0
+  ],
+  "u5_pad_count": 10,
+  "note": "Geometric source-file audit only; Fusion DRC, routing, slot geometry and production verification still required."
+}

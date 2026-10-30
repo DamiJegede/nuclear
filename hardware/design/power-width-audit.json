@@ -1,0 +1,42 @@
+{
+  "ESP_VDD_RF": {
+    "length_mm_by_width": {
+      "0.25_to_0.49": 3.22,
+      "under_0.25": 8.15
+    }
+  },
+  "3V3": {
+    "length_mm_by_width": {
+      "0.25_to_0.49": 74.88,
+      "under_0.25": 44.32
+    }
+  },
+  "VSYS": {
+    "length_mm_by_width": {
+      "0.25_to_0.49": 39.21,
+      "at_least_0.5": 37.45,
+      "under_0.25": 34.06
+    }
+  },
+  "VBAT": {
+    "length_mm_by_width": {
+      "at_least_0.5": 66.73,
+      "0.25_to_0.49": 16.71,
+      "under_0.25": 26.04
+    }
+  },
+  "VBUS": {
+    "length_mm_by_width": {
+      "at_least_0.5": 30.02,
+      "0.25_to_0.49": 40.24,
+      "under_0.25": 40.65
+    }
+  },
+  "VLED": {
+    "length_mm_by_width": {
+      "at_least_0.5": 422.41,
+      "0.25_to_0.49": 2.06,
+      "under_0.25": 27.16
+    }
+  }
+}

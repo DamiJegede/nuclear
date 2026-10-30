@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn the_frame_has_one_pixel_per_led() {
-        assert_eq!(Frame::default().len(), 28);
+        assert_eq!(Frame::default().len(), 23);
     }
 
     #[test]

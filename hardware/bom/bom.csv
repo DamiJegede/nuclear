@@ -1,0 +1,53 @@
+Type,Qty,References,Value,Description,Package,Manufacturer,MPN,Status
+U,1,U1,ESP32-C3FH4X,"Espressif ESP32-C3FH4X, 4 MB in-package flash, QFN32 5 x 5 mm",ESP32C3_QFN32,Espressif,ESP32-C3FH4X,specified
+U,1,U2,PN7161A1HN/C101E,NXP PN7161A1HN NFC controller (I2C),HVQFN40_6X6,NXP,PN7161A1HN/C101E,specified
+U,1,U3,MAX17048G+T10,Analog/Maxim MAX17048G+T10 fuel gauge (TDFN-8),TDFN8_2X2,Analog Devices (Maxim),MAX17048G+T10,specified
+U,1,U4,BQ24074RGTR,TI BQ24074RGTR charger and power path (VQFN-16),VQFN16_3X3,Texas Instruments,BQ24074RGTR,specified
+U,1,U5,TPS63802DLAR,TI TPS63802DLAR buck-boost 3.3 V (VSON-10),VSON10_2X3,Texas Instruments,TPS63802DLAR,specified
+U,1,U6,MAX98357AETE+T,Analog/Maxim MAX98357AETE+T I2S Class D amplifier (TQFN-16),TQFN16_3X3,Analog Devices (Maxim),MAX98357AETE+T,specified
+U,1,U7,TPS22918DBVR,TI TPS22918DBVR load switch (SOT-23-6),SOT23_6,Texas Instruments,TPS22918DBVR,specified
+U,1,U8,SN74LV1T34DBVR,TI SN74LV1T34DBVR level-shifting buffer (SOT-23-5),SOT23_5,Texas Instruments,SN74LV1T34DBVR,specified
+J,1,J1,USB-C,"TE Connectivity 2345986-1 USB-C receptacle (24 pads, USB 3.1 top mount, dual row SMT; only the USB 2.0 pads are used)",USBC24_TE2345986,TE Connectivity,2345986-1,specified
+J,1,J2,BAT,JST S2B-PH-SM4-TB battery header,JST_S2B_PH_SM4_TB,JST,S2B-PH-SM4-TB,specified
+J,1,J3,NFC antenna,"Hirose FH19C-4S-0.5SH(10), 0.5 mm pitch, 0.2 mm bottom-contact FPC",FPC4_PLACEHOLDER,Hirose,FH19C-4S-0.5SH(10),specified
+Y,1,Y1,27.12MHz,Crystal,XTAL2016,,,TBD
+Y,1,Y2,40MHz,Abracon ABM8 3.2 x 2.5 mm 40 MHz crystal,ABM8_3225,Abracon,ABM8-40.000MHZ-10-1-U-T,specified
+D,1,D1,USBLC6-2SC6,ST USBLC6-2SC6 USB ESD protection (SOT-23-6),SOT23_6,STMicroelectronics,USBLC6-2SC6,specified
+LED,23,"LED1, LED2, LED3, LED4, LED5, LED6, LED7, LED8, LED9, LED10, LED11, LED12, LED13, LED14, LED15, LED16, LED17, LED18, LED19, LED20, LED21, LED22, LED23",WS2812B,WS2812B addressable LED (5050; revision TBC),WS2812B_5050,Worldsemi,WS2812B,specified
+L,1,L1,0.47uH,Power inductor,L2016,,,TBD
+L,2,"L2, L3",TBD,Inductor,L0402,,,TBD
+L,1,L4,2nH,Inductor,L0402,,,generic
+L,1,L5,24nH,Inductor,L0402,,,generic
+L,1,L6,2.4nH,Inductor,L0402,,,generic
+C,8,"C1, C5, C6, C8, C9, C10, C29, C31",10uF,Capacitor,C0603,,,generic
+C,34,"C2, C7, C11, C14, C16, C17, C18, C19, C30, C35, C36, C101, C102, C103, C104, C105, C106, C107, C108, C109, C110, C111, C112, C113, C114, C115, C116, C117, C118, C119, C120, C121, C122, C123",100nF,Capacitor,C0402,,,generic
+C,2,"C20, C21",12pF,Capacitor,C0402,,,generic
+C,7,"C22, C23, C24, C25, C26, C27, C28",TBD,Capacitor,C0402,,,TBD
+C,5,"C3, C15, C34, C37, C38",1uF,Capacitor,C0402,,,generic
+C,2,"C32, C33",100uF,Polymer capacitor,CPOL7343,,,generic
+C,1,C39,10nF,Capacitor,C0402,,,generic
+C,3,"C4, C12, C13",4.7uF,Capacitor,C0603,,,generic
+C,2,"C40, C41",16pF,Capacitor,C0402,,,generic
+C,2,"C42, C43",1pF,Capacitor,C0402,,,generic
+C,2,"C44, C45",1pF,Capacitor,C0402,,,generic
+R,2,"R1, R10",10k,Resistor,R0402,,,generic
+R,1,R11,560k,Resistor,R0402,,,generic
+R,2,"R13, R14",2.2k,Resistor,R0402,,,generic
+R,2,"R15, R16",TBD,Resistor,R0402,,,TBD
+R,1,R17,2k,Resistor,R0402,,,generic
+R,1,R21,33,Resistor,R0402,,,generic
+R,2,"R22, R23",0,Resistor,R0402,,,generic
+R,5,"R3, R12, R18, R19, R20",100k,Resistor,R0402,,,generic
+R,2,"R4, R5",5.1k,Resistor,R0402,,,generic
+R,1,R6,120k,Resistor,R0402,,,generic
+R,1,R7,220k,Resistor,R0402,,,generic
+R,1,R8,1.8k,Resistor,R0402,,,generic
+R,1,R9,1.13k,Resistor,R0402,,,generic
+T,1,TP1,EN,Test pad,TP1MM,,,generic
+T,1,TP2,BOOT,Test pad,TP1MM,,,generic
+T,1,TP3,3V3,Test pad,TP1MM,,,generic
+T,1,TP4,GND,Test pad,TP1MM,,,generic
+T,1,TP5,VSYS,Test pad,TP1MM,,,generic
+T,1,TP6,VBAT,Test pad,TP1MM,,,generic
+A,1,ANT1,2450AT18D0100001E,"Johanson 2450AT18D0100001E 2.4 GHz SMT antenna, thin-edge reference layout",JOHANSON_2450AT18D,Johanson Technology,2450AT18D0100001E,specified
+S,1,SPK1,CMS-151103-088SP,Speaker CMS-151103-088SP (wire or pad connection),SPK_PADS,CUI Devices,CMS-151103-088SP,specified

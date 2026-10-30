@@ -1,0 +1,37 @@
+{
+  "source_file": "hardware/fusion/orb.brd",
+  "components": 141,
+  "board_multi_pad_signals": 84,
+  "logical_nets": 100,
+  "layers": [
+    1,
+    2,
+    15,
+    16
+  ],
+  "copper_clearance_minimum_mm": 0.127,
+  "mechanical_and_antenna_violations": [],
+  "minimum_hole_spacing_mm": 0.2,
+  "drill_spacing_violations": [],
+  "native_fusion_verification": {
+    "date": "2026-10-29",
+    "application": "Autodesk Fusion Insider",
+    "document": "Orb Mainboard Rev D - Routed",
+    "saved_in_fusion": true,
+    "native_airwires": 0,
+    "native_signal_airwire_objects": 0,
+    "native_copper_clearance_errors": 0,
+    "native_overlap_errors": 0,
+    "remaining_errors": {
+      "Matched Signal Lengths": 2
+    },
+    "remaining_warnings": {
+      "Wire Stub": 40
+    },
+    "airwire_check_enabled": true,
+    "approved_errors": 0,
+    "evidence": "native-drc-errors.json and native-airwires.json; Fusion screenshot and .fbrd archive supplied"
+  },
+  "manufacturing_status": "Engineering draft; no fabrication release. RF/clock/USB geometry, impedance and power performance still require engineering review and tuning. Filled-and-capped via-in-pad process is mandatory.",
+  "different_net_copper_clearance_violations": []
+}

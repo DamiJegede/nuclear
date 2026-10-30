@@ -1,0 +1,514 @@
+{
+  "downloaded_on": "2026-10-29",
+  "kicad_revision": "b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a",
+  "acheron_revision": "4d9d420dfb02e4c7346ce7c05ca6e1c95a868e05",
+  "files": [
+    {
+      "file": "U1_ESP32-C3-MINI-1.step",
+      "references": "",
+      "mpn": "ESP32-C3-MINI-1-N4X",
+      "kind": "manufacturer",
+      "url": "https://www.espressif.com/sites/default/files/3dmodel/ESP32-C3-MINI-1%203D%20Model.STEP",
+      "note": "Manufacturer module-family model; verify alignment and N4X mechanical revision. Superseded by bare ESP32-C3FH4X in Rev C; do not attach to U1.",
+      "archive_member": null,
+      "status": "superseded-revision-B",
+      "bytes": 3674969,
+      "sha256": "a4ed075447476cb39cbee4f5889f163ff8abae111efcf27c3559b8dafa1085aa",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 44670,
+        "solid_brep_count": 85
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U4_BQ24074_RGT0016C.step",
+      "references": "U4",
+      "mpn": "BQ24074RGTR",
+      "kind": "manufacturer-package",
+      "url": "https://webench.ti.com/cad/dlbxl.cgi/newstep/RGT0016C.stp",
+      "note": "TI package model linked for BQ24074 in TI package search.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 470233,
+      "sha256": "e1fbdb941d1c1a519ca55940a3b01461c8317f2f10661597e70781a717fc20d5",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 10693,
+        "solid_brep_count": 22
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "source_page": "https://www.ti.com/packaging/en/docs/searchproductbypackage.tsp?orderablePartNumber=BQ24074RGTR&packageDesignator=RGT&pinCount=16&results=results",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U5_TPS63802_DLA0010A.step",
+      "references": "U5",
+      "mpn": "TPS63802DLAR",
+      "kind": "manufacturer-package",
+      "url": "https://webench.ti.com/cad/dlbxl.cgi/newstep/DLA0010A.stp",
+      "note": "TI DLA0010A model; dimensions take precedence over the unverified 2.5 x 3.0 mm note in components.md.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 184293,
+      "sha256": "942b488b136c91e882509a8ebd21184f8212fc6341e41e40325a65ef70613e59",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 4198,
+        "solid_brep_count": 11
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "source_page": "https://www.ti.com/packaging/en/docs/searchproductbypackage.tsp?orderablePartNumber=TPS63802DLAR&packageDesignator=DLA&pinCount=10&results=results",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U7_TPS22918_DBV0006A.step",
+      "references": "U7",
+      "mpn": "TPS22918DBVR",
+      "kind": "manufacturer-package",
+      "url": "https://webench.ti.com/cad/dlbxl.cgi/newstep/DBV0006A.stp",
+      "note": "TI DBV six-pin package model; align pin 1.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 122634,
+      "sha256": "af293fd7b80c034c3d5d82691b1cf848edbb4728162c2b319a70a4d62ffc0431",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 2325,
+        "solid_brep_count": 2
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "source_page": "https://www.ti.com/packaging/en/docs/searchproductbypackage.tsp?orderablePartNumber=TPS22918DBVR&packageDesignator=DBV&pinCount=6&results=results",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U8_SN74LV1T34_DBV0005A.step",
+      "references": "U8",
+      "mpn": "SN74LV1T34DBVR",
+      "kind": "manufacturer-package",
+      "url": "https://webench.ti.com/cad/dlbxl.cgi/newstep/DBV0005A.stp",
+      "note": "TI DBV five-pin package model; align pin 1.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 160160,
+      "sha256": "bce7b25e52a74ac515dc5236a6d5ee863c57e039a3a1aeaf26babdde195066c0",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 2992,
+        "solid_brep_count": 3
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "source_page": "https://www.ti.com/packaging/en/docs/searchproductbypackage.tsp?orderablePartNumber=SN74LV1T34DBVR&packageDesignator=DBV&pinCount=5&results=results",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U2_PN7161_HVQFN40_GENERIC.step",
+      "references": "U2",
+      "mpn": "PN7161A1HN/C101E",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Package_DFN_QFN.3dshapes/QFN-40-1EP_6x6mm_P0.5mm.step",
+      "note": "Generic 6 x 6 mm QFN40, not NXP SOT618-1 certification; verify height, exposed pad and pin 1 before clearance sign-off.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 432258,
+      "sha256": "0a108bb95f013a12851ccf7e0e1f194c5c966490a1f6fdfdb7500d511d396986",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 9875,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U3_MAX17048_TDFN8_GENERIC.step",
+      "references": "U3",
+      "mpn": "MAX17048G+T10",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Package_DFN_QFN.3dshapes/DFN-8-1EP_2x2mm_P0.5mm_EP0.9x1.5mm.step",
+      "note": "Generic 2 x 2 mm DFN8; verify height and terminal/exposed-pad geometry against Maxim G-package drawing.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 105378,
+      "sha256": "9cf462e39ca23676648d273156dd6d105c5cad2fa6f9ecb8c998d787ac3fda58",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 2412,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "U6_MAX98357_TQFN16_GENERIC.step",
+      "references": "U6",
+      "mpn": "MAX98357AETE+T",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Package_DFN_QFN.3dshapes/TQFN-16-1EP_3x3mm_P0.5mm_EP1.6x1.6mm.step",
+      "note": "Generic 3 x 3 mm TQFN16; verify against Maxim T1633 package drawing.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 179916,
+      "sha256": "864b2e2baff7c06a8eb6f8bb89e505f76c65965b4fd8a7ef4fb7d405647c3957",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 4332,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "D1_USBLC6_SOT23-6_GENERIC.step",
+      "references": "D1",
+      "mpn": "USBLC6-2SC6",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Package_TO_SOT_SMD.3dshapes/SOT-23-6.step",
+      "note": "Generic SOT-23-6 package, not an ST-supplied model.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 199168,
+      "sha256": "9491de18305b16fe125ee3d603109a29edd837d50d22305b6f929886492ce755",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 4519,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "J2_JST_S2B-PH-SM4-TB.step",
+      "references": "J2",
+      "mpn": "S2B-PH-SM4-TB",
+      "kind": "community-part",
+      "url": "https://raw.githubusercontent.com/AcheronProject/acheron_3D/4d9d420dfb02e4c7346ce7c05ca6e1c95a868e05/JST-S2B-PH-SM4-TB.STEP",
+      "note": "Exact part-named community model; manufacturer download was blocked. Check against JST drawing.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 271283,
+      "sha256": "67493412dbd25960c100685f6bc193c6bb7a29cac04f6e8e5e8221894478aee1",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 3603,
+        "solid_brep_count": 1
+      },
+      "units_note": "Contains inch conversion-based units; preserve embedded units on import.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "LED_WS2812B_5050_PROVISIONAL.step",
+      "references": "LED1-LED23",
+      "mpn": "WS2812B",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/LED_SMD.3dshapes/LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm.step",
+      "note": "PROVISIONAL legacy 5050 body; LED revision is undecided. Not suitable for WS2812B-2020 or unverified V5.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 123535,
+      "sha256": "637199c792cc5581f13c630b8ea641c3d770ebc3f87475da122d395f340d713a",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 2767,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "C0402_GENERIC.step",
+      "references": "0402 capacitors including C34-C45 and C101-C123",
+      "mpn": "generic",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Capacitor_SMD.3dshapes/C_0402_1005Metric.step",
+      "note": "Generic 0402/1005 capacitor; exact height depends on chosen MPN.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 43502,
+      "sha256": "03e44c4b2b727b8d4b6b1fd598cbd12dd5e614f1dfeefa96a92a07e3a3b312a2",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 1073,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "C0603_GENERIC.step",
+      "references": "C0603",
+      "mpn": "generic",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Capacitor_SMD.3dshapes/C_0603_1608Metric.step",
+      "note": "Generic 0603/1608 capacitor; exact height depends on chosen MPN.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 43450,
+      "sha256": "4857b3dc717675bf1fb22edda622ac3b3ae03cf44d81eefaf3fa3ba3a86d84c1",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 1073,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "R0402_GENERIC.step",
+      "references": "R1, R3-R23",
+      "mpn": "generic",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Resistor_SMD.3dshapes/R_0402_1005Metric.step",
+      "note": "Generic 0402/1005 resistor.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 40756,
+      "sha256": "91507e5af4251cb4ef38e04889c9b98da29904432bd83786bba13ae9b605eacb",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 996,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "CPOL7343_31_GENERIC_PROVISIONAL.step",
+      "references": "C32,C33",
+      "mpn": "not-selected",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Capacitor_Tantalum_SMD.3dshapes/CP_EIA-7343-31_Kemet-D.step",
+      "note": "PROVISIONAL 7343-31 body (3.1 mm height class). No polymer capacitor MPN or height selected; do not use for final shelf clearance.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 171596,
+      "sha256": "1d578cc03d3128d635ae0205945d796d728d36c1e32e83d288ba1795bc01429b",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 2828,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "L0402_GENERIC_PROVISIONAL.step",
+      "references": "L2-L6",
+      "mpn": "not-selected",
+      "kind": "generic-package",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Inductor_SMD.3dshapes/L_0402_1005Metric.step",
+      "note": "PROVISIONAL generic 0402 inductor; actual MPN and height remain TBD. L4-L6 require selected RF inductor current/Q/SRF specifications; model is an envelope only.",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 43502,
+      "sha256": "8bf2ae2bbd9d8b716db21d8d7fb903fac5ba2696150c3ec2e35bcea17b208ff2",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 1073,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "SPK1_CMS-151103-088SP.step",
+      "references": "SPK1",
+      "mpn": "CMS-151103-088SP",
+      "kind": "manufacturer",
+      "url": "https://3dcadfiles.3dexchange.net/step_ap214/205/7814513/Same_Sky_CMS-151103-088SP.zip",
+      "note": "Speaker is still a candidate in components.md.",
+      "archive_member": "Same_Sky_CMS-151103-088SP.step",
+      "status": "downloaded",
+      "bytes": 541214,
+      "sha256": "ceeb2d19196d283047bd935105116a1a0e588fa4557c30c0451d041a78799fac",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 7149,
+        "solid_brep_count": 0
+      },
+      "units_note": "Contains inch conversion-based units; preserve embedded units on import.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "LICENSE_KiCad.md",
+      "references": "",
+      "mpn": "",
+      "kind": "license",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/LICENSE.md",
+      "note": "",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 2105,
+      "sha256": "285b027a721577d0bc0198f36e948c6c282ddaa4b58fef8ed826749576eb0aef"
+    },
+    {
+      "file": "LICENSE_Acheron.md",
+      "references": "",
+      "mpn": "",
+      "kind": "license",
+      "url": "https://raw.githubusercontent.com/AcheronProject/acheron_3D/4d9d420dfb02e4c7346ce7c05ca6e1c95a868e05/LICENSE.md",
+      "note": "",
+      "archive_member": null,
+      "status": "downloaded",
+      "bytes": 13650,
+      "sha256": "679fc66a200012838fc88dcea663b0dec7711acc1c851bca79d72924b0385b55"
+    },
+    {
+      "file": "J1_TE_2345986-1.step",
+      "references": "J1",
+      "mpn": "2345986-1",
+      "kind": "manufacturer",
+      "url": "https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocFormat=3d_stp.zip&DocLang=English&DocNm=CVM_2345986-1&DocType=Customer+View+Model&PartCntxt=2345986-1",
+      "archive_member": "c-2345986-1-1-3d.stp",
+      "note": "Downloaded through the manufacturer product-page CAD link. USB-C overhang and board alignment still require Fusion verification.",
+      "status": "downloaded",
+      "bytes": 694146,
+      "sha256": "5063abf1acb20aca4acf8198cee33f78c64c2dcbaf2d13943019eb3fecf16d0e",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 15366,
+        "solid_brep_count": 1
+      },
+      "units_note": "Millimetre length units embedded in STEP.",
+      "downloaded_on": "2026-10-29"
+    },
+    {
+      "file": "J3_Hirose_FH19C-4S-0.5SH-10_CANDIDATE.step",
+      "references": "J3",
+      "mpn": "FH19C-4S-0.5SH(10)",
+      "kind": "manufacturer",
+      "url": "https://www.hirose.com/en/product/p/CL0580-0410-1-10/documents?path=%2Fapi%2Fv1%2Fproducts%2FCL0580-0410-1-10%2Fdocuments%2Fmodel_3d_step%2Fcontent",
+      "source_page": "https://www.hirose.com/en/product/p/CL0580-0410-1-10",
+      "archive_member": "FH19C-4S-0.5SH.stp",
+      "downloaded_on": "2026-10-29",
+      "status": "downloaded",
+      "bytes": 250902,
+      "sha256": "7efb17d676b473be609664a6610f8a4be7eb55ff4e9223bf2c69a0d3e2fd50b1",
+      "note": "CANDIDATE only: 4 positions, 0.5 mm pitch, bottom contact, horizontal-entry ZIF, 0.2 mm FPC thickness, nominal 4 x 3 x 0.9 mm. Depth exceeds the drawing's 1.9 mm bar zone; verify layout, actuator access, tail thickness and contact side before selecting. Footprint and BOM remain TBD.",
+      "validation": {
+        "step_structure": "passed",
+        "entity_count": 5525,
+        "solid_brep_count": 1
+      }
+    },
+    {
+      "file": "U1_ESP32-C3FH4X_GENERIC_QFN32.step",
+      "references": "U1",
+      "mpn": "ESP32-C3FH4X",
+      "kind": "community-generic",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Package_DFN_QFN.3dshapes/QFN-32-1EP_5x5mm_P0.5mm_EP3.65x3.65mm.step",
+      "note": "Generic 5x5 QFN32 body; model EP3.65 versus chip nominal3.7; visual envelope only, not manufacturer model.",
+      "status": "downloaded-provisional",
+      "bytes": 357203,
+      "sha256": "085681f80a36726481c7149770e3ae559345f562dd7fea794107836f4f3073b5",
+      "downloaded_on": "2026-10-29",
+      "revision": "b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a"
+    },
+    {
+      "file": "Y2_ABM8_GENERIC_3225.step",
+      "references": "Y2",
+      "mpn": "ABM8-40.000MHZ-10-1-U-T",
+      "kind": "community-generic",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/Crystal.3dshapes/Crystal_SMD_3225-4Pin_3.2x2.5mm.step",
+      "note": "Generic 3225 crystal envelope; verify actual height and orientation.",
+      "status": "downloaded-provisional",
+      "bytes": 44789,
+      "sha256": "d2a89df82ee5f0f56ef23ee59c8161b8d4e92af2b21959d72778316dde3f9f22",
+      "downloaded_on": "2026-10-29",
+      "revision": "b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a"
+    },
+    {
+      "file": "ANT1_Johanson_2450AT18x100_FAMILY.step",
+      "references": "ANT1",
+      "mpn": "2450AT18D0100001E",
+      "kind": "community-generic",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-packages3D/b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a/RF_Antenna.3dshapes/Johanson_2450AT18x100.step",
+      "note": "Johanson AT18 family model; verify D-series revision before mechanical release.",
+      "status": "downloaded-provisional",
+      "bytes": 52412,
+      "sha256": "7d3afc869543ea1b697aee6824adc8f8b73ba56896d97c82088a686380379d63",
+      "downloaded_on": "2026-10-29",
+      "revision": "b8b3cfdfad88ba66f21002b3de51dc6f7d55ba5a"
+    }
+  ],
+  "unresolved": [
+    {
+      "references": "J3",
+      "item": "4-position 0.5 mm FPC connector",
+      "status": "candidate-downloaded",
+      "reason": "Hirose FH19C-4S-0.5SH(10) manufacturer STEP supplied. Final selection pending 0.2 mm FPC thickness, bottom-contact orientation, fit/actuator access and vendor footprint review; source/BOM still TBD."
+    },
+    {
+      "references": "Y1",
+      "item": "27.12 MHz crystal, 2.0 x 1.6 mm class",
+      "status": "part-not-selected",
+      "reason": "Crystal MPN, load and ESR still TBD."
+    },
+    {
+      "references": "L1",
+      "item": "0.47 uH power inductor",
+      "status": "part-not-selected",
+      "reason": "No MPN or final height selected."
+    },
+    {
+      "references": "L2,L3",
+      "item": "NFC EMC inductors",
+      "status": "generic-only",
+      "reason": "Provisional L0402 model supplied; final MPN/value/height undecided."
+    },
+    {
+      "references": "C22-C28,R15,R16",
+      "item": "NFC matching/receive network",
+      "status": "generic-only",
+      "reason": "C0402/R0402 models supplied; final values and MPNs depend on tuning."
+    },
+    {
+      "references": "C32,C33",
+      "item": "100 uF polymer capacitor",
+      "status": "generic-only",
+      "reason": "7343-31 generic supplied; final MPN and height remain unselected."
+    },
+    {
+      "references": "LED1-LED23",
+      "item": "WS2812B revision",
+      "status": "provisional",
+      "reason": "Legacy 5050 model supplied; 2020/V5 alternatives are not selected."
+    },
+    {
+      "references": "TP1-TP6",
+      "item": "1 mm test pads",
+      "status": "no-body-needed",
+      "reason": "Copper pads have no separate 3D body."
+    },
+    {
+      "references": "Battery",
+      "item": "Custom Grepow GRP7550040-based battery",
+      "status": "custom-cad-needed",
+      "reason": "Not a catalogue part. Requires supplier drawing; no downloaded model or invented geometry supplied."
+    },
+    {
+      "references": "Antenna",
+      "item": "NFC antenna FPC and tail",
+      "status": "custom-cad-needed",
+      "reason": "Project-specific geometry."
+    },
+    {
+      "references": "Mechanical assembly",
+      "item": "Pedestal, shelf, enclosure and M2 screws",
+      "status": "custom-cad-needed",
+      "reason": "Use project CAD; screw length/head standard not specified."
+    }
+  ],
+  "validation": {
+    "checks": [
+      "ISO-10303-21 header and closing marker",
+      "solid BREP entity present",
+      "unique entity IDs and all entity references resolved",
+      "SHA-256 recorded for each file"
+    ],
+    "fusion_import_tested": false,
+    "models_attached_to_board": false
+  },
+  "revision_c_models_note": "Three provisional models downloaded; not attached to Fusion packages."
+}
