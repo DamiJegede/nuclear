@@ -60,6 +60,9 @@ export type Refund = {
 export type Device = { id: string; wallet_id: string | null; platform: string | null; created_at: string; last_accessed_at: string | null; session_expires_at: string | null; revoked_at: string | null; redeemed: boolean };
 export type HandleLookup = { account_id: string; handle: string; type: "B" | "C"; display_name: string; photo: string | null; wallet_id: string };
 
+export type SalesPeriod = "week" | "last_week" | "30d";
+export type Sales = { period: SalesPeriod; from: string; to: string; today: string; fees: number; total: number; days: { date: string; sales: number; payments: number }[] };
+
 export type Overview = {
   balance: number; balance_pending: number; terminals: { count: number; paired: number }; pending_refunds: { count: number; amount: number };
   staff: { count: number; writers: number }; open_orders: number; city: string | null; state: string | null; categories: number; products: number; best_seller: { name: string; sold_today: number } | null;
@@ -162,6 +165,7 @@ export function createApi(token: string, base: string = API_URL) {
     resolveRefund: (rid: string, action: "approve" | "reject") => request<unknown>("POST", `/v1/refunds/${id(rid)}/${action}`),
 
     overview: () => request<Overview>("GET", "/v1/business/overview"),
+    sales: (period: SalesPeriod) => request<Sales>("GET", `/v1/business/sales?period=${period}`),
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
     profile: async () => (await request<{ profile: Profile | null }>("GET", "/v1/business/profile")).profile,

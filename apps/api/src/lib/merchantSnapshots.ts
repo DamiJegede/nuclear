@@ -20,3 +20,33 @@ export async function catchUpMerchantSnapshots(sql: Sql, through: string): Promi
   await sql`update system set value = ${to}, updated_at = now() where key = 'merchant_snapshot_day'`;
   return { from, to, rows: w?.n ?? 0 };
 }
+
+export type SalesDay = { date: string; sales: number; payments: number };
+
+/**
+ * Completed-payment sales per program day for `from..to` (inclusive, at most 62 days; every day is present, zero when quiet). Finished days come from
+ * `merchant_snapshots`; the days after the last snapshot (normally today) are counted live from the merchant's wallet index.
+ */
+export async function merchantDailySales(sql: Sql, merchantId: string, from: string, to: string): Promise<SalesDay[]> {
+  const marker = await merchantSnapshotDay(sql);
+  const snapTo = marker && marker < to ? marker : to;
+  const got = new Map<string, SalesDay>();
+  if (!marker || from <= marker) {
+    for (const r of await sql<{ d: string; v: bigint; n: bigint }[]>`
+      select snapshot_date::text as d, pay_v as v, pay_done_n as n from merchant_snapshots
+       where merchant_account_id = ${merchantId} and snapshot_date >= ${from}::date and snapshot_date <= ${snapTo}::date`) got.set(r.d, { date: r.d, sales: Number(r.v), payments: Number(r.n) });
+  }
+  const liveFrom = marker && marker >= from ? addDays(marker, 1) : from;
+  if (!marker || liveFrom <= to) {
+    for (const r of await sql<{ d: string; v: bigint; n: bigint }[]>`
+      select (t.created_at at time zone 'America/New_York')::date::text as d, sum(t.amount) as v, count(*) as n
+        from transactions t join wallets w on w.id = t.to_wallet_id
+       where w.account_id = ${merchantId} and t.type = 'pay' and t.status = 'completed'
+         and t.created_at >= (${liveFrom}::text::date)::timestamp at time zone 'America/New_York'
+         and t.created_at < ((${to}::text::date + 1)::timestamp at time zone 'America/New_York')
+       group by 1`) got.set(r.d, { date: r.d, sales: Number(r.v), payments: Number(r.n) });
+  }
+  const days: SalesDay[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) days.push(got.get(d) ?? { date: d, sales: 0, payments: 0 });
+  return days;
+}

@@ -9,7 +9,8 @@ import { checkoutJson, getCheckout, getItems, listCheckouts } from "../lib/check
 import { imageUrl } from "../lib/images";
 import { MERCHANT_TX_KINDS, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { saveProfilePhoto } from "../lib/profilePhoto";
-import { PROGRAM_TZ } from "../lib/dates";
+import { PROGRAM_TZ, addDays, easternDate } from "../lib/dates";
+import { merchantDailySales } from "../lib/merchantSnapshots";
 import { soldToday } from "../lib/txn";
 import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
@@ -31,6 +32,19 @@ business.use("*", requireSession, requireOwner, async (c, next) => {
 });
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+// ---- Sales by day for the Overview chart: this week (Monday to Sunday), last week or the last 30 days, from the daily merchant snapshots + today live ----
+business.get("/sales", async (c) => {
+  const sql = c.get("sql");
+  const id = c.get("auth").accountId;
+  const period = c.req.query("period") ?? "week";
+  if (!["week", "last_week", "30d"].includes(period)) return c.json({ error: "invalid_request" }, 400);
+  const today = easternDate(new Date());
+  const monday = addDays(today, -((new Date(today + "T00:00:00Z").getUTCDay() + 6) % 7));
+  const [from, to] = period === "week" ? [monday, addDays(monday, 6)] : period === "last_week" ? [addDays(monday, -7), addDays(monday, -1)] : [addDays(today, -29), today];
+  const days = await merchantDailySales(sql, id, from, to);
+  return c.json({ period, from, to, today, fees: 0, total: days.reduce((a, d) => a + d.sales, 0), days });
+});
 
 // ---- Overview: every number the portal's first page shows, in one request (they were ten, each repeating sign-in checks) ----
 business.get("/overview", async (c) => {

@@ -71,4 +71,16 @@ ranges.forEach((r, i) => eq(`counts and totals from snapshots equal a live scan 
 eq("the answer is not trivial: 9 completed payments, 1 completed refund of 400, one pending and one rejected request counted", [live[0].t.payments.count, live[0].t.refunds, live[0].c.pending, live[0].c.refunds], [9, { count: 1, volume: 400 }, 1, 3]);
 eq("a page after the first carries no counts", (await merchantTransactions(sql as any, M.a, "all", 5, { ts: new Date().toISOString(), id: "00000000-0000-7000-8000-000000000000" }, ranges[0], false)).counts, null);
 
+
+// ---- the daily sales chart: snapshots for finished days, today live, every day present
+const { merchantDailySales } = await import("../src/lib/merchantSnapshots.ts");
+const sd = await merchantDailySales(sql as any, M.a, addDays(today, -6), today);
+eq("daily sales covers every day in the range, oldest first", [sd.length, sd[0].date, sd[6].date], [7, addDays(today, -6), today]);
+eq("a finished day reads the snapshot (day -5: two completed payments)", [sd[1].sales, sd[1].payments], [2 * 1005, 2]);
+eq("today is counted live and a quiet day is zero", [sd[6].sales, sd[6].payments, sd[0].sales > 0], [555, 1, true]);
+eq("another merchant's sales are not in it", (await merchantDailySales(sql as any, C1.a, addDays(today, -6), today)).every((d) => d.sales === 0), true);
+await q("update system set value = $1 where key = 'merchant_snapshot_day'", [addDays(today, -3)]);
+const mixed = await merchantDailySales(sql as any, M.a, addDays(today, -6), today);
+eq("with the marker three days back, days after it are read live and give the same answer", mixed.map((d) => d.sales), sd.map((d) => d.sales));
+
 console.log(`\n${pass} passed, ${fail} failed`); await sql.end(); await adm.end(); process.exit(fail ? 1 : 0);

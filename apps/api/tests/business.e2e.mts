@@ -137,6 +137,11 @@ const tx = (await get("/transactions")).json;
 eq("transactions: the payment with the customer's name and no account ids; counts and totals", [tx.transactions.length, tx.transactions[0].type, tx.transactions[0].amount, tx.transactions[0].customer, tx.transactions[0].from_party, tx.counts.payments, tx.totals.payments.volume], [1, "pay", 1000, "Ada", null, 1, 1000]);
 eq("filters, periods and bad input behave as on the admin page", [(await get("/transactions?kind=refunds")).json.transactions.length, (await get("/transactions?from=2020-01-01&to=2020-01-31")).json.counts.all, (await get("/transactions?from=bad")).status, (await get("/transactions?kind=nope")).status, (await get("/transactions?cursor=nope")).status], [0, 0, 400, 400, 400]);
 eq("another business sees none of it", [(await call("GET", "/v1/business/transactions", { token: O })).json.counts.all, (await call("GET", "/v1/business/checkouts?status=paid", { token: O })).json.checkouts.length], [0, 0]);
+// ---- sales by day (the Overview chart)
+const wk = (await get("/sales?period=week")).json, mo = (await get("/sales?period=30d")).json;
+eq("the sales chart: a week is seven days Monday to Sunday containing today, 30d is thirty days ending today, fees are zero", [wk.days.length, new Date(wk.days[0].date + "T00:00:00Z").getUTCDay(), wk.days.some((d: any) => d.date === wk.today), mo.days.length, mo.days[29].date === mo.today, wk.fees], [7, 1, true, 30, true, 0]);
+eq("the sales chart counts today's completed payments, and a bad period is refused", [wk.days.find((d: any) => d.date === wk.today).payments >= 1, wk.total === wk.days.reduce((a: number, d: any) => a + d.sales, 0), (await get("/sales?period=year")).status], [true, true, 400]);
+
 // ---- overview (one request) and the list queries (no per-row queries)
 const ov = (await get("/overview")).json;
 eq("the overview returns every first-page number in one answer", [ov.terminals, ov.pending_refunds, ov.staff, ov.open_orders, ov.categories, ov.products, ov.today.transactions, ov.yesterday.net, typeof ov.balance, ov.city], [{ count: 1, paired: 0 }, { count: 0, amount: 0 }, { count: 0, writers: 0 }, 0, 1, 1, 1, 0, "number", "Albany"]);

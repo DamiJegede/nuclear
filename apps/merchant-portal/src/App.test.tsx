@@ -25,6 +25,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
     overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0, since: null, closed_out_at: null }, yesterday: { net: 0 }, payout_bank: null }),
+    sales: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-11-01", today: "2026-10-30", fees: 0, total: 5000, days: [{ date: "2026-10-26", sales: 0, payments: 0 }, { date: "2026-10-27", sales: 2000, payments: 2 }, { date: "2026-10-28", sales: 0, payments: 0 }, { date: "2026-10-29", sales: 1000, payments: 1 }, { date: "2026-10-30", sales: 2000, payments: 1 }, { date: "2026-10-31", sales: 0, payments: 0 }, { date: "2026-11-01", sales: 0, payments: 0 }] }),
     payouts: vi.fn().mockResolvedValue([]),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
@@ -51,6 +52,18 @@ describe("sign-in", () => {
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
     expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Refunds"]);
+  });
+
+  it("shows the sales chart: today's sales, zero processing fees, and loads another period on change", async () => {
+    const api = fakeApi();
+    const { user } = await signIn(api);
+    const card = await screen.findByRole("article", { name: "Sales" });
+    expect(await within(card).findByText("Today's sales")).toBeInTheDocument();
+    expect(within(card).getAllByText("$20.00").length).toBeGreaterThan(0);
+    expect(within(card).getByText("$0.00")).toBeInTheDocument();
+    expect(within(card).getByRole("img", { name: /Sales by day, 2026-10-26 to 2026-11-01: \$50.00 in total/ })).toBeInTheDocument();
+    await user.selectOptions(within(card).getByRole("combobox", { name: "Period" }), "30d");
+    expect(api.sales).toHaveBeenLastCalledWith("30d");
   });
 
   it("opens straight on the sign-up form when the marketing site links with ?signup", () => {

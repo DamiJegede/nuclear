@@ -7,6 +7,7 @@ import { usePageTitle } from "../title";
 import { useList } from "../useList";
 import { Avatar } from "./Avatar";
 import { PhotoCrop } from "./PhotoCrop";
+import { SalesChart } from "./SalesChart";
 
 /** The business at a glance: three large cards (profile, today, catalog), then terminals, approvals, staff and orders. */
 export function Overview({ api, account, onChanged, onError, go }: { api: Api; account: Account; onChanged: () => void; onError: (e: unknown) => void; go: (page: string) => void }) {
@@ -58,6 +59,8 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
           {int(refundCount)} refund{refundCount === 1 ? "" : "s"} ({money(pendingTotal)}) waiting for your approval. <button type="button" className="link" onClick={() => go("refunds")}>Review Refunds</button>
         </div>
       )}
+
+      <SalesChart api={api} name={account.name} onError={onError} />
 
       <div className="grid three">
         <article className="card linkcard profile-tile" aria-label="Profile">
