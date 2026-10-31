@@ -8,6 +8,7 @@ import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
 import { pollSubmittedSettlements, runSettlement } from "./settlement";
 import { catchUpSnapshots, addDays } from "./snapshots";
+import { catchUpMerchantSnapshots } from "./merchantSnapshots";
 import { pruneCounters } from "./tracker";
 
 /**
@@ -29,6 +30,8 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const today = easternDate(new Date(scheduledTime));
     const yesterday = addDays(today, -1);
     const snapshots = await catchUpSnapshots(sql, yesterday).catch((err) => (console.error("snapshot failed", err), [] as string[]));
+    // The merchants' per-day counts and totals for the same finished days (the merchant lists read them); never blocks the job.
+    const merchantSnapshots = await catchUpMerchantSnapshots(sql, yesterday).catch((err) => (console.error("merchant snapshot failed", err), null));
     const [night] = await sql<{ reconciled: boolean | null }[]>`select reconciled from snapshots where snapshot_date = ${yesterday}::date`.catch(() => []);
     const reconciled = night?.reconciled ?? null;
     // The monthly nudge to employees who have not claimed their employer credit (see lib/orgMail.ts); never blocks the reset.
@@ -43,7 +46,7 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
     const polled = await pollSubmittedSettlements(env, sql).catch((err) => (console.error("settlement poll failed", err), null));
     // Yesterday's running counters are superseded by the snapshot; keep a couple of days in case the next night's cron is late.
     await pruneCounters(env, addDays(today, -3)).catch(() => null);
-    return { swept, reminders, programs, banks, settlement, polled, snapshots, reconciled, purged };
+    return { swept, reminders, programs, banks, settlement, polled, snapshots, merchantSnapshots, reconciled, purged };
   } finally {
     await sql.end();
   }

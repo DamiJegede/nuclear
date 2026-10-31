@@ -4,7 +4,7 @@ Updated October 23, 2026. This is the schema the code is built on: one initial m
 
 ## Current decisions
 
-**33 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, institution_hosts, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, tips, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots.
+**34 tables.** Identity and access: accounts, balances, wallets, devices, businesses, institutions, institution_hosts, routing_numbers, bank_accounts, staff, admins, admin_sessions. Money: transactions, tips, fundings, settlements, refunds, checkouts. Merchant: terminals, categories, products. Physical credentials: tags, tag_models, passes. Store: shop, orders. Organizations: employees, benefit_runs, benefit_run_rows. Platform: logs, uploads, system, snapshots, merchant_snapshots.
 
 - **`transactions` is the source of truth and is immutable.** Every transaction is from one wallet to one wallet and is written once with a final outcome, `completed` or `declined`; nothing ever updates it. A correction is a new transaction (refund, fund_return, settle_return, adjustment). There is no ledger table: balances are checked against what the transactions did (reconciliation, below).
 - **Every account has a balance** (consumers, merchants, organizations, and the system account).
@@ -447,6 +447,20 @@ See [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an organization cre
 | updated_at | Last change. |
 
 There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in benefit_run_rows and the transactions.
+
+## merchant_snapshots
+
+One final row per merchant per program day (America/New_York) that had activity, written by the nightly cron (`app_merchant_snapshot(from, to)`, migration 0011, which also backfilled the days before it). The merchant transaction list reads its counts and completed totals from these rows for finished days, counts the days after the last one live (normally today) and always counts refund requests (pending, rejected: a pending one changes state) live, so the cost depends on the days in the period, not its transactions. `system.merchant_snapshot_day` is the last day covered.
+
+| Column | Meaning |
+| --- | --- |
+| `merchant_account_id`, `snapshot_date` | The merchant and the program day (unique together) |
+| `pay_n`, `pay_done_n`, `pay_v` | Payments into the merchant's wallets (completed or declined), the completed ones, their volume (tips included) |
+| `refund_n`, `refund_done_n`, `refund_v` | Refund transactions out of its wallets, the completed ones, their volume |
+| `tips_n`, `tips_v` | Payments that carried a tip; tips given that day net of tips returned with refunds |
+| `taken_at` | When the row was written |
+
+Immutable (trigger `merchant_snapshots_final`); a correction belongs to the day it happens. Declined transactions purged after 90 days stay counted here. Backdated rows inserted directly (the demo seeder) are not picked up once their day is past the marker. Index `refunds_open_idx` serves a merchant's open and rejected requests.
 
 ## snapshots
 

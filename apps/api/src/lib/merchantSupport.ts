@@ -1,6 +1,7 @@
 import type { Sql } from "../db";
 import { imageUrl } from "./images";
-import { PROGRAM_TZ } from "./dates";
+import { PROGRAM_TZ, addDays } from "./dates";
+import { merchantSnapshotDay } from "./merchantSnapshots";
 import { n } from "./money";
 import { DEFAULT_PAGE, encodePair } from "./paging";
 import { party, type DayRange } from "./adminLists";
@@ -197,23 +198,38 @@ export async function merchantTransactions(
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
 
-  // Counts per filter and the completed totals in ONE pass over the period (skipped for the pages after the first: the client already has them).
-  const [agg] = withTotals ? await sql<{ all: number; payments: number; refunds: number; pending: number; pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint }[]>`
-    select count(*)::int as "all",
-           (count(*) filter (where kind = 'pay'))::int as payments,
-           (count(*) filter (where kind = 'refund' and st <> 'pending'))::int as refunds,
-           (count(*) filter (where kind = 'refund' and st = 'pending'))::int as pending,
-           (count(*) filter (where kind = 'pay' and st = 'completed'))::int as pay_n,
-           coalesce(sum(amount) filter (where kind = 'pay' and st = 'completed'), 0) as pay_v,
-           (count(*) filter (where kind = 'refund' and st = 'completed'))::int as ref_n,
-           coalesce(sum(amount) filter (where kind = 'refund' and st = 'completed'), 0) as ref_v
-      from (
-        select 'pay' as kind, t.status as st, t.amount from transactions t where t.type = 'pay' and t.to_wallet_id in ${wallets} ${tRange}
-        union all
-        select 'refund', t.status, t.amount from transactions t where t.type = 'refund' and t.from_wallet_id in ${wallets} ${tRange}
-        union all
-        select 'refund', r.status, r.amount from refunds r where r.merchant_account_id = ${id} and r.status in ('pending', 'rejected') ${rRange}
-      ) x` : [];
+  // Counts per filter and the completed totals (skipped for the pages after the first: the client already has them). Finished days come from
+  // `merchant_snapshots` (a few rows per day, final), the days after the last snapshot (normally today) are counted live, and refund REQUESTS
+  // (pending or rejected: a pending one changes state) are always live.
+  let agg: { all: number; payments: number; refunds: number; pending: number; pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint } | undefined;
+  if (withTotals) {
+    const day = await merchantSnapshotDay(sql);
+    const useSnap = day !== null && !(range.from && range.from > day);
+    const live: DayRange = useSnap ? { from: range.from && range.from > day! ? range.from : addDays(day!, 1), to: range.to } : range;
+    const liveOn = !useSnap || !range.to || range.to > day!;
+    const snapTo = range.to && range.to < day! ? range.to : day;
+    const lRange = (col: string) => sql`
+      ${live.from ? sql`and ${sql(col)} >= (${live.from}::text::date)::timestamp at time zone ${PROGRAM_TZ}` : sql``}
+      ${live.to ? sql`and ${sql(col)} < ((${live.to}::text::date + 1)::timestamp at time zone ${PROGRAM_TZ})` : sql``}`;
+    [agg] = await sql<{ all: number; payments: number; refunds: number; pending: number; pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint }[]>`
+      select (pay_n + refund_n + req_refund_n + req_pending_n)::int as "all", pay_n::int as payments, (refund_n + req_refund_n)::int as refunds, req_pending_n::int as pending,
+             pay_done_n::int as pay_n, pay_v, refund_done_n::int as ref_n, refund_v as ref_v
+        from (
+          select coalesce(sum(pay_n), 0) as pay_n, coalesce(sum(pay_done_n), 0) as pay_done_n, coalesce(sum(pay_v), 0) as pay_v,
+                 coalesce(sum(refund_n), 0) as refund_n, coalesce(sum(refund_done_n), 0) as refund_done_n, coalesce(sum(refund_v), 0) as refund_v
+            from (
+              ${useSnap ? sql`select pay_n, pay_done_n, pay_v, refund_n, refund_done_n, refund_v from merchant_snapshots
+                 where merchant_account_id = ${id} ${range.from ? sql`and snapshot_date >= ${range.from}::date` : sql``} and snapshot_date <= ${snapTo!}::date
+                 union all` : sql``}
+              ${liveOn ? sql`select 1, (t.status = 'completed')::int, case when t.status = 'completed' then t.amount else 0 end, 0, 0, 0
+                   from transactions t where t.type = 'pay' and t.to_wallet_id in ${wallets} ${lRange("t.created_at")}
+                 union all
+                 select 0, 0, 0, 1, (t.status = 'completed')::int, case when t.status = 'completed' then t.amount else 0 end
+                   from transactions t where t.type = 'refund' and t.from_wallet_id in ${wallets} ${lRange("t.created_at")}` : sql`select 0, 0, 0, 0, 0, 0 where false`}
+            ) x(pay_n, pay_done_n, pay_v, refund_n, refund_done_n, refund_v)) s,
+          (select (count(*) filter (where r.status = 'rejected'))::bigint as req_refund_n, (count(*) filter (where r.status = 'pending'))::bigint as req_pending_n
+             from refunds r where r.merchant_account_id = ${id} and r.status <> 'approved' ${rRange}) q`;
+  }
   return {
     counts: agg ? { all: agg.all, payments: agg.payments, refunds: agg.refunds, pending: agg.pending } : null,
     totals: agg ? { payments: { count: agg.pay_n, volume: n(agg.pay_v) }, refunds: { count: agg.ref_n, volume: n(agg.ref_v) } } : null,
