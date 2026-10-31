@@ -95,7 +95,7 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
                 <tbody>
                   {rows.map((p) => (
                     <tr key={p.id}>
-                      <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}{p.taxable === false ? <span className="muted note"> Non-taxable</span> : null}</span></span></th>
+                      <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}</span></span></th>
                       <td>{catName(p.category_id)}</td>
                       <td className="num">{p.discount > 0 ? <><s className="muted">{money(p.price)}</s> {money(p.effective_price)}</> : money(p.price)}</td>
                       <td className="num">{p.stock === null ? "Untracked" : int(p.stock)}</td>
