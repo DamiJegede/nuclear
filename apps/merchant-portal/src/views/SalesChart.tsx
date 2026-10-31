@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Api, SalesPeriod, Sales } from "../api";
 import { money } from "../format";
 import { useList } from "../useList";
@@ -6,6 +6,27 @@ import { useList } from "../useList";
 const PERIODS: { value: SalesPeriod; label: string }[] = [{ value: "week", label: "This week" }, { value: "last_week", label: "Last week" }, { value: "30d", label: "Last 30 days" }];
 const dayName = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const initial = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "narrow", timeZone: "UTC" });
+
+/** A dollar amount that counts up or down to its new value (about 0.45 s, eased) whenever it changes; the first value shows at once. No motion when the person prefers less of it. */
+function Money({ cents }: { cents: number }) {
+  const [shown, setShown] = useState(cents);
+  const current = useRef(cents);
+  useEffect(() => {
+    const still = typeof matchMedia !== "function" || matchMedia("(prefers-reduced-motion: reduce)").matches || typeof requestAnimationFrame !== "function";
+    if (still || current.current === cents) { current.current = cents; setShown(cents); return; }
+    const from = current.current, t0 = performance.now(), ms = 450;
+    let frame = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / ms);
+      current.current = t === 1 ? cents : Math.round(from + (cents - from) * (1 - Math.pow(1 - t, 3)));
+      setShown(current.current);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [cents]);
+  return <>{money(shown)}</>;
+}
 
 /**
  * Sales per day (from the daily snapshots, today live). Always three figures: the day under the pointer (today when none), the processing fees (always
@@ -24,9 +45,9 @@ export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) =
     <article className="card sales-card" aria-label="Sales">
       <div className="sales-head">
         <div className="sales-figures">
-          <div><p className="sub">{hover && data ? (hover === data.today ? "Today's sales" : dayName(hover)) : "Today's sales"}</p><p className="big lg">{money(shown?.sales ?? 0)}</p></div>
-          <div><p className="sub">Processing fees</p><p className="big lg">{money(data?.fees ?? 0)}</p></div>
-          <div><p className="sub">{label}</p><p className="big lg">{money(data?.total ?? 0)}</p></div>
+          <div><p className="sub">{hover && data ? (hover === data.today ? "Today's sales" : dayName(hover)) : "Today's sales"}</p><p className="big lg"><Money cents={shown?.sales ?? 0} /></p></div>
+          <div><p className="sub">Processing fees</p><p className="big lg"><Money cents={data?.fees ?? 0} /></p></div>
+          <div><p className="sub">{label}</p><p className="big lg"><Money cents={data?.total ?? 0} /></p></div>
         </div>
         <select aria-label="Period" value={period} onChange={(e) => { setHover(null); setPeriod(e.target.value as SalesPeriod); }}>
           {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
