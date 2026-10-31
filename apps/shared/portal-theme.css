@@ -177,10 +177,12 @@ td.actions > button.ghost:only-child:hover:not(:disabled) { color: var(--text); 
 .sales-col.future .sales-bar { opacity: .35; }
 .sales-col:focus-visible .sales-bar { outline: 2px solid var(--focus); outline-offset: 2px; }
 .sales-day { position: absolute; top: calc(100% + 8px); font-size: 13px; color: var(--muted); white-space: nowrap; }
-/* the tooltip is drawn by us, not the browser: a small inverted card above the bar */
-.sales-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none; white-space: nowrap;
+/* the tooltip is drawn by us, not the browser: a small inverted card centred on its bar, always 20px above the base of the chart (the same place for every bar) */
+.sales-tip { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none; white-space: nowrap;
   display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px; background: var(--pop-bg); color: var(--pop-text); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 .sales-tip strong { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.sales-col.edge-l .sales-tip { left: 0; transform: none; }
-.sales-col.edge-r .sales-tip { left: auto; right: 0; transform: none; }
 @media (max-width: 640px) { .sales-card { padding: 20px 16px 14px; } .big.lg { font-size: 28px; } .sales-figures { gap: 20px; } }
+
+/* Page header actions (a period select, Download CSV, Refresh) stay on one row */
+.head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+.head-actions select { width: auto; min-width: 150px; height: 42px; }

@@ -80,6 +80,8 @@ export type TxRow = {
   reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null; from: string | null; to: string | null;
   /** For a completed payment: the part of `amount` that is tip, and who served the order (from its checkout). */
   tip?: number | null; served_by?: string | null;
+  /** For a completed payment: its public receipt. */
+  receipt_url?: string;
   /** For a refund: the payment it refunds. */
   original?: { id: string; timestamp: string; amount: number; tip: number; served_by: string | null; via: "tap" | "pass" | "app" | null; reference: string | null } | null;
 };
@@ -100,6 +102,9 @@ export type Product = {
 };
 export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean; taxable: boolean };
 /** Sales tax settings: the rate in basis points (825 = 8.25%) and whether prices already include it. */
+export type ReportPeriod = "week" | "last_week" | "30d" | "month" | "last_month";
+export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number };
+export type Report = { period: ReportPeriod; from: string; to: string; today: string; fees: number; total: Omit<ReportDay, "date"> & { net: number; net_tax: number }; days: ReportDay[] };
 export type TaxSettings = { tax_rate: number; tax_included: boolean };
 export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
 export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; sales_tax?: number; served_by?: string | null; served_by_name?: string | null };
@@ -170,6 +175,7 @@ export function createApi(token: string, base: string = API_URL) {
     sales: (period: SalesPeriod) => request<Sales>("GET", `/v1/business/sales?period=${period}`),
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
+    report: (period: ReportPeriod) => request<Report>("GET", `/v1/business/report?period=${period}`),
     taxSettings: () => request<TaxSettings>("GET", "/v1/business/tax"),
     saveTaxSettings: (input: TaxSettings) => request<TaxSettings>("PUT", "/v1/business/tax", input),
     profile: async () => (await request<{ profile: Profile | null }>("GET", "/v1/business/profile")).profile,

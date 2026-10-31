@@ -220,3 +220,16 @@ export async function verifyAccountLink(secret: string, token: string, kind: Acc
     return null;
   }
 }
+
+// Receipt links: a signed token for one payment (no table, no account needed to open it; it carries only the payment's id, and the page shows the order, not the payer).
+const RECEIPT_AUD = "nuclear:receipt";
+export async function signReceipt(secret: string, paymentId: string): Promise<string> {
+  const iat = Math.floor(Date.now() / 1000);
+  return sign({ iss: LINK_ISS, aud: RECEIPT_AUD, sub: paymentId, iat, exp: iat + 3 * 365 * 24 * 3600 }, secret, "HS256");
+}
+export async function verifyReceipt(secret: string, token: string): Promise<string | null> {
+  try {
+    const p = (await verify(token, secret, "HS256")) as Record<string, unknown>;
+    return p.iss === LINK_ISS && p.aud === RECEIPT_AUD && typeof p.sub === "string" ? p.sub : null;
+  } catch { return null; }
+}

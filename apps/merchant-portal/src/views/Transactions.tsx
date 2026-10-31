@@ -48,7 +48,7 @@ function TxRowPair({ tx, cols, children }: { tx: TxRow; cols: number; children: 
       <tr className={`${tone} tx-detail${open ? " open" : ""}`} aria-hidden={!open}>
         <td colSpan={cols}>
           <div className="tx-collapse"><div className="tx-inner">
-            <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}{tx.served_by ? <> • Served by {tx.served_by}</> : null}</p>
+            <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}{tx.served_by ? <> • Served by {tx.served_by}</> : null}{tx.receipt_url ? <> • <a href={tx.receipt_url} target="_blank" rel="noopener noreferrer">Receipt</a></> : null}</p>
             {tx.original && (
               <div className="tx-orig">
                 <p className="tx-orig-title">Original payment</p>

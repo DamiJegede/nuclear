@@ -1,5 +1,6 @@
 import { track } from "../lib/tracker";
 import { RULES, rateLimit } from "../lib/throttle";
+import { receiptUrl } from "../lib/receiptLink";
 import { imageUrl } from "../lib/images";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -76,13 +77,13 @@ function respondAnswer(c: any, a: Answer) {
   return respond(c, out, extra);
 }
 
-function respond(c: any, out: PayOutcome, extra?: Parameters<typeof paymentJson>[1]) {
+async function respond(c: any, out: PayOutcome, extra?: Parameters<typeof paymentJson>[1]) {
   if (out.kind === "conflict") return c.json({ error: "idempotency_mismatch" }, 409);
   if (out.kind === "ok" && !out.replayed) {
     const v = Number(out.row.amount), agent = c.get("auth")?.kind === "agent";
     track(c, { [out.row.tag_id ? "taps_n" : "in_app_n"]: 1, [out.row.tag_id ? "taps_v" : "in_app_v"]: v, ...(agent ? { agents_n: 1, agents_v: v } : {}) });   // today's running estimate
   }
-  const payment = paymentJson(out.row, extra);
+  const payment = { ...paymentJson(out.row, extra), ...(out.kind === "ok" ? { receipt_url: await receiptUrl(c, out.row.id) } : {}) };
   if (out.kind === "declined") return c.json({ error: "declined", status_code: out.row.status_code, payment }, 422);
   return c.json({ payment }, out.replayed ? 200 : 201);
 }
@@ -136,7 +137,7 @@ payments.get("/:id", async (c) => {
   if (!r) return c.json({ error: "not_found" }, 404);
   const its = r.checkout_id ? await getItems(sql, r.checkout_id) : [];
   return c.json({
-    payment: paymentJson(r, { merchant: { account_id: r.to_account_id, display_name: await merchantName(sql, r.to_account_id) } }),
+    payment: { ...paymentJson(r, { merchant: { account_id: r.to_account_id, display_name: await merchantName(sql, r.to_account_id) } }), ...(r.status === "completed" ? { receipt_url: await receiptUrl(c, r.id) } : {}) },
     items: its.map((it) => ({ name: it.name, quantity: it.quantity, net_price: Number(it.unit_price - it.discount) })),
   });
 });
@@ -193,5 +194,5 @@ terminalPayments.get("/:attempt", async (c) => {
   const [w] = await sql<{ display_name: string; photo: string | null }[]>`select display_name, photo from wallets where id = ${r.from_wallet_id}`;
   const payer = w ? { ...w, photo: imageUrl(w.photo) } : null;
   const its = r.checkout_id ? await getItems(sql, r.checkout_id) : [];
-  return c.json({ payment: paymentJson(r, { payer }), items: its.map(itemJson) });
+  return c.json({ payment: { ...paymentJson(r, { payer }), ...(r.status === "completed" ? { receipt_url: await receiptUrl(c, r.id) } : {}) }, items: its.map(itemJson) });
 });

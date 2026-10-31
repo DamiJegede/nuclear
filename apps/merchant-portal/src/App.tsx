@@ -5,6 +5,7 @@ import { usePageTitle } from "./title";
 import { Catalog } from "./views/Catalog";
 import { StaffHome } from "./views/StaffHome";
 import { Tips } from "./views/Tips";
+import { Reports } from "./views/Reports";
 import { EmailLink, emailLinkFromLocation } from "./views/EmailLink";
 import { Login } from "./views/Login";
 import { Orders } from "./views/Orders";
@@ -22,7 +23,7 @@ const KEY = "nuclear.merchant.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "refunds" | "profile";
+export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "reports" | "refunds" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
@@ -33,6 +34,7 @@ export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "orbs", label: "Orbs", path: "/orbs" },
   { page: "staff", label: "Staff", path: "/staff" },
   { page: "tips", label: "Tips", path: "/tips" },
+  { page: "reports", label: "Reports", path: "/reports" },
   { page: "refunds", label: "Refunds", path: "/refunds" },
 ];
 const PROFILE_PATH = "/profile";
@@ -140,6 +142,7 @@ export function App({
         {page === "orbs" && <Orbs api={api} onError={onError} />}
         {page === "staff" && <Staff api={api} onError={onError} />}
         {page === "tips" && <Tips api={api} onError={onError} />}
+        {page === "reports" && <Reports api={api} onError={onError} />}
         {page === "refunds" && <Refunds api={api} onError={onError} />}
         {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}
       </main>

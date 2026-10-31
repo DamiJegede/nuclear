@@ -450,9 +450,11 @@ There is no amount column: the amount to credit is only a column of the uploaded
 
 ## Sales tax columns (migration 0012)
 
-`businesses.tax_rate` (integer basis points, 0-3000, 825 = 8.25%) and `businesses.tax_included` (prices already contain the tax); `products.taxable` (default true); `checkouts.sales_tax` (cents, 0 <= sales_tax <= total). `checkouts.total` is what the items cost to pay, tax included (added on top unless `tax_included`); the tip is separate. Each `checkouts.items` line also carries `taxable`, `tax_rate`, `tax_included` and `tax` (its share, shares add up to `sales_tax`). Function `app_tax(merchant, lines)` is the one rule.
+`businesses.tax_rate` (integer basis points, 0-3000, 825 = 8.25%) and `businesses.tax_included` (prices already contain the tax); `products.taxable` (default true); `checkouts.sales_tax` (cents, 0 <= sales_tax <= total). `checkouts.total` is what the items cost to pay, tax included (added on top unless `tax_included`); the tip is separate. Each `checkouts.items` line also carries `taxable`, `tax_rate`, `tax_included` and `tax` (its share, shares add up to `sales_tax`). Function `app_tax(merchant, lines)` is the one rule. A refund records the tax it returns in `transactions.meta.tax` (`app_item_tax` for item refunds).
 
 ## merchant_snapshots
+
+(Migration 0013 adds `taxable_v`, `exempt_v`, `tax_v` and `tax_refunded_v`: item sales on taxed lines, item sales on lines without tax, sales tax collected on completed payments, sales tax returned by completed refunds. Days before sales tax existed are rightly zero.)
 
 One final row per merchant per program day (America/New_York) that had activity, written by the nightly cron (`app_merchant_snapshot(from, to)`, migration 0011, which also backfilled the days before it). The merchant transaction list reads its counts and completed totals from these rows for finished days, counts the days after the last one live (normally today) and always counts refund requests (pending, rejected: a pending one changes state) live, so the cost depends on the days in the period, not its transactions. `system.merchant_snapshot_day` is the last day covered.
 

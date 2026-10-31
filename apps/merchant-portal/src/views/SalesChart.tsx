@@ -40,7 +40,6 @@ export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) =
   const shown = data ? data.days.find((d) => d.date === (hover ?? data.today)) : undefined;
   const peak = Math.max(1, ...(data?.days.map((d) => d.sales) ?? []));
   const label = PERIODS.find((p) => p.value === period)!.label;
-  const last = (data?.days.length ?? 1) - 1;
   return (
     <article className="card sales-card" aria-label="Sales">
       <div className="sales-head">
@@ -57,7 +56,7 @@ export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) =
         <div className={`sales-bars${data.days.length > 7 ? " dense" : ""}${hover ? " hovering" : ""}`} role="group" aria-label={`Sales by day, ${data.from} to ${data.to}`} onMouseLeave={() => setHover(null)}>
           {data.days.map((d, i) => (
             <div key={d.date} tabIndex={0} aria-label={`${dayName(d.date)}: ${money(d.sales)}`}
-              className={`sales-col${d.date === data.today ? " today" : ""}${d.date > data.today ? " future" : ""}${d.date === hover ? " active" : ""}${i < 2 ? " edge-l" : i > last - 2 ? " edge-r" : ""}`}
+              className={`sales-col${d.date === data.today ? " today" : ""}${d.date > data.today ? " future" : ""}${d.date === hover ? " active" : ""}`}
               onMouseEnter={() => setHover(d.date)} onFocus={() => setHover(d.date)} onBlur={() => setHover(null)}>
               <div className="sales-bar" style={{ height: `${d.sales > 0 ? Math.max(4, Math.round((d.sales / peak) * 100)) : 2}%` }} />
               {d.date === hover && <div className="sales-tip" aria-hidden><span>{dayName(d.date)}</span><strong>{money(d.sales)}</strong></div>}

@@ -50,3 +50,48 @@ export async function merchantDailySales(sql: Sql, merchantId: string, from: str
   for (let d = from; d <= to; d = addDays(d, 1)) days.push(got.get(d) ?? { date: d, sales: 0, payments: 0 });
   return days;
 }
+
+export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number };
+const ZERO = (date: string): ReportDay => ({ date, payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0 });
+type StatRow = { d: string; pay_done_n: bigint; pay_v: bigint; refund_done_n: bigint; refund_v: bigint; tips_v: bigint; taxable_v: bigint; exempt_v: bigint; tax_v: bigint; tax_refunded_v: bigint };
+const dayOf = (r: StatRow): ReportDay => ({ date: r.d, payments: Number(r.pay_done_n), sales: Number(r.pay_v), refunds: Number(r.refund_done_n), refunded: Number(r.refund_v), tips: Number(r.tips_v),
+  taxable: Number(r.taxable_v), exempt: Number(r.exempt_v), tax: Number(r.tax_v), tax_refunded: Number(r.tax_refunded_v) });
+
+/**
+ * The merchant's daily report for `from..to` (inclusive, at most 92 days, every day present): completed sales and refunds, tips, taxable and exempt item sales,
+ * sales tax collected and returned. Finished days come from `merchant_snapshots`; the days after the last one are worked out by `merchant_day_stats`, the same
+ * definition the nightly job writes the snapshots from.
+ */
+export async function merchantDailyReport(sql: Sql, merchantId: string, from: string, to: string): Promise<ReportDay[]> {
+  const marker = await merchantSnapshotDay(sql);
+  const got = new Map<string, ReportDay>();
+  if (!marker || from <= marker) {
+    const snapTo = marker && marker < to ? marker : to;
+    for (const r of await sql<StatRow[]>`
+      select snapshot_date::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v from merchant_snapshots
+       where merchant_account_id = ${merchantId} and snapshot_date >= ${from}::date and snapshot_date <= ${snapTo}::date`) got.set(r.d, dayOf(r));
+  }
+  const liveFrom = marker && marker >= from ? addDays(marker, 1) : from;
+  if (liveFrom <= to) {
+    for (const r of await sql<StatRow[]>`
+      select day::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v
+        from merchant_day_stats(${liveFrom}::date, ${to}::date, ${merchantId})`) got.set(r.d, dayOf(r));
+  }
+  const days: ReportDay[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) days.push(got.get(d) ?? ZERO(d));
+  return days;
+}
+
+export const REPORT_PERIODS = ["week", "last_week", "30d", "month", "last_month"] as const;
+export type ReportPeriod = (typeof REPORT_PERIODS)[number];
+
+/** The program dates of a named period ending no later than today's week or month (weeks run Monday to Sunday). */
+export function periodRange(period: ReportPeriod, today: string): [string, string] {
+  const monday = addDays(today, -((new Date(today + "T00:00:00Z").getUTCDay() + 6) % 7));
+  if (period === "week") return [monday, addDays(monday, 6)];
+  if (period === "last_week") return [addDays(monday, -7), addDays(monday, -1)];
+  if (period === "30d") return [addDays(today, -29), today];
+  const first = today.slice(0, 8) + "01";
+  if (period === "month") { const nextFirst = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7), 1)).toISOString().slice(0, 10); return [first, addDays(nextFirst, -1)]; }
+  return [new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 2, 1)).toISOString().slice(0, 10), addDays(first, -1)];
+}

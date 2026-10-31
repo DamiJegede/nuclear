@@ -18,6 +18,7 @@ export const newImageKey = (folder: ImageFolder, id: string, ext: "png" | "jpg")
 
 /** The public address the API puts in front of image keys: PUBLIC_URL, else the address the request came in on (set per request in index.ts). */
 let publicBase = "";
+export const publicBaseUrl = () => publicBase;
 export const setPublicBase = (url: string) => { publicBase = url.replace(/\/+$/, ""); };
 /** The full URL of a stored key; null for no photo (or a value that is not a key). */
 /** A full URL for an API path (same base as image URLs). */

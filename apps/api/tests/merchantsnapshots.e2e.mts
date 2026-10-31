@@ -83,4 +83,18 @@ await q("update system set value = $1 where key = 'merchant_snapshot_day'", [add
 const mixed = await merchantDailySales(sql as any, M.a, addDays(today, -6), today);
 eq("with the marker three days back, days after it are read live and give the same answer", mixed.map((d) => d.sales), sd.map((d) => d.sales));
 
+
+// ---- the daily report: snapshot rows and the live definition give the same days; named periods
+const { merchantDailyReport, periodRange } = await import("../src/lib/merchantSnapshots.ts");
+const rangeFrom = addDays(today, -8);
+await q("update system set value = $1 where key = 'merchant_snapshot_day'", [addDays(today, -1)]);
+const repSnap = await merchantDailyReport(sql as any, M.a, rangeFrom, today);
+await q("delete from system where key = 'merchant_snapshot_day'");
+const repLive = await merchantDailyReport(sql as any, M.a, rangeFrom, today);
+eq("the report from snapshots equals the report computed live, day by day", repSnap, repLive);
+eq("the report has sales, refunds and tips for a known day (day -2: 2 payments, 1 refund of 400, tips 250 net)", [repSnap.find((d) => d.date === addDays(today, -2))!.payments, repSnap.find((d) => d.date === addDays(today, -2))!.refunded, repSnap.find((d) => d.date === addDays(today, -2))!.tips], [2, 400, 250]);
+eq("named periods: weeks run Monday to Sunday, months are whole calendar months", [periodRange("week", "2026-10-30"), periodRange("last_week", "2026-10-30"), periodRange("month", "2026-10-30"), periodRange("last_month", "2026-10-30"), periodRange("last_month", "2026-01-15"), periodRange("month", "2026-02-10")],
+  [["2026-10-26", "2026-11-01"], ["2026-10-19", "2026-10-25"], ["2026-10-01", "2026-10-31"], ["2026-09-01", "2026-09-30"], ["2025-12-01", "2025-12-31"], ["2026-02-01", "2026-02-28"]]);
+await q("insert into system (key, value) values ('merchant_snapshot_day', $1)", [addDays(today, -1)]);
+
 console.log(`\n${pass} passed, ${fail} failed`); await sql.end(); await adm.end(); process.exit(fail ? 1 : 0);

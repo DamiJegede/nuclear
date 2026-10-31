@@ -10,7 +10,8 @@ import { imageUrl } from "../lib/images";
 import { MERCHANT_TX_KINDS, merchantTransactions, type MerchantTxKind } from "../lib/merchantSupport";
 import { saveProfilePhoto } from "../lib/profilePhoto";
 import { PROGRAM_TZ, addDays, easternDate } from "../lib/dates";
-import { merchantDailySales } from "../lib/merchantSnapshots";
+import { receiptUrl } from "../lib/receiptLink";
+import { merchantDailyReport, merchantDailySales, periodRange, REPORT_PERIODS, type ReportPeriod } from "../lib/merchantSnapshots";
 import { soldToday } from "../lib/txn";
 import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
@@ -56,10 +57,21 @@ business.get("/sales", async (c) => {
   const period = c.req.query("period") ?? "week";
   if (!["week", "last_week", "30d"].includes(period)) return c.json({ error: "invalid_request" }, 400);
   const today = easternDate(new Date());
-  const monday = addDays(today, -((new Date(today + "T00:00:00Z").getUTCDay() + 6) % 7));
-  const [from, to] = period === "week" ? [monday, addDays(monday, 6)] : period === "last_week" ? [addDays(monday, -7), addDays(monday, -1)] : [addDays(today, -29), today];
+  const [from, to] = periodRange(period as ReportPeriod, today);
   const days = await merchantDailySales(sql, id, from, to);
   return c.json({ period, from, to, today, fees: 0, total: days.reduce((a, d) => a + d.sales, 0), days });
+});
+
+// ---- Daily report (sales, refunds, tips, tax) for a period, from the daily snapshots + the days since ----
+business.get("/report", async (c) => {
+  const period = c.req.query("period") ?? "week";
+  if (!(REPORT_PERIODS as readonly string[]).includes(period)) return c.json({ error: "invalid_request" }, 400);
+  const today = easternDate(new Date());
+  const [from, to] = periodRange(period as ReportPeriod, today);
+  const days = await merchantDailyReport(c.get("sql"), c.get("auth").accountId, from, to > today ? today : to);
+  const total = days.reduce((a, d) => ({ payments: a.payments + d.payments, sales: a.sales + d.sales, refunds: a.refunds + d.refunds, refunded: a.refunded + d.refunded, tips: a.tips + d.tips,
+    taxable: a.taxable + d.taxable, exempt: a.exempt + d.exempt, tax: a.tax + d.tax, tax_refunded: a.tax_refunded + d.tax_refunded }), { payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0 });
+  return c.json({ period, from, to: to > today ? today : to, today, fees: 0, total: { ...total, net: total.sales - total.refunded, net_tax: total.tax - total.tax_refunded }, days });
 });
 
 // ---- Overview: every number the portal's first page shows, in one request (they were ten, each repeating sign-in checks) ----
@@ -132,7 +144,9 @@ business.get("/transactions", async (c) => {
   }
   const page = await merchantTransactions(c.get("sql"), c.get("auth").accountId, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }, cursor === null);   // counts and totals only with the first page
   // A merchant sees its customers' names, never their account ids.
-  return c.json({ ...page, transactions: page.transactions.map((t) => ({ ...t, from_party: null, to_party: null })) });
+  // A completed payment carries the address of its receipt.
+  const transactions = await Promise.all(page.transactions.map(async (t) => ({ ...t, from_party: null, to_party: null, ...(t.type === "pay" && t.status === "completed" ? { receipt_url: await receiptUrl(c, t.id) } : {}) })));
+  return c.json({ ...page, transactions });
 });
 
 // ---- Profile --------------------------------------------------------------------------------------

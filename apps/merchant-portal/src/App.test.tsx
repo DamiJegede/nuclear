@@ -25,6 +25,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
     overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0, since: null, closed_out_at: null }, yesterday: { net: 0 }, payout_bank: null }),
+    report: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-10-30", today: "2026-10-30", fees: 0, total: { payments: 3, sales: 4640, refunds: 1, refunded: 432, tips: 300, taxable: 3000, exempt: 1400, tax: 247, tax_refunded: 33, net: 4208, net_tax: 214 }, days: [{ date: "2026-10-29", payments: 1, sales: 1546, refunds: 0, refunded: 0, tips: 0, taxable: 1197, exempt: 250, tax: 99, tax_refunded: 0 }, { date: "2026-10-30", payments: 2, sales: 3094, refunds: 1, refunded: 432, tips: 300, taxable: 1803, exempt: 1150, tax: 148, tax_refunded: 33 }] }),
     sales: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-11-01", today: "2026-10-30", fees: 0, total: 5000, days: [{ date: "2026-10-26", sales: 0, payments: 0 }, { date: "2026-10-27", sales: 2000, payments: 2 }, { date: "2026-10-28", sales: 0, payments: 0 }, { date: "2026-10-29", sales: 1000, payments: 1 }, { date: "2026-10-30", sales: 2000, payments: 1 }, { date: "2026-10-31", sales: 0, payments: 0 }, { date: "2026-11-01", sales: 0, payments: 0 }] }),
     payouts: vi.fn().mockResolvedValue([]),
     taxSettings: vi.fn().mockResolvedValue({ tax_rate: 0, tax_included: false }),
@@ -53,7 +54,7 @@ describe("sign-in", () => {
     expect(signInFn).toHaveBeenCalledWith("cafe@example.com", "correct horse battery");
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Refunds"]);
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Reports", "Refunds"]);
   });
 
   it("shows the sales chart: three figures, a custom tooltip and today's figure replaced by the hovered day's", async () => {
@@ -64,7 +65,7 @@ describe("sign-in", () => {
     expect(within(card).queryByText(/Good (morning|afternoon|evening)/)).toBeNull();
     expect(within(card).getByText("Processing fees")).toBeInTheDocument();
     expect(within(card).getByText("This week", { selector: ".sub" })).toBeInTheDocument();       // the period figure's label (the select also lists it)
-    expect(within(card).getAllByText("$50.00").length).toBe(1);             // the week's total, always shown
+    expect(await within(card).findByText("$50.00")).toBeInTheDocument();    // the week's total, always shown (waits for the data)
     expect(within(card).getByRole("group", { name: /Sales by day, 2026-10-26 to 2026-11-01/ })).toBeInTheDocument();
     await user.hover(within(card).getByLabelText(/Tue, Oct 27: \$20.00/));
     expect(within(card).getByText("Tue, Oct 27", { selector: ".sub" })).toBeInTheDocument();   // replaces "Today's sales"
@@ -394,6 +395,22 @@ describe("row menus", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete"]);
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("reports", () => {
+  it("shows net sales, sales tax collected and returned, tips and a row per day, newest first, and downloads a CSV", async () => {
+    const api = fakeApi();
+    const { user } = await signIn(api);
+    await user.click(within(screen.getByRole("navigation")).getByRole("link", { name: "Reports" }));
+    expect(await screen.findByRole("heading", { name: "Reports" })).toBeInTheDocument();
+    expect(await within(await screen.findByRole("article", { name: "Net sales" })).findByText("$42.08")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "Sales tax" })).getByText("$2.14")).toBeInTheDocument();
+    const rows = within(screen.getByRole("table")).getAllByRole("row").map((r) => r.textContent);
+    expect(rows[1]).toContain("Oct 30");
+    expect(rows[2]).toContain("Oct 29");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Period" }), "last_month");
+    expect(api.report).toHaveBeenLastCalledWith("last_month");
   });
 });
 
