@@ -96,11 +96,13 @@ export type Payout = { id: string; kind: "payout" | "collection"; amount: number
 export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
 export type Product = {
   id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
-  stock: number | null; active: boolean; status: "available" | "sold_out"; total_sold: number; sold_today: number; created_at: string;
+  stock: number | null; active: boolean; status: "available" | "sold_out"; total_sold: number; sold_today: number; created_at: string; taxable: boolean;
 };
-export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean };
+export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean; taxable: boolean };
+/** Sales tax settings: the rate in basis points (825 = 8.25%) and whether prices already include it. */
+export type TaxSettings = { tax_rate: number; tax_included: boolean };
 export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
-export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; served_by?: string | null; served_by_name?: string | null };
+export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; sales_tax?: number; served_by?: string | null; served_by_name?: string | null };
 
 // ---- Public calls (no session) ----------------------------------------------------------------------
 export const signIn = (email: string, password: string, base: string = API_URL) =>
@@ -168,6 +170,8 @@ export function createApi(token: string, base: string = API_URL) {
     sales: (period: SalesPeriod) => request<Sales>("GET", `/v1/business/sales?period=${period}`),
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
+    taxSettings: () => request<TaxSettings>("GET", "/v1/business/tax"),
+    saveTaxSettings: (input: TaxSettings) => request<TaxSettings>("PUT", "/v1/business/tax", input),
     profile: async () => (await request<{ profile: Profile | null }>("GET", "/v1/business/profile")).profile,
     saveProfile: async (input: ProfileInput) => (await request<{ profile: Profile }>("PUT", "/v1/business/profile", input)).profile,
     bank: async () => (await request<{ bank: PayoutBank | null }>("GET", "/v1/business/bank")).bank,

@@ -162,21 +162,25 @@ td.actions > button.ghost:only-child:hover:not(:disabled) { color: var(--text); 
 .tx-orig-line { margin: 0 0 4px; font-size: 14px; }
 .tx-orig-line:last-child { margin: 0; font-size: 12.5px; }
 
-/* Sales chart on the merchant Overview: a greeting, today's sales and fees, and one bar per day (today highlighted) */
+/* Sales chart on the merchant Overview: three figures (the day under the pointer, fees, the period) and one bar per day; a bar lights up on hover or focus */
 .sales-card { margin-bottom: 16px; padding: 28px 28px 20px; }
-.sales-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.sales-hello { color: var(--text); font-size: 26px; font-weight: 700; letter-spacing: -0.02em; text-transform: none; margin: 0; }
+.sales-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .sales-head select { height: 38px; width: auto; min-width: 140px; }
-.sales-figures { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 24px; }
+.sales-figures { display: flex; gap: 44px; flex-wrap: wrap; }
 .sales-figures .sub { margin: 0 0 4px; }
-.big.lg { font-size: 40px; letter-spacing: -0.03em; margin: 0; }
-.sales-trend { margin: 10px 0 0; color: var(--good); font-size: 14px; }
-.sales-bars { display: flex; align-items: flex-end; gap: 14px; height: 170px; margin-top: 22px; border-bottom: 1px solid var(--line); }
+.big.lg { font-size: 40px; letter-spacing: -0.03em; margin: 0; min-width: 4ch; }
+.sales-bars { display: flex; align-items: flex-end; gap: 14px; height: 190px; margin: 40px 0 34px; border-bottom: 1px solid var(--line); }
 .sales-bars.dense { gap: 4px; }
-.sales-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
-.sales-bar { width: 100%; max-width: 72px; background: color-mix(in srgb, var(--text) 16%, var(--surface)); border-radius: 6px 6px 0 0; transition: height .2s ease; }
-.sales-col.today .sales-bar { background: var(--yellow); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, transparent); }
+.sales-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; cursor: default; outline: none; }
+.sales-bar { width: 100%; max-width: 72px; background: color-mix(in srgb, var(--text) 16%, var(--surface)); border-radius: 6px 6px 0 0; transition: height .2s ease, background-color .12s ease; }
+.sales-bars:not(.hovering) .sales-col.today .sales-bar, .sales-col.active .sales-bar { background: var(--yellow); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, transparent); }
 .sales-col.future .sales-bar { opacity: .35; }
+.sales-col:focus-visible .sales-bar { outline: 2px solid var(--focus); outline-offset: 2px; }
 .sales-day { position: absolute; top: calc(100% + 8px); font-size: 13px; color: var(--muted); white-space: nowrap; }
-.sales-bars { margin-bottom: 34px; }
-@media (max-width: 640px) { .sales-card { padding: 20px 16px 14px; } .big.lg { font-size: 30px; } .sales-figures { gap: 24px; } }
+/* the tooltip is drawn by us, not the browser: a small inverted card above the bar */
+.sales-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none; white-space: nowrap;
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px; background: var(--pop-bg); color: var(--pop-text); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.sales-tip strong { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sales-col.edge-l .sales-tip { left: 0; transform: none; }
+.sales-col.edge-r .sales-tip { left: auto; right: 0; transform: none; }
+@media (max-width: 640px) { .sales-card { padding: 20px 16px 14px; } .big.lg { font-size: 28px; } .sales-figures { gap: 20px; } }

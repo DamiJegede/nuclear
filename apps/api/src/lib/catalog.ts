@@ -13,8 +13,14 @@ export type CartLine = {
   price: bigint;
   discount: bigint;
   quantity: number;
+  taxable: boolean;
+  /** Filled by the sales-tax rule (`app_tax`): the rate in basis points, whether the price already contains it, and this line's share in cents. */
+  taxRate?: number;
+  taxIncluded?: boolean;
+  tax?: number;
 };
-export type Cart = { lines: CartLine[]; total: bigint };
+/** `total` is what the items cost to pay: the tax is added to it unless the merchant's prices include it; `salesTax` is the tax either way. */
+export type Cart = { lines: CartLine[]; total: bigint; salesTax: bigint };
 
 type ProductRow = {
   id: string;
@@ -22,6 +28,7 @@ type ProductRow = {
   currency: string;
   price: bigint;
   discount: bigint;
+  taxable: boolean;
   stock: number | null;
   active: boolean;
   status: string;
@@ -46,7 +53,7 @@ function sellable(p: ProductRow, quantity: number): string | null {
 export async function quoteCart(q: Q, merchantId: string, items: ItemIn[]): Promise<{ cart: Cart } | CartError> {
   const want = merge(items);
   const rows = await q<ProductRow[]>`
-    select id, name, currency, price, discount, stock, active, status from products
+    select id, name, currency, price, discount, taxable, stock, active, status from products
      where account_id = ${merchantId} and id in ${q([...want.keys()])}`;
   const byId = new Map(rows.map((r) => [r.id, r]));
   const lines: CartLine[] = [];
@@ -57,10 +64,14 @@ export async function quoteCart(q: Q, merchantId: string, items: ItemIn[]): Prom
     const bad = sellable(p, quantity);
     if (bad) return { error: bad, status: 422 };
     total += (p.price - p.discount) * BigInt(quantity);
-    lines.push({ productId, name: p.name, price: p.price, discount: p.discount, quantity });
+    lines.push({ productId, name: p.name, price: p.price, discount: p.discount, quantity, taxable: p.taxable });
   }
   if (total <= 0n || total > MAX_AMOUNT) return { error: "invalid_total", status: 422 };
-  return { cart: { lines, total } };
+  // The same SQL rule the one-step payment uses (`app_tax`), so a checkout and a direct payment can never disagree on the tax.
+  const [t] = await q<{ r: { lines: { tax: number; tax_rate: number; tax_included: boolean }[]; sales_tax: number; total: number } }[]>`
+    select public.app_tax(${merchantId}, ${q.json(lines.map((l) => ({ unit_price: Number(l.price), discount: Number(l.discount), quantity: l.quantity, taxable: l.taxable })) as never)}) as r`;
+  t!.r.lines.forEach((tl, i) => { lines[i]!.tax = tl.tax; lines[i]!.taxRate = tl.tax_rate; lines[i]!.taxIncluded = tl.tax_included; });
+  return { cart: { lines, total: BigInt(t!.r.total), salesTax: BigInt(t!.r.sales_tax) } };
 }
 
 export type StockLine = { productId: string; quantity: number };

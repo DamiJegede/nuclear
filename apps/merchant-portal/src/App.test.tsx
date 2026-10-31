@@ -27,6 +27,8 @@ function fakeApi(over: Partial<Api> = {}): Api {
     overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0, since: null, closed_out_at: null }, yesterday: { net: 0 }, payout_bank: null }),
     sales: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-11-01", today: "2026-10-30", fees: 0, total: 5000, days: [{ date: "2026-10-26", sales: 0, payments: 0 }, { date: "2026-10-27", sales: 2000, payments: 2 }, { date: "2026-10-28", sales: 0, payments: 0 }, { date: "2026-10-29", sales: 1000, payments: 1 }, { date: "2026-10-30", sales: 2000, payments: 1 }, { date: "2026-10-31", sales: 0, payments: 0 }, { date: "2026-11-01", sales: 0, payments: 0 }] }),
     payouts: vi.fn().mockResolvedValue([]),
+    taxSettings: vi.fn().mockResolvedValue({ tax_rate: 0, tax_included: false }),
+    saveTaxSettings: vi.fn().mockResolvedValue({ tax_rate: 0, tax_included: false }),
     profile: vi.fn().mockResolvedValue({ legal_name: "Nero LLC", display_name: "Cafe Nero", tax_id_last4: null, address: null, city: "Brooklyn", state: "NY", post_code: null, country: "US", website: null }),
     categories: vi.fn().mockResolvedValue([]),
     products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }),
@@ -54,14 +56,23 @@ describe("sign-in", () => {
     expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Refunds"]);
   });
 
-  it("shows the sales chart: today's sales, zero processing fees, and loads another period on change", async () => {
+  it("shows the sales chart: three figures, a custom tooltip and today's figure replaced by the hovered day's", async () => {
     const api = fakeApi();
     const { user } = await signIn(api);
     const card = await screen.findByRole("article", { name: "Sales" });
     expect(await within(card).findByText("Today's sales")).toBeInTheDocument();
-    expect(within(card).getAllByText("$20.00").length).toBeGreaterThan(0);
-    expect(within(card).getByText("$0.00")).toBeInTheDocument();
-    expect(within(card).getByRole("img", { name: /Sales by day, 2026-10-26 to 2026-11-01: \$50.00 in total/ })).toBeInTheDocument();
+    expect(within(card).queryByText(/Good (morning|afternoon|evening)/)).toBeNull();
+    expect(within(card).getByText("Processing fees")).toBeInTheDocument();
+    expect(within(card).getByText("This week", { selector: ".sub" })).toBeInTheDocument();       // the period figure's label (the select also lists it)
+    expect(within(card).getAllByText("$50.00").length).toBe(1);             // the week's total, always shown
+    expect(within(card).getByRole("group", { name: /Sales by day, 2026-10-26 to 2026-11-01/ })).toBeInTheDocument();
+    await user.hover(within(card).getByLabelText(/Tue, Oct 27: \$20.00/));
+    expect(within(card).getByText("Tue, Oct 27", { selector: ".sub" })).toBeInTheDocument();   // replaces "Today's sales"
+    expect(card.querySelector(".sales-tip")).toHaveTextContent("Tue, Oct 27$20.00");
+    expect(card.querySelector(".sales-col.active")).not.toBeNull();
+    await user.unhover(within(card).getByLabelText(/Tue, Oct 27: \$20.00/));
+    expect(within(card).getByText("Today's sales")).toBeInTheDocument();
+    expect(card.querySelector(".sales-tip")).toBeNull();
     await user.selectOptions(within(card).getByRole("combobox", { name: "Period" }), "30d");
     expect(api.sales).toHaveBeenLastCalledWith("30d");
   });
@@ -210,7 +221,7 @@ describe("refunds, staff, orbs, profile", () => {
     await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
     await screen.findByText("Nero LLC");
     const titles = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(titles.slice(0, 4)).toEqual(["Business", "Payout Bank", "Business Details", "Business Documents"]);
+    expect(titles.slice(0, 4)).toEqual(["Business", "Payout Bank", "Business Details", "Sales Tax"]);
     expect(document.querySelectorAll(".two-col").length).toBe(1);
     expect(document.querySelector(".two-col")!.querySelectorAll(":scope > .card").length).toBe(2);
     // read-only by default: the facts are text, there are no inputs, and each card has its Edit button
@@ -318,7 +329,7 @@ describe("catalog", () => {
     await user.type(within(dlg).getByLabelText("Stock"), "1x2");
     expect(within(dlg).getByLabelText("Stock")).toHaveValue("12");
     await user.click(within(dlg).getByRole("button", { name: "Add Product" }));
-    expect(createProduct).toHaveBeenCalledWith({ name: "Muffin", price: 350, discount: 0, category_id: "c1", stock: 12, active: true });
+    expect(createProduct).toHaveBeenCalledWith({ name: "Muffin", price: 350, discount: 0, category_id: "c1", stock: 12, active: true, taxable: true });
   });
 
   it("products load a page at a time: the count, Load More, and a filter that asks the server", async () => {
@@ -383,6 +394,26 @@ describe("row menus", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete"]);
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("sales tax", () => {
+  it("shows the rate, saves it in basis points with the pricing mode, and refuses a rate over 30", async () => {
+    const saveTaxSettings = vi.fn().mockResolvedValue({ tax_rate: 825, tax_included: true });
+    const { user } = await signIn(fakeApi({ taxSettings: vi.fn().mockResolvedValue({ tax_rate: 0, tax_included: false }), saveTaxSettings }));
+    await user.click(within(await screen.findByRole("banner")).getByRole("link", { name: "Cafe Nero" }));
+    const tax = await screen.findByRole("heading", { name: "Sales Tax" });
+    expect(within(tax.closest(".card") as HTMLElement).getByText("No tax")).toBeInTheDocument();
+    await user.click(within(tax.closest(".card") as HTMLElement).getByRole("button", { name: "Edit" }));
+    const form = await screen.findByRole("form", { name: "Sales tax" });
+    await user.type(within(form).getByLabelText("Rate (%)"), "31");
+    await user.click(within(form).getByRole("button", { name: "Save Sales Tax" }));
+    expect(await within(form).findByText(/from 0 to 30/)).toBeInTheDocument();
+    await user.clear(within(form).getByLabelText("Rate (%)"));
+    await user.type(within(form).getByLabelText("Rate (%)"), "8.25");
+    await user.click(within(form).getByRole("switch", { name: "Prices include tax" }));
+    await user.click(within(form).getByRole("button", { name: "Save Sales Tax" }));
+    expect(saveTaxSettings).toHaveBeenCalledWith({ tax_rate: 825, tax_included: true });
   });
 });
 

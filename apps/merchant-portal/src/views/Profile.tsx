@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { ApiError, type Account, type Api, type BusinessDocument, type Device, type Payout, type PayoutBank as Bank, type Profile as BusinessProfile } from "../api";
+import { ApiError, type Account, type Api, type BusinessDocument, type Device, type Payout, type PayoutBank as Bank, type Profile as BusinessProfile, type TaxSettings } from "../api";
 import { money } from "../format";
 import { digitsOnly } from "../inputs";
 import { drop } from "../cache";
@@ -42,10 +42,61 @@ export function Profile({ api, account, onChanged, onError }: { api: Api; accoun
           <PayoutBank api={api} onError={onError} />
         </div>
         <BusinessDetails api={api} onError={onError} />
+        <SalesTax api={api} onError={onError} />
         <Documents api={api} onError={onError} />
       </div>
       <Sessions key={n} api={api} onError={onError} />
     </section>
+  );
+}
+
+/** Sales tax: one rate for the business, taxed items only, added on top or already in the prices. Orders keep the rate they were made with. */
+function SalesTax({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
+  const { data, retry } = useList<TaxSettings>(useCallback(() => api.taxSettings(), [api]), onError, "tax");
+  const [editing, setEditing] = useState(false);
+  const [rate, setRate] = useState<string | null>(null);
+  const [included, setIncluded] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const pct = (bp: number) => `${(bp / 100).toFixed(bp % 100 === 0 ? 0 : bp % 10 === 0 ? 1 : 2)}%`;
+  const rateText = rate ?? (data ? String(data.tax_rate / 100) : "");
+  const inc = included ?? data?.tax_included ?? false;
+  const toggle = () => { setEditing((e) => !e); setRate(null); setIncluded(null); setMsg(null); };
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault(); setMsg(null);
+    const v = rateText.trim() === "" ? 0 : Number(rateText);
+    const bp = Math.round(v * 100);
+    if (!/^\d{0,2}(\.\d{0,2})?$/.test(rateText.trim()) || Number.isNaN(v) || bp > 3000) return setMsg("Enter a rate from 0 to 30, with up to two decimals, like 8.25.");
+    setBusy(true);
+    try { await api.saveTaxSettings({ tax_rate: bp, tax_included: inc }); setEditing(false); setRate(null); setIncluded(null); retry(); }
+    catch (err) { onError(err); setMsg(err instanceof ApiError && err.code === "profile_required" ? "Save your business details first." : "Couldn't save the tax settings. Try again."); }
+    finally { setBusy(false); }
+  }
+  if (!data) return <div className="card"><h2>Sales Tax</h2><p className="muted" role="status">Loading…</p></div>;
+  return (
+    <EditCard title="Sales Tax" editing={editing} onToggle={toggle}>
+      {editing ? (
+        <form onSubmit={save} aria-label="Sales tax">
+          <div className="fields">
+            <label>Rate (%)<input inputMode="decimal" placeholder="8.25" value={rateText} onChange={(e) => setRate(e.target.value.replace(/[^0-9.]/g, ""))} /></label>
+            <label className="toggle-card wide">
+              <span className="toggle-text"><strong>Prices include tax</strong></span>
+              <input type="checkbox" role="switch" checked={inc} onChange={(e) => setIncluded(e.target.checked)} aria-label="Prices include tax" />
+              <span className="switch" aria-hidden />
+            </label>
+          </div>
+          <p className="muted note">Applies to products marked taxable. Orders already made keep the rate they were made with.</p>
+          {msg && <p className="error" role="alert">{msg}</p>}
+          <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save Sales Tax"}</button>
+        </form>
+      ) : (
+        <dl className="facts" aria-label="Sales tax">
+          <Fact label="Rate">{data.tax_rate > 0 ? pct(data.tax_rate) : "No tax"}</Fact>
+          <Fact label="Prices">{data.tax_rate > 0 ? (data.tax_included ? "Include tax" : "Tax is added at checkout") : ""}</Fact>
+        </dl>
+      )}
+    </EditCard>
   );
 }
 

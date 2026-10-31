@@ -33,6 +33,22 @@ business.use("*", requireSession, requireOwner, async (c, next) => {
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+// ---- Sales tax settings: the rate (basis points: 825 = 8.25%) and whether prices already include it. Needs the business profile first. ----
+business.get("/tax", async (c) => {
+  const [t] = await c.get("sql")<{ tax_rate: number; tax_included: boolean }[]>`select tax_rate, tax_included from businesses where account_id = ${c.get("auth").accountId}`;
+  return c.json({ tax_rate: t?.tax_rate ?? 0, tax_included: t?.tax_included ?? false });
+});
+business.put("/tax", async (c) => {
+  const b = z.object({ tax_rate: z.number().int().min(0).max(3000), tax_included: z.boolean() }).strict().safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
+  const { accountId } = c.get("auth");
+  const [t] = await c.get("sql")<{ tax_rate: number; tax_included: boolean }[]>`
+    update businesses set tax_rate = ${b.data.tax_rate}, tax_included = ${b.data.tax_included} where account_id = ${accountId} returning tax_rate, tax_included`;
+  if (!t) return c.json({ error: "profile_required" }, 409);
+  await customerLog(c, accountId, null, "business.tax_changed", { tax_rate: t.tax_rate, tax_included: t.tax_included }).catch(() => null);
+  return c.json(t);
+});
+
 // ---- Sales by day for the Overview chart: this week (Monday to Sunday), last week or the last 30 days, from the daily merchant snapshots + today live ----
 business.get("/sales", async (c) => {
   const sql = c.get("sql");
@@ -312,11 +328,11 @@ business.delete("/categories/:id", async (c) => {
 
 type ProductRow = {
   id: string; category_id: string | null; name: string; currency: string; price: bigint; photo: string | null; stock: number | null; active: boolean;
-  status: string; total_sold: bigint; sold_today: number; discount: bigint; created_at: Date;
+  status: string; total_sold: bigint; sold_today: number; discount: bigint; taxable: boolean; created_at: Date;
 };
-const PCOLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, ${soldToday} as sold_today, discount, created_at`;
+const PCOLS = `id, category_id, name, currency, price, photo, stock, active, status, total_sold, ${soldToday} as sold_today, discount, taxable, created_at`;
 const productJson = (p: ProductRow) => ({
-  id: p.id, category_id: p.category_id, name: p.name, currency: p.currency, price: Number(p.price), discount: Number(p.discount), effective_price: Number(p.price - p.discount),
+  id: p.id, category_id: p.category_id, name: p.name, currency: p.currency, price: Number(p.price), discount: Number(p.discount), effective_price: Number(p.price - p.discount), taxable: p.taxable,
   photo: imageUrl(p.photo), stock: p.stock, active: p.active, status: p.status, total_sold: Number(p.total_sold), sold_today: p.sold_today, created_at: p.created_at,
 });
 
@@ -347,6 +363,7 @@ const productBody = z.object({
   category_id: uuid.nullable(),
   stock: z.number().int().min(0).max(10_000_000).nullable(),   // null = not tracked
   active: z.boolean(),
+  taxable: z.boolean(),   // sales tax applies (default true)
 }).strict();
 
 // The category must be this business's own (404 otherwise); a discount cannot exceed the price.
@@ -357,15 +374,15 @@ async function checkCategory(c: any, categoryId: string | null | undefined): Pro
 }
 
 business.post("/products", async (c) => {
-  const b = productBody.partial({ discount: true, category_id: true, stock: true, active: true }).safeParse(await c.req.json().catch(() => null));
+  const b = productBody.partial({ discount: true, category_id: true, stock: true, active: true, taxable: true }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request", issues: b.error.flatten() }, 400);
   const d = b.data;
   if ((d.discount ?? 0) > d.price) return c.json({ error: "discount_exceeds_price" }, 422);
   const bad = await checkCategory(c, d.category_id); if (bad) return bad;
   const sql = c.get("sql");
   const [p] = await sql<ProductRow[]>`
-    insert into products (account_id, category_id, name, price, discount, stock, active)
-    values (${c.get("auth").accountId}, ${d.category_id ?? null}, ${d.name}, ${d.price}, ${d.discount ?? 0}, ${d.stock ?? null}, ${d.active ?? true})
+    insert into products (account_id, category_id, name, price, discount, stock, active, taxable)
+    values (${c.get("auth").accountId}, ${d.category_id ?? null}, ${d.name}, ${d.price}, ${d.discount ?? 0}, ${d.stock ?? null}, ${d.active ?? true}, ${d.taxable ?? true})
     returning ${sql.unsafe(PCOLS)}`;
   return c.json({ product: productJson(p!) }, 201);
 });
@@ -385,7 +402,7 @@ business.patch("/products/:id", async (c) => {
   const bad = d.category_id !== undefined ? await checkCategory(c, d.category_id) : null; if (bad) return bad;
   const [p] = await sql<ProductRow[]>`
     update products set name = ${d.name ?? cur.name}, price = ${price}, discount = ${discount},
-      category_id = ${d.category_id === undefined ? cur.category_id : d.category_id}, stock = ${d.stock === undefined ? cur.stock : d.stock}, active = ${d.active ?? cur.active}
+      category_id = ${d.category_id === undefined ? cur.category_id : d.category_id}, stock = ${d.stock === undefined ? cur.stock : d.stock}, active = ${d.active ?? cur.active}, taxable = ${d.taxable ?? cur.taxable}
      where id = ${id.data} and account_id = ${accountId} returning ${sql.unsafe(PCOLS)}`;
   return c.json({ product: productJson(p!) });
 });

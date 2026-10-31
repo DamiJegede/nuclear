@@ -95,7 +95,7 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
                 <tbody>
                   {rows.map((p) => (
                     <tr key={p.id}>
-                      <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}</span></span></th>
+                      <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}{p.taxable === false ? <span className="muted note"> Non-taxable</span> : null}</span></span></th>
                       <td>{catName(p.category_id)}</td>
                       <td className="num">{p.discount > 0 ? <><s className="muted">{money(p.price)}</s> {money(p.effective_price)}</> : money(p.price)}</td>
                       <td className="num">{p.stock === null ? "Untracked" : int(p.stock)}</td>
@@ -186,6 +186,7 @@ function ProductForm({ api, product, categories, defaultCategory, onSaved, onClo
   const [category, setCategory] = useState(product?.category_id ?? defaultCategory);
   const [stock, setStock] = useState(product?.stock === null || product?.stock === undefined ? "" : String(product.stock));
   const [active, setActive] = useState(product?.active ?? true);
+  const [taxable, setTaxable] = useState(product?.taxable ?? true);
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(product?.photo ?? null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -214,7 +215,7 @@ function ProductForm({ api, product, categories, defaultCategory, onSaved, onClo
     if (off > cents) return setError("The discount can't be more than the price.");
     setBusy(true);
     try {
-      const fields = { name: name.trim(), price: cents, discount: off, category_id: category || null, stock: qty, active };
+      const fields = { name: name.trim(), price: cents, discount: off, category_id: category || null, stock: qty, active, taxable };
       const saved = product ? await api.updateProduct(product.id, fields) : await api.createProduct(fields);
       if (photo) { try { await api.uploadProductPhoto(saved.id, photo); } catch (err) { onError(err); } }
       await onSaved();
@@ -250,6 +251,11 @@ function ProductForm({ api, product, categories, defaultCategory, onSaved, onClo
           <label className="toggle-card wide">
             <span className="toggle-text"><strong>Active (shown on terminals)</strong></span>
             <input type="checkbox" role="switch" checked={active} onChange={(e) => setActive(e.target.checked)} aria-label="Active" />
+            <span className="switch" aria-hidden />
+          </label>
+          <label className="toggle-card wide">
+            <span className="toggle-text"><strong>Sales tax applies</strong></span>
+            <input type="checkbox" role="switch" checked={taxable} onChange={(e) => setTaxable(e.target.checked)} aria-label="Taxable" />
             <span className="switch" aria-hidden />
           </label>
         </div>

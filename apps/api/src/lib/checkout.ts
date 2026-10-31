@@ -14,6 +14,12 @@ export type ItemSnapshot = {
   unit_price: number;
   discount: number;
   quantity: number;
+  /** The sales-tax rule as it was when the order was made (absent on orders before sales tax): the product's taxability, the rate in basis points,
+   *  whether the price contained it, and this line's share of the order's tax in cents. */
+  taxable?: boolean;
+  tax_rate?: number;
+  tax_included?: boolean;
+  tax?: number;
 };
 
 export type CheckoutRow = {
@@ -22,7 +28,10 @@ export type CheckoutRow = {
   terminal_id: string | null;
   reference: string | null;
   currency: string;
+  /** What the items cost to pay: the sales tax is in it (added on top, or already in the prices). The tip is separate. */
   total: bigint;
+  /** The sales tax charged (zero when none). */
+  sales_tax: bigint;
   items: ItemSnapshot[];
   /** open | paid | canceled | expired (expired is derived from expires_at). */
   status: string;
@@ -49,7 +58,7 @@ export type ItemRow = {
   refund_pending_quantity: number;
 };
 
-const CO_COLS = `id, account_id, terminal_id, reference, currency, total, items,
+const CO_COLS = `id, account_id, terminal_id, reference, currency, total, sales_tax, items,
   case when status = 'open' and expires_at is not null and expires_at <= now() then 'expired' else status end as status,
   expires_at, created_at, tip_amount, served_by, (select a.name from accounts a where a.id = served_by) as served_by_name`;
 
@@ -61,6 +70,10 @@ export const snapshotOf = (lines: CartLine[]): ItemSnapshot[] =>
     unit_price: Number(l.price),
     discount: Number(l.discount),
     quantity: l.quantity,
+    taxable: l.taxable,
+    tax_rate: l.taxRate ?? 0,
+    tax_included: l.taxIncluded ?? false,
+    tax: l.tax ?? 0,
   }));
 
 export async function insertCheckout(
@@ -70,6 +83,7 @@ export async function insertCheckout(
     terminalId: string | null;
     reference: string | null;
     total: bigint;
+    salesTax?: bigint;
     lines: CartLine[];
     expiresInSeconds: number | null;
     servedBy?: string | null;
@@ -78,8 +92,8 @@ export async function insertCheckout(
   },
 ): Promise<CheckoutRow> {
   const [c] = await tx<CheckoutRow[]>`
-    insert into checkouts (account_id, terminal_id, reference, total, items, expires_at, status, served_by)
-    values (${i.merchantId}, ${i.terminalId}, ${i.reference}, ${i.total.toString()}, ${tx.json(snapshotOf(i.lines) as never)},
+    insert into checkouts (account_id, terminal_id, reference, total, sales_tax, items, expires_at, status, served_by)
+    values (${i.merchantId}, ${i.terminalId}, ${i.reference}, ${i.total.toString()}, ${(i.salesTax ?? 0n).toString()}, ${tx.json(snapshotOf(i.lines) as never)},
             ${i.expiresInSeconds === null ? null : tx`now() + make_interval(secs => ${i.expiresInSeconds})`}, ${i.status ?? "open"}, ${i.servedBy ?? null})
     returning ${tx.unsafe(CO_COLS)}`;
   return c!;
@@ -176,6 +190,7 @@ export const checkoutJson = (c: CheckoutRow, items: ItemRow[]) => ({
   reference: c.reference,
   currency: c.currency,
   total: n(c.total),
+  sales_tax: n(c.sales_tax),
   terminal_id: c.terminal_id,
   tip_amount: n(c.tip_amount),
   served_by: c.served_by,

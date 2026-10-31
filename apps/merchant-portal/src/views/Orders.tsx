@@ -67,6 +67,7 @@ export function Orders({ api, onError }: { api: Api; onError: (e: unknown) => vo
                             <p className="tx-line">Order ID: <span className="tx-id">{c.id}</span>{c.served_by_name ? <> • Served by {c.served_by_name}</> : null}</p>
                             {c.items.length === 0 ? <p className="muted">A keyed-in amount with no items.</p>
                               : <ul className="order-items">{c.items.map((i) => <li key={i.id}><span>{i.quantity} × {i.name}</span><span className="muted">{money(i.net_price)} each{i.refunded_quantity > 0 ? ` · ${i.refunded_quantity} refunded` : ""}</span></li>)}</ul>}
+                            {c.sales_tax ? <p className="order-tip-total"><span>Sales tax</span><strong>{money(c.sales_tax)}</strong></p> : null}
                             {c.tip_amount ? (
                               <div className="order-tip">
                                 <p className="order-tip-total"><span>Tip</span><strong>{money(c.tip_amount)}</strong></p>

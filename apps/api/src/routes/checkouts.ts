@@ -39,12 +39,14 @@ terminalCheckouts.post("/", async (c) => {
   // Items are priced from the live catalogue now and snapshotted; an amount-only checkout has none.
   let lines: CartLine[] = [];
   let total = b.amount ?? 0n;
+  let salesTax = 0n;
   if (b.items) {
     const q = await quoteCart(sql, accountId, b.items);
     if ("error" in q) return c.json({ error: q.error }, q.status);
     if (b.amount !== undefined && b.amount !== q.cart.total) return c.json({ error: "amount_mismatch" }, 400);
     lines = q.cart.lines;
     total = q.cart.total;
+    salesTax = q.cart.salesTax;
   }
 
   // Who is serving this order: the request (a staff id) or the terminal's active staff member.
@@ -60,6 +62,7 @@ terminalCheckouts.post("/", async (c) => {
       terminalId,
       reference: b.reference ?? null,
       total,
+      salesTax,
       lines,
       expiresInSeconds: b.expires_in ?? null,
     }),

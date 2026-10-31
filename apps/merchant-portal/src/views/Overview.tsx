@@ -60,7 +60,7 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
         </div>
       )}
 
-      <SalesChart api={api} name={account.name} onError={onError} />
+      <SalesChart api={api} onError={onError} />
 
       <div className="grid three">
         <article className="card linkcard profile-tile" aria-label="Profile">
