@@ -100,7 +100,7 @@ business.get("/transactions", async (c) => {
     if (!ts || !id || Number.isNaN(Date.parse(ts)) || !uuid.safeParse(id).success) return c.json({ error: "invalid_request" }, 400);
     cursor = { ts, id };
   }
-  const page = await merchantTransactions(c.get("sql"), c.get("auth").accountId, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null });
+  const page = await merchantTransactions(c.get("sql"), c.get("auth").accountId, q.data.kind, q.data.limit, cursor, { from: q.data.from ?? null, to: q.data.to ?? null }, cursor === null);   // counts and totals only with the first page
   // A merchant sees its customers' names, never their account ids.
   return c.json({ ...page, transactions: page.transactions.map((t) => ({ ...t, from_party: null, to_party: null })) });
 });
@@ -411,6 +411,28 @@ business.get("/checkouts", async (c) => {
 });
 
 // Cancel an order that is still open (a paid one cannot be cancelled: refund it instead).
+// Who a paid order's tip went to (net of what refunds took back). Read when an order is opened, not with the list: the list carries only the tip total.
+business.get("/checkouts/:id/tips", async (c) => {
+  const id = uuid.safeParse(c.req.param("id"));
+  if (!id.success) return c.json({ error: "not_found" }, 404);
+  const { accountId } = c.get("auth");
+  const sql = c.get("sql");
+  const [co] = await sql<{ id: string }[]>`select id from checkouts where id = ${id.data} and account_id = ${accountId}`;
+  if (!co) return c.json({ error: "not_found" }, 404);
+  const rows = await sql<{ staff_account_id: string; name: string; amount: bigint }[]>`
+    select t.staff_account_id, a.name, sum(t.amount) as amount
+      from tips t join transactions x on x.id = t.transaction_id join accounts a on a.id = t.staff_account_id
+     where t.account_id = ${accountId} and x.checkout_id = ${id.data}
+     group by t.staff_account_id, a.name having sum(t.amount) <> 0
+     order by sum(t.amount) desc, a.name, t.staff_account_id`;
+  const [g] = await sql<{ given: bigint }[]>`
+    select coalesce(sum(t.amount) filter (where t.amount > 0), 0) as given
+      from tips t join transactions x on x.id = t.transaction_id where t.account_id = ${accountId} and x.checkout_id = ${id.data}`;
+  const total = rows.reduce((s, r) => s + Number(r.amount), 0);
+  // `given` is the tip as paid; `total` what the people keep after refunds; the difference was returned to the customer
+  return c.json({ tips: rows.map((r) => ({ staff_account_id: r.staff_account_id, name: r.name, amount: n(r.amount) })), total, given: Number(g!.given), returned: Number(g!.given) - total });
+});
+
 business.post("/checkouts/:id/cancel", async (c) => {
   const id = uuid.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: "not_found" }, 404);

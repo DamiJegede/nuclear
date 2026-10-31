@@ -1,0 +1,163 @@
+/*
+ * One look for the three portals, taken from the website (apps/website): warm paper, ink, the yellow and orange accents, Rethink Sans.
+ * Each portal imports this AFTER its own styles.css (see its main.tsx), so these tokens and refinements win. It changes the look only: class
+ * names and markup stay as they are (the tests find things by role and text), and the "selected / hovered" look is still the opposite of the page.
+ * Rethink Sans is loaded by a <link> in each index.html.
+ */
+:root {
+  --bg: #f7f6ef; --surface: #fdfdf8; --text: #20221f; --muted: #71736a; --line: #dddfd3;
+  --accent: #20221f; --accent-text: #ffffff; --focus: #f45935;
+  --yellow: #e9ff52; --orange: #f45935;
+  --pop-bg: #20221f; --pop-text: #f7f6ef; --pop-muted: #b9bbae; --pop-soft: #353930;
+  --good-bg: #eaf6c4; --good: #3a5a05; --bad-bg: #fde8e1; --bad: #b0341b; --warn: #8a5a00; --warn-bg: #fff2cf;
+  --fail-row: #fdf0ea; --fail-text: #b0341b; --refund-row: #eee7fb; --refund-done-row: #f5f1fc; --fund-row: #f0f7da;
+  --radius: 16px; --shadow: none;
+  --font: "Rethink Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161714; --surface: #1f211d; --text: #f1f0e8; --muted: #a2a498; --line: #34362f;
+    --accent: #e9ff52; --accent-text: #20221f;
+    --pop-bg: #f7f6ef; --pop-text: #20221f; --pop-muted: #71736a; --pop-soft: #e7e6dc;
+    --good-bg: #27310f; --good: #c7e86a; --bad-bg: #3a1d16; --bad: #ff9d86; --warn: #e3b24a; --warn-bg: #3a3012;
+    --fail-row: #2c1b17; --fail-text: #ff9d86; --refund-row: #2b2240; --refund-done-row: #231d33; --fund-row: #1f2814;
+  }
+}
+html { background: var(--bg); }
+body { font-family: var(--font); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button, input, select, textarea { font-family: inherit; }
+
+/* Type */
+h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+h2 { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; }
+.big { font-weight: 600; letter-spacing: -0.02em; }
+.big.xl { font-size: 56px; letter-spacing: -0.03em; }
+.num, .big, .kind-count, td.num { font-variant-numeric: tabular-nums; }
+.sub, .hint, .note { color: var(--muted); }
+.muted { color: var(--muted); }
+
+/* Focus and links */
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button.link { color: var(--text); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+button.link:hover { color: var(--orange); }
+a.row-link:hover { text-decoration-thickness: 1px; text-underline-offset: 3px; }
+
+/* Buttons: ink, like "Go Nuclear" on the site; ghost = outline */
+button { border-radius: 8px; padding: 10px 18px; font-weight: 600; transition: transform 0.15s, box-shadow 0.15s, background 0.15s, border-color 0.15s, color 0.15s; }
+button:where(:not(.tab, .subtab, .cat, .photo-btn, .link, .icon-btn)):hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 3px 0 rgba(32, 34, 31, 0.14); }
+button:active:not(:disabled) { transform: none; box-shadow: none; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid color-mix(in srgb, var(--text) 25%, var(--line)); }
+button.ghost:hover:not(:disabled) { border-color: var(--text); }
+button.small { padding: 4px 12px; }
+.icon-btn { padding: 0; border-radius: 8px; }
+
+/* Controls */
+input, select, textarea { border-radius: 10px; border-color: color-mix(in srgb, var(--text) 18%, var(--line)); background-color: var(--surface); }
+input:not([type="checkbox"]), select { height: 42px; }
+input:focus, select:focus, textarea:focus { border-color: var(--text); }
+label { color: var(--muted); font-weight: 500; }
+
+/* Header: paper with a hairline, the yellow pill for the page you are on */
+.topbar { padding: 14px 32px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; gap: 8px; }
+.brand .muted { font-weight: 500; font-size: 14px; letter-spacing: 0; }
+.brand .mark { font-size: 0; color: transparent; }
+.brand .mark::before { content: "✳"; font-size: 22px; line-height: 1; color: var(--orange); }
+.topbar nav { gap: 2px; }
+.tab { border-radius: 99px; padding: 8px 14px; font-weight: 600; color: var(--muted); transition: background 0.15s, color 0.15s; }
+a.tab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tab.active, a.tab.active:hover { background: var(--yellow); color: #20221f; }
+.who .tab { padding: 8px 12px; }
+
+/* Page */
+main { max-width: 1120px; padding: 36px 24px 96px; }
+.head { margin-bottom: 22px; }
+.card { background: var(--surface); border: 1px solid var(--line); box-shadow: none; padding: 20px; }
+.card.flush { padding: 0; }
+.grid, .grid.three { gap: 14px; }
+.banner { border-radius: var(--radius); }
+.notice { border-radius: 10px; }
+
+/* Tables */
+th, td { padding: 12px 10px; border-bottom-color: var(--line); }
+th:first-child, td:first-child { padding-left: 16px; } th:last-child, td:last-child { padding-right: 16px; }
+table button { padding: 5px 10px; font-size: 13px; }
+td, th { font-size: 14px; }
+table select { height: 36px; }
+thead th { font-size: 11.5px; letter-spacing: 0.09em; font-weight: 600; padding-top: 14px; padding-bottom: 12px; }
+tbody th { font-weight: 600; }
+tr.total > * { background: color-mix(in srgb, var(--text) 4%, transparent); }
+tr.fail-row { background: var(--fail-row); } tr.refund-row { background: var(--refund-row); } tr.refund-done-row { background: var(--refund-done-row); } tr.fund-row { background: var(--fund-row); }
+.fail-reason { color: var(--fail-text); }
+
+/* Status pills */
+.pill { border: 0; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; padding: 3px 10px; }
+.pill.available { background: var(--good-bg); color: var(--good); }
+.pill.pending, .pill.preorder { background: var(--warn-bg); color: var(--warn); }
+.pill.closed { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--muted); }
+.pill.via { color: var(--muted); }
+.subtab-n { border: 0; background: color-mix(in srgb, var(--text) 8%, transparent); }
+
+/* Cards that are choices or links keep their inverted hover; softer corners */
+.choice, .toggle-card, .role-option, .model-card, .dropzone { border-color: color-mix(in srgb, var(--text) 14%, var(--line)); }
+.linkcard:hover .tile-rule, .linkcard:focus-within .tile-rule { border-top-color: var(--yellow); }
+.tile-rule { border-top-color: var(--line); }
+.stat-value, .kind-count { letter-spacing: -0.02em; }
+.avatar-initials { background: color-mix(in srgb, var(--text) 7%, transparent); }
+
+/* Sub-tabs */
+.tabbar { border-bottom-color: var(--line); }
+.subtab.active { border-bottom-color: var(--orange); }
+
+/* Modals and sign-in */
+.modal-backdrop { background: rgba(32, 34, 31, 0.5); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.modal { border-radius: 20px; padding: 28px; border-color: var(--line); box-shadow: 0 24px 60px rgba(32, 34, 31, 0.22); }
+.modal h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.login-card { padding: 32px; border-radius: 20px; gap: 10px; }
+.login-card h1 { font-size: 24px; margin-bottom: 6px; }
+.brand.big { font-size: 24px; margin-bottom: 18px; }
+.brand.big .mark::before { font-size: 28px; }
+.below { color: var(--muted); }
+
+/* Money and success */
+.amount-in, .ok { color: var(--good); }
+.error { color: var(--bad); }
+.switch { background: color-mix(in srgb, var(--text) 18%, var(--line)); }
+
+/* Stacked cards (a page with several tables) get air between them */
+section > .card + .card, section > .card.flush + .card.flush, .stack > .card + .card { margin-top: 16px; }
+.catalog { grid-template-columns: 216px minmax(0, 1fr); }
+
+/* The "⋯" row menu (merchant portal RowMenu): one quiet button, a small floating panel */
+.menu-btn { width: 34px; height: 34px; padding: 0; display: inline-grid; place-items: center; border-radius: 10px; color: var(--muted); border-color: transparent; background: transparent; }
+.menu-btn:hover:not(:disabled), .menu-btn[aria-expanded="true"] { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); border-color: transparent; }
+.menu-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.cat-row .menu-btn { opacity: 0; } .cat-row:hover .menu-btn, .cat-row:focus-within .menu-btn, .cat-row .menu-btn[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .cat-row .menu-btn { opacity: 1; } }
+.menu { position: fixed; z-index: 60; min-width: 184px; padding: 6px; display: grid; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 40px rgba(32, 34, 31, 0.18); }
+.menu button { width: 100%; text-align: left; background: transparent; color: var(--text); border: 0; border-radius: 8px; padding: 9px 12px; font-size: 14px; font-weight: 500; box-shadow: none; }
+.menu button:hover, .menu button:focus-visible { background: color-mix(in srgb, var(--text) 7%, transparent); transform: none; box-shadow: none; outline: none; }
+.menu button.danger { color: var(--bad); }
+.menu button.danger:hover, .menu button.danger:focus-visible { background: var(--bad-bg); }
+td.actions { width: 1%; }
+
+/* Polish: single actions in a table row are quiet text buttons, empty and loading states are centred, the header's Sign Out is smaller */
+td.actions > button.ghost:only-child { border-color: transparent; background: transparent; color: var(--muted); }
+td.actions > button.ghost:only-child:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); box-shadow: none; transform: none; }
+.card > p.pad:only-child, .card.flush > p.pad:only-child { text-align: center; padding: 44px 16px; }
+.who button.ghost { padding: 8px 16px; }
+
+/* An opened order: room above and around, a quiet tip block under the items */
+.order-detail { padding: 18px 0 20px; }
+.order-detail .tx-line { padding: 0 0 10px; }
+.order-detail .order-items { margin: 0 0 4px; }
+.order-tip { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); max-width: 520px; }
+.order-tip-total { display: flex; justify-content: space-between; gap: 16px; margin: 0 0 6px; }
+.order-tip .order-items { margin: 0; }
+.order-tip .order-items li { color: var(--muted); }
+
+/* A refund's opened row shows the payment it refunds in its own small card */
+.tx-orig { margin: 8px 0 4px; padding: 12px 14px; max-width: 640px; background: color-mix(in srgb, var(--surface) 70%, transparent); border: 1px solid var(--line); border-radius: 12px; }
+.tx-orig-title { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.tx-orig-line { margin: 0 0 4px; font-size: 14px; }
+.tx-orig-line:last-child { margin: 0; font-size: 12.5px; }

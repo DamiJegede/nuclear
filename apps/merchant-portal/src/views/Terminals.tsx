@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { RefreshButton } from "./RefreshButton";
+import { RowMenu } from "./RowMenu";
 import { ApiError, type Api, type Terminal } from "../api";
 import { usePageTitle } from "../title";
 import { useList, when } from "../useList";
@@ -51,11 +52,13 @@ export function Terminals({ api, onError }: { api: Api; onError: (e: unknown) =>
                     <td><span className={`pill ${t.allow_refunds ? "available" : "pending"}`}>{t.allow_refunds ? "allowed" : "needs approval"}</span></td>
                     <td>{t.orb ? <>{t.orb.model} <span className="muted note">{t.orb.uid} · v{t.orb.software}</span></> : <span className="muted">None paired</span>}</td>
                     <td className="when">{when(t.created_at)}</td>
-                    <td className="actions row-actions">
-                      <button type="button" className="ghost" onClick={() => setForm(t)}>Edit</button>
-                      <button type="button" className="ghost" onClick={() => (t.orb ? (setError(null), setAction({ t, kind: "unpair" })) : setOrbFor(t))}>{t.orb ? "Unpair Orb" : "Pair Orb"}</button>
-                      <button type="button" className="ghost" onClick={() => { setError(null); setAction({ t, kind: "session" }); }}>New Session</button>
-                      <button type="button" className="ghost" onClick={() => { setError(null); setAction({ t, kind: "revoke" }); }}>Sign Out</button>
+                    <td className="actions">
+                      <RowMenu label={`Actions for ${t.name}`} items={[
+                        { label: "Edit", onSelect: () => setForm(t) },
+                        { label: t.orb ? "Unpair Orb" : "Pair Orb", onSelect: () => (t.orb ? (setError(null), setAction({ t, kind: "unpair" })) : setOrbFor(t)) },
+                        { label: "New Session", onSelect: () => { setError(null); setAction({ t, kind: "session" }); } },
+                        { label: "Sign Out", danger: true, onSelect: () => { setError(null); setAction({ t, kind: "revoke" }); } },
+                      ]} />
                     </td>
                   </tr>
                 ))}

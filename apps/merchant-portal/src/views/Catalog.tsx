@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { RefreshButton } from "./RefreshButton";
+import { RowMenu } from "./RowMenu";
 import { ApiError, type Api, type Category, type Product } from "../api";
 import { dollarsToCents, int, money } from "../format";
 import { decimalOnly, digitsOnly } from "../inputs";
@@ -77,8 +78,7 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
             {data.categories.map((c) => (
               <li key={c.id} className="cat-row">
                 <button type="button" className={filter === c.id ? "cat active" : "cat"} onClick={() => setFilter(c.id)}>{c.name} <span className="subtab-n">{c.products}</span></button>
-                <button type="button" className="ghost small" aria-label={`Rename ${c.name}`} onClick={() => setCatForm(c)}>Edit</button>
-                <button type="button" className="ghost small" aria-label={`Delete ${c.name}`} onClick={() => { setError(null); setCatRemoving(c); }}>Delete</button>
+                <RowMenu label={`Actions for ${c.name}`} items={[{ label: "Rename", onSelect: () => setCatForm(c) }, { label: "Delete", danger: true, onSelect: () => { setError(null); setCatRemoving(c); } }]} />
               </li>
             ))}
           </ul>
@@ -102,10 +102,12 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
                       <td className="num">{int(p.sold_today)}</td>
                       <td className="num">{int(p.total_sold)}</td>
                       <td><span className={`pill ${!p.active ? "closed" : p.status === "sold_out" ? "pending" : "available"}`}>{!p.active ? "inactive" : p.status === "sold_out" ? "sold out" : "active"}</span></td>
-                      <td className="actions row-actions">
-                        <button type="button" className="ghost" onClick={() => void toggle(p)}>{p.active ? "Deactivate" : "Activate"}</button>
-                        <button type="button" className="ghost" onClick={() => setForm(p)}>Edit</button>
-                        <button type="button" className="ghost" onClick={() => { setError(null); setRemoving(p); }}>Delete</button>
+                      <td className="actions">
+                        <RowMenu label={`Actions for ${p.name}`} items={[
+                          { label: p.active ? "Deactivate" : "Activate", onSelect: () => void toggle(p) },
+                          { label: "Edit", onSelect: () => setForm(p) },
+                          { label: "Delete", danger: true, onSelect: () => { setError(null); setRemoving(p); } },
+                        ]} />
                       </td>
                     </tr>
                   ))}

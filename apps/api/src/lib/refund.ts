@@ -52,11 +52,11 @@ export type RefundInput = {
 
 export type RefundOutcome =
   | { kind: "ok" | "declined" | "pending"; row: RefundRow; replayed: boolean; remaining: bigint }
-  | { kind: "error"; status: 404 | 409 | 422; error: string };
+  | { kind: "error"; status: 404 | 409 | 422; error: string; max?: number; remaining?: number };
 
 type Answer =
   | { kind: "ok" | "declined" | "pending"; replayed: boolean; remaining: number; row: Record<string, unknown> }
-  | { kind: "error"; status: 404 | 409 | 422; error: string };
+  | { kind: "error"; status: 404 | 409 | 422; error: string; max?: number; remaining?: number };
 
 export const refundIdem = (merchantAccountId: string, key: string) => `refund:${merchantAccountId}:${key}`;
 

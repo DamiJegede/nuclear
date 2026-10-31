@@ -121,23 +121,56 @@ export const MERCHANT_TX_KINDS: MerchantTxKind[] = ["all", "payments", "refunds"
 
 /** The merchant's payments and refunds, newest first, with counts per filter and the completed totals. */
 export async function merchantTransactions(
-  sql: Sql, id: string, kind: MerchantTxKind, limit: number, cursor: { ts: string; id: string } | null, range: DayRange,
+  sql: Sql, id: string, kind: MerchantTxKind, limit: number, cursor: { ts: string; id: string } | null, range: DayRange, withTotals = true,
 ) {
-  const mine = sql`((t.to_account_id = ${id} and t.type = 'pay') or (t.from_account_id = ${id} and t.type = 'refund'))`;
-  const filter =
-    kind === "payments" ? sql`and t.type = 'pay'`
-    : kind === "refunds" ? sql`and t.type = 'refund' and t.status <> 'pending'`
-    : kind === "pending" ? sql`and t.type = 'refund' and t.status = 'pending'`
-    : sql``;
-  const inRange = sql`
-    ${range.from ? sql`and t."timestamp" >= (${range.from}::text::date)::timestamp at time zone ${PROGRAM_TZ}` : sql``}
-    ${range.to ? sql`and t."timestamp" < ((${range.to}::text::date + 1)::timestamp at time zone ${PROGRAM_TZ})` : sql``}`;
+  // Index-driven: each source (payments into the merchant's wallets, refunds out of them, and the refund requests still open or rejected) is read in its own
+  // index order and stops after `limit + 1` rows, so a page costs the same however long the merchant's history is. The three are merged and cut again.
+  const wallets = sql`(select w.id from wallets w where w.account_id = ${id})`; // the aggregate below
+  const wantPay = kind === "all" || kind === "payments", wantRefund = kind === "all" || kind === "refunds", wantPending = kind === "all" || kind === "pending";
+  const tRange = sql`
+    ${range.from ? sql`and t.created_at >= (${range.from}::text::date)::timestamp at time zone ${PROGRAM_TZ}` : sql``}
+    ${range.to ? sql`and t.created_at < ((${range.to}::text::date + 1)::timestamp at time zone ${PROGRAM_TZ})` : sql``}`;
+  const rRange = sql`
+    ${range.from ? sql`and r.created_at >= (${range.from}::text::date)::timestamp at time zone ${PROGRAM_TZ}` : sql``}
+    ${range.to ? sql`and r.created_at < ((${range.to}::text::date + 1)::timestamp at time zone ${PROGRAM_TZ})` : sql``}`;
+  const tCursor = cursor ? sql`and (t.created_at, t.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``;
+  const rCursor = cursor ? sql`and (r.created_at, r.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``;
+  // a transaction as the old `txn` view reported it (the system wallets are no account, a declined row is `failed`)
+  const tCols = sql`t.id, t.type, case t.status when 'declined' then 'failed' else t.status end as status, t.status_code, t.amount, t.created_at as "timestamp",
+        t.tag_id, t.pass_id, t.reference, t.terminal_id, t.related_id as related_transaction_id,
+        case when fw.type = 'system' then null else fw.account_id end as from_account_id, case when tw.type = 'system' then null else tw.account_id end as to_account_id,
+        case when t.type = 'refund' and t.meta ? 'approved' then t.account_id end as approved_by_account_id, t.meta ->> 'provider_reference' as provider_reference, t.checkout_id`;
   const rows = await sql<{
     id: string; type: string; status: string; status_code: string | null; amount: bigint; ts: Date; ts_key: string;
     via: string | null; reference: string | null; terminal: string | null; customer: string | null; approver: string | null;
     related: string | null; from_name: string | null; to_name: string | null; tip: bigint | null; served_by: string | null;
+    orig_ts: Date | null; orig_amount: bigint | null; orig_tip: bigint | null; orig_served: string | null; orig_via: string | null; orig_reference: string | null;
     from_id: string | null; from_type: string | null; from_photo: string | null; to_id: string | null; to_type: string | null; to_photo: string | null;
   }[]>`
+    -- Page first, then join: the 20 rows are found and ordered on their own, so the lookups below (terminal, accounts, order, original payment) run for the
+    -- rows shown, never for every row of the period.
+    with pg as (
+      select * from (
+        (select x.* from wallets mw cross join lateral (
+          select ${tCols} from transactions t join wallets fw on fw.id = t.from_wallet_id join wallets tw on tw.id = t.to_wallet_id
+           where ${wantPay} and t.type = 'pay' and t.to_wallet_id = mw.id ${tRange} ${tCursor}
+           order by t.created_at desc, t.id desc limit ${limit + 1}) x
+          where mw.account_id = ${id})
+        union all
+        (select x.* from wallets mw cross join lateral (
+          select ${tCols} from transactions t join wallets fw on fw.id = t.from_wallet_id join wallets tw on tw.id = t.to_wallet_id
+           where ${wantRefund} and t.type = 'refund' and t.from_wallet_id = mw.id ${tRange} ${tCursor}
+           order by t.created_at desc, t.id desc limit ${limit + 1}) x
+          where mw.account_id = ${id})
+        union all
+        (select r.id, 'refund'::text, case r.status when 'pending' then 'pending' else 'failed' end, case r.status when 'pending' then 'awaiting_approval' else 'rejected' end,
+                r.amount, r.created_at, null::uuid, null::uuid, r.reference, r.terminal_id, r.pay_transaction_id,
+                r.merchant_account_id, pw.account_id, null::uuid, null::text, pay.checkout_id
+           from refunds r join transactions pay on pay.id = r.pay_transaction_id join wallets pw on pw.id = pay.from_wallet_id
+          where r.merchant_account_id = ${id} and r.status in ('pending', 'rejected')
+            and ((r.status = 'pending' and ${wantPending}) or (r.status = 'rejected' and ${wantRefund})) ${rRange} ${rCursor}
+          order by r.created_at desc, r.id desc limit ${limit + 1})
+      ) u order by u."timestamp" desc, u.id desc limit ${limit + 1})
     select t.id, t.type, t.status, t.status_code, t.amount, t."timestamp" as ts,
            to_char(t."timestamp" at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as ts_key,
            case when t.type = 'pay' and t.tag_id is not null then 'tap' when t.type = 'pay' and t.pass_id is not null then 'pass' when t.type = 'pay' then 'app' end as via,
@@ -147,38 +180,49 @@ export async function merchantTransactions(
            t.related_transaction_id as related,
            fa.name as from_name, ta.name as to_name,
            case when t.type = 'pay' and t.status = 'completed' then co.tip_amount end as tip, sv.name as served_by,
+           op.created_at as orig_ts, op.amount as orig_amount, oc.tip_amount as orig_tip, osv.name as orig_served, oc.reference as orig_reference,
+           case when op.tag_id is not null then 'tap' when op.pass_id is not null then 'pass' when op.id is not null then 'app' end as orig_via,
            fa.id as from_id, fa.type as from_type, fa.photo as from_photo, ta.id as to_id, ta.type as to_type, ta.photo as to_photo
-      from txn t
+      from pg t
       left join terminals tm on tm.id = t.terminal_id
       left join accounts fa on fa.id = t.from_account_id
       left join accounts ta on ta.id = t.to_account_id
       left join accounts ap on ap.id = t.approved_by_account_id
       left join checkouts co on co.id = t.checkout_id and t.type = 'pay'
       left join accounts sv on sv.id = co.served_by
-     where ${mine} ${filter} ${inRange}
-       ${cursor ? sql`and (t."timestamp", t.id) < (${cursor.ts}::text::timestamptz, ${cursor.id}::uuid)` : sql``}
-     order by t."timestamp" desc, t.id desc
-     limit ${limit + 1}`;
+      left join transactions op on op.id = t.related_transaction_id and t.type = 'refund'
+      left join checkouts oc on oc.id = op.checkout_id
+      left join accounts osv on osv.id = oc.served_by
+     order by t."timestamp" desc, t.id desc`;
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
 
-  const [c] = await sql<Record<string, number>[]>`
+  // Counts per filter and the completed totals in ONE pass over the period (skipped for the pages after the first: the client already has them).
+  const [agg] = withTotals ? await sql<{ all: number; payments: number; refunds: number; pending: number; pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint }[]>`
     select count(*)::int as "all",
-           (count(*) filter (where t.type = 'pay'))::int as payments,
-           (count(*) filter (where t.type = 'refund' and t.status <> 'pending'))::int as refunds,
-           (count(*) filter (where t.type = 'refund' and t.status = 'pending'))::int as pending
-      from txn t where ${mine} ${inRange}`;
-  const [tot] = await sql<{ pay_n: number; pay_v: bigint; ref_n: number; ref_v: bigint }[]>`
-    select (count(*) filter (where t.type = 'pay'))::int as pay_n, coalesce(sum(t.amount) filter (where t.type = 'pay'), 0) as pay_v,
-           (count(*) filter (where t.type = 'refund'))::int as ref_n, coalesce(sum(t.amount) filter (where t.type = 'refund'), 0) as ref_v
-      from txn t where t.status = 'completed' and ${mine} ${inRange}`;
+           (count(*) filter (where kind = 'pay'))::int as payments,
+           (count(*) filter (where kind = 'refund' and st <> 'pending'))::int as refunds,
+           (count(*) filter (where kind = 'refund' and st = 'pending'))::int as pending,
+           (count(*) filter (where kind = 'pay' and st = 'completed'))::int as pay_n,
+           coalesce(sum(amount) filter (where kind = 'pay' and st = 'completed'), 0) as pay_v,
+           (count(*) filter (where kind = 'refund' and st = 'completed'))::int as ref_n,
+           coalesce(sum(amount) filter (where kind = 'refund' and st = 'completed'), 0) as ref_v
+      from (
+        select 'pay' as kind, t.status as st, t.amount from transactions t where t.type = 'pay' and t.to_wallet_id in ${wallets} ${tRange}
+        union all
+        select 'refund', t.status, t.amount from transactions t where t.type = 'refund' and t.from_wallet_id in ${wallets} ${tRange}
+        union all
+        select 'refund', r.status, r.amount from refunds r where r.merchant_account_id = ${id} and r.status in ('pending', 'rejected') ${rRange}
+      ) x` : [];
   return {
-    counts: c!,
-    totals: { payments: { count: tot!.pay_n, volume: n(tot!.pay_v) }, refunds: { count: tot!.ref_n, volume: n(tot!.ref_v) } },
+    counts: agg ? { all: agg.all, payments: agg.payments, refunds: agg.refunds, pending: agg.pending } : null,
+    totals: agg ? { payments: { count: agg.pay_n, volume: n(agg.pay_v) }, refunds: { count: agg.ref_n, volume: n(agg.ref_v) } } : null,
     transactions: page.map((r) => ({
       id: r.id, type: r.type, status: r.status, status_code: r.status_code, amount: n(r.amount), timestamp: r.ts,
       via: r.via, reference: r.reference, terminal: r.terminal, customer: r.customer, approved_by: r.approver, refund_of: r.related,
       tip: r.tip === null ? null : n(r.tip), served_by: r.served_by,
+      // a refund carries the payment it refunds: when it was paid, how much (tip included), who served and how
+      original: r.related && r.orig_ts ? { id: r.related, timestamp: r.orig_ts, amount: n(r.orig_amount), tip: r.orig_tip ? n(r.orig_tip) : 0, served_by: r.orig_served, via: r.orig_via, reference: r.orig_reference } : null,
       from: r.from_name, to: r.to_name, from_party: party(r.from_id, r.from_type, r.from_photo), to_party: party(r.to_id, r.to_type, r.to_photo),
     })),
     next_cursor: rows.length > limit && last ? `${last.ts_key}|${last.id}` : null,

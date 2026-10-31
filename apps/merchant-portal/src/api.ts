@@ -77,9 +77,12 @@ export type TxRow = {
   reference: string | null; terminal: string | null; customer: string | null; approved_by: string | null; refund_of: string | null; from: string | null; to: string | null;
   /** For a completed payment: the part of `amount` that is tip, and who served the order (from its checkout). */
   tip?: number | null; served_by?: string | null;
+  /** For a refund: the payment it refunds. */
+  original?: { id: string; timestamp: string; amount: number; tip: number; served_by: string | null; via: "tap" | "pass" | "app" | null; reference: string | null } | null;
 };
 export type TxPage = {
-  counts: Record<TxKind, number>; totals: { payments: { count: number; volume: number }; refunds: { count: number; volume: number } };
+  /** Counts and totals come with the first page only (null on the pages after it). */
+  counts: Record<TxKind, number> | null; totals: { payments: { count: number; volume: number }; refunds: { count: number; volume: number } } | null;
   transactions: TxRow[]; next_cursor: string | null;
 };
 export type DayRange = { from?: string; to?: string };
@@ -94,7 +97,7 @@ export type Product = {
 };
 export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean };
 export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
-export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[] };
+export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; served_by?: string | null; served_by_name?: string | null };
 
 // ---- Public calls (no session) ----------------------------------------------------------------------
 export const signIn = (email: string, password: string, base: string = API_URL) =>
@@ -179,6 +182,8 @@ export function createApi(token: string, base: string = API_URL) {
     deleteProduct: (pid: string) => request<null>("DELETE", `/v1/business/products/${id(pid)}`),
     uploadProductPhoto: (pid: string, file: Blob) => request<{ photo: string }>("PUT", `/v1/business/products/${id(pid)}/photo`, file),
     checkouts: async (status: Checkout["status"] = "open") => (await request<{ checkouts: Checkout[] }>("GET", `/v1/business/checkouts${qs({ status, limit: 100 })}`)).checkouts,
+    /** Who a paid order's tip went to, net of refunds: read when the order is opened. */
+    checkoutTips: (cid: string) => request<{ tips: { staff_account_id: string; name: string; amount: number }[]; total: number; given: number; returned: number }>("GET", `/v1/business/checkouts/${id(cid)}/tips`),
     cancelCheckout: (cid: string) => request<{ checkout: Checkout }>("POST", `/v1/business/checkouts/${id(cid)}/cancel`),
     devices: async () => (await request<{ devices: Device[] }>("GET", "/v1/devices")).devices,
     revokeDevice: (did: string) => request<null>("POST", `/v1/devices/${id(did)}/revoke`),

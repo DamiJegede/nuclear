@@ -32,6 +32,8 @@ export type CheckoutRow = {
   tip_amount: bigint;
   /** The staff member's account that served the order (set when it is created). */
   served_by: string | null;
+  /** The server's name, read with the order (a primary-key lookup). */
+  served_by_name?: string | null;
 };
 
 export type ItemRow = {
@@ -49,7 +51,7 @@ export type ItemRow = {
 
 const CO_COLS = `id, account_id, terminal_id, reference, currency, total, items,
   case when status = 'open' and expires_at is not null and expires_at <= now() then 'expired' else status end as status,
-  expires_at, created_at, tip_amount, served_by`;
+  expires_at, created_at, tip_amount, served_by, (select a.name from accounts a where a.id = served_by) as served_by_name`;
 
 export const snapshotOf = (lines: CartLine[]): ItemSnapshot[] =>
   lines.map((l) => ({
@@ -177,6 +179,7 @@ export const checkoutJson = (c: CheckoutRow, items: ItemRow[]) => ({
   terminal_id: c.terminal_id,
   tip_amount: n(c.tip_amount),
   served_by: c.served_by,
+  served_by_name: c.served_by_name ?? null,
   expires_at: c.expires_at,
   created_at: c.created_at,
   items: items.map(itemJson),

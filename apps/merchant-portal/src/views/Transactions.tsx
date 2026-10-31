@@ -49,6 +49,13 @@ function TxRowPair({ tx, cols, children }: { tx: TxRow; cols: number; children: 
         <td colSpan={cols}>
           <div className="tx-collapse"><div className="tx-inner">
             <p className="tx-line">Transaction ID: <span className="tx-id">{tx.id}</span> • <span className="tx-status">{tx.status.toUpperCase()}</span>{tx.status_code ? <> › <span className="tx-code">{tx.status_code}</span></> : null}{tx.served_by ? <> • Served by {tx.served_by}</> : null}</p>
+            {tx.original && (
+              <div className="tx-orig">
+                <p className="tx-orig-title">Original payment</p>
+                <p className="tx-orig-line"><strong>{money(tx.original.amount)}</strong>{tx.original.tip > 0 && <span className="muted"> incl. {money(tx.original.tip)} tip</span>} · {new Date(tx.original.timestamp).toLocaleString()}{tx.original.via && <> · {tx.original.via === "tap" ? "Tap" : tx.original.via === "pass" ? "Pass" : "App"}</>}{tx.original.served_by && <> · Served by {tx.original.served_by}</>}{tx.original.reference && <> · {tx.original.reference}</>}</p>
+                <p className="tx-orig-line muted">Transaction ID: <span className="tx-id">{tx.original.id}</span></p>
+              </div>
+            )}
             <p className="tx-parties"><span className="tx-party">{tx.from ?? "—"}</span><span className="tx-arrow" aria-hidden>›</span><span className="tx-party">{tx.to ?? "—"}</span></p>
           </div></div>
         </td>

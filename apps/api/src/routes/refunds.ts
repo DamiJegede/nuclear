@@ -39,7 +39,7 @@ function refundJson(r: RefundRow, remaining: bigint | null) {
 }
 
 function respond(c: any, out: RefundOutcome) {
-  if (out.kind === "error") return c.json({ error: out.error }, out.status);
+  if (out.kind === "error") return c.json({ error: out.error, ...(out.max !== undefined ? { max_amount: out.max, remaining: out.remaining } : {}) }, out.status);
   if (out.kind === "ok" && !out.replayed && out.row.status === "completed") track(c, { refunds_n: 1, refunds_v: Number(out.row.amount) });   // today's running estimate
   const refund = refundJson(out.row, out.remaining);
   // Rejecting a pending refund is a successful action; report the rejected request itself.

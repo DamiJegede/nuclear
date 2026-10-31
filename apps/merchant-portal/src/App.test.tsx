@@ -144,7 +144,8 @@ describe("terminals", () => {
     const revokeTerminal = vi.fn().mockResolvedValue(null);
     const { user } = await signIn(fakeApi({ revokeTerminal }));
     await user.click(await navLink("Terminals"));
-    await user.click(await screen.findByRole("button", { name: "Sign Out", hidden: false }));
+    await user.click(await screen.findByRole("button", { name: "Actions for Counter" }));
+    await user.click(screen.getByRole("menuitem", { name: "Sign Out" }));
     expect(revokeTerminal).not.toHaveBeenCalled();
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }));
     expect(revokeTerminal).toHaveBeenCalledWith("t1");
@@ -331,9 +332,44 @@ describe("catalog", () => {
     const deleteProduct = vi.fn().mockRejectedValue(new ApiError(409, "product_in_use"));
     const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([]), products: vi.fn().mockResolvedValue({ products: [PRODUCT], next_cursor: null, total: 1 }), deleteProduct }));
     await user.click(await navLink("Catalog"));
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "Actions for Latte" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm Delete" }));
     expect(await screen.findByText(/Deactivate it instead/)).toBeInTheDocument();
+  });
+});
+
+describe("row menus", () => {
+  it("a product row has one quiet menu button; it lists the actions, closes on Escape and on a click elsewhere, and acts on a choice", async () => {
+    const updateProduct = vi.fn().mockResolvedValue({ ...PRODUCT, active: false });
+    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products: vi.fn().mockResolvedValue({ products: [PRODUCT], next_cursor: null, total: 1 }), updateProduct }));
+    await user.click(await navLink("Catalog"));
+    const row = await screen.findByRole("row", { name: /Latte/ });
+    expect(within(row).getAllByRole("button")).toHaveLength(1);
+    const trigger = within(row).getByRole("button", { name: "Actions for Latte" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Deactivate", "Edit", "Delete"]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveFocus();
+    await user.click(trigger);
+    await user.click(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Deactivate" }));
+    expect(updateProduct).toHaveBeenCalledWith(PRODUCT.id, { active: false });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("a category has the same menu: Rename and Delete", async () => {
+    const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }) }));
+    await user.click(await navLink("Catalog"));
+    await user.click(await screen.findByRole("button", { name: `Actions for ${CATEGORY.name}` }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete"]);
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });
 
@@ -762,5 +798,86 @@ describe("tips on the transactions list", () => {
     expect(await screen.findByText("incl. $3.00 tip")).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getByText("$23.00", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/Served by Rae/)).toBeInTheDocument();
+  });
+});
+
+describe("removing staff", () => {
+  const MEMBERS = [
+    { id: "s1", staff_account_id: "a-sam", handle: null, name: "Sam Manager", role: "write" as const, created_at: "2026-10-30T00:00:00Z" },
+    { id: "s2", staff_account_id: "a-rae", handle: null, name: "Rae Server", role: "read" as const, created_at: "2026-10-30T00:00:00Z" },
+  ];
+  it("says what removal means for that person's role, and the table has no handle column", async () => {
+    const { user } = await signIn(fakeApi({ staff: vi.fn().mockResolvedValue(MEMBERS) }));
+    await user.click(await navLink("Staff"));
+    await screen.findByText("Rae Server");
+    expect(screen.queryByRole("columnheader", { name: "Handle" })).toBeNull();
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[1]!);
+    expect(await screen.findByText(/They can no longer see their tips for your business\./)).toBeInTheDocument();
+    expect(screen.queryByText(/approve refunds/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]!);
+    expect(await screen.findByText(/approve refunds for you or see everyone's tips/)).toBeInTheDocument();
+  });
+});
+
+describe("orders and tips", () => {
+  const ORDER = { id: "o1", status: "paid" as const, reference: null, currency: "USD", total: 6600, terminal_id: "t1", expires_at: null, created_at: "2026-10-30T15:00:56Z",
+    items: [{ id: "i1", product_id: "p1", name: "Miso Ramen", unit_price: 1800, discount: 0, net_price: 1800, quantity: 2, refunded_quantity: 0, refund_pending_quantity: 0 }],
+    tip_amount: 900, served_by: "a-rae", served_by_name: "Rae Server" };
+  it("shows the tip beside the total, and loads who it went to only when the order is opened", async () => {
+    const checkoutTips = vi.fn().mockResolvedValue({ tips: [{ staff_account_id: "a-rae", name: "Rae Server", amount: 500 }, { staff_account_id: "a-sam", name: "Sam Manager", amount: 400 }], total: 900, given: 900, returned: 0 });
+    const { user } = await signIn(fakeApi({ checkouts: vi.fn().mockResolvedValue([ORDER, { ...ORDER, id: "o2", tip_amount: 0, served_by_name: null, total: 900 }]), checkoutTips }));
+    await user.click(await navLink("Orders"));
+    await user.click(await screen.findByRole("tab", { name: "Paid" }));
+    expect(await screen.findByText("+ $9.00 tip")).toBeInTheDocument();
+    expect(screen.getAllByText(/tip$/)).toHaveLength(1);
+    expect(checkoutTips).not.toHaveBeenCalled();
+    await user.click(screen.getAllByRole("row")[1]!);
+    expect(await screen.findByText("Sam Manager")).toBeInTheDocument();
+    expect(screen.getByText("Rae Server", { selector: "li span" })).toBeInTheDocument();
+    expect(screen.getByText(/Served by Rae Server/)).toBeInTheDocument();
+    expect(checkoutTips).toHaveBeenCalledTimes(1);
+    expect(checkoutTips).toHaveBeenCalledWith("o1");
+  });
+  it("an order with no tip shows no tip anywhere and asks for nothing", async () => {
+    const checkoutTips = vi.fn();
+    const { user } = await signIn(fakeApi({ checkouts: vi.fn().mockResolvedValue([{ ...ORDER, tip_amount: 0 }]), checkoutTips }));
+    await user.click(await navLink("Orders"));
+    await user.click(await screen.findByRole("tab", { name: "Paid" }));
+    await user.click(await screen.findByText("$66.00"));
+    expect(within(screen.getByRole("table")).queryByText(/tip/i)).toBeNull();
+    expect(checkoutTips).not.toHaveBeenCalled();
+  });
+});
+
+describe("an order whose refund took back part of the tip", () => {
+  it("says so: the people's lines are what they keep and the rest is shown as returned", async () => {
+    const order = { id: "o9", status: "paid" as const, reference: null, currency: "USD", total: 900, terminal_id: "t1", expires_at: null, created_at: "2026-10-30T15:00:56Z", items: [], tip_amount: 90, served_by: "a-tom", served_by_name: "Tom Server" };
+    const checkoutTips = vi.fn().mockResolvedValue({ tips: [{ staff_account_id: "a-tom", name: "Tom Server", amount: 45 }], total: 45, given: 90, returned: 45 });
+    const { user } = await signIn(fakeApi({ checkouts: vi.fn().mockResolvedValue([order]), checkoutTips }));
+    await user.click(await navLink("Orders"));
+    await user.click(await screen.findByRole("tab", { name: "Paid" }));
+    await user.click(await screen.findByText("$9.00"));
+    expect(await screen.findByText("Returned with a refund")).toBeInTheDocument();
+    expect(screen.getByText("−$0.45")).toBeInTheDocument();
+    expect(screen.getByText("$0.90", { selector: "strong" })).toBeInTheDocument();
+  });
+});
+
+describe("a refund shows the payment it refunds", () => {
+  it("opens to the original payment's amount, tip, time, server and id", async () => {
+    const transactions = vi.fn().mockResolvedValue({
+      counts: { all: 1, payments: 0, refunds: 1, pending: 0 }, totals: { payments: { count: 0, volume: 0 }, refunds: { count: 1, volume: 1000 } }, next_cursor: null,
+      transactions: [{ id: "r1", type: "refund", status: "completed", status_code: null, amount: 1000, timestamp: "2026-10-30T20:01:04Z", via: null, reference: null, terminal: "Dining room", customer: "Ada Diner", approved_by: null, refund_of: "p1", from: "Harbor Table", to: "Ada Diner",
+        original: { id: "p-original-1", timestamp: "2026-10-30T20:01:03Z", amount: 1100, tip: 100, served_by: "Rae Server", via: "app", reference: null } }],
+    });
+    const { user } = await signIn(fakeApi({ transactions }));
+    await user.click(await navLink("Transactions"));
+    await user.click(await screen.findByText("refund", { selector: ".pill" }));
+    expect(await screen.findByText("Original payment")).toBeInTheDocument();
+    expect(screen.getByText("$11.00")).toBeInTheDocument();
+    expect(screen.getByText("incl. $1.00 tip")).toBeInTheDocument();
+    expect(screen.getByText(/Served by Rae Server/)).toBeInTheDocument();
+    expect(screen.getByText("p-original-1")).toBeInTheDocument();
   });
 });

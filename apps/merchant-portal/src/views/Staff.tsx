@@ -37,12 +37,11 @@ export function Staff({ api, onError }: { api: Api; onError: (e: unknown) => voi
           : data.length === 0 ? <p className="muted pad">No staff yet. Add people by their Nuclear handle.</p>
           : (
             <table>
-              <thead><tr><th scope="col">Name</th><th scope="col">Handle</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {data.map((s) => (
                   <tr key={s.id}>
                     <th scope="row">{s.name ?? "—"}</th>
-                    <td>{s.handle ? `@${s.handle}` : "—"}</td>
                     <td>
                       <select aria-label={`Role for ${s.name ?? "staff member"}`} value={s.role} onChange={(e) => void setRole(s, e.target.value as "read" | "write")}>
                         <option value="read">READ</option><option value="write">WRITE</option>
@@ -59,7 +58,9 @@ export function Staff({ api, onError }: { api: Api; onError: (e: unknown) => voi
       {adding && <AddStaff api={api} onClose={() => setAdding(false)} onError={onError} onAdded={() => { setAdding(false); retry(); }} />}
       {remove && (
         <Modal title="Remove Staff" onClose={() => setRemove(null)} locked={busy}>
-          <p>Remove <strong>{remove.name ?? "this person"}</strong> from your staff? They can no longer approve refunds for you.</p>
+          <p>Remove <strong>{remove.name ?? "this person"}</strong> from your staff? {remove.role === "write"
+            ? "They can no longer approve refunds for you or see everyone's tips."
+            : "They can no longer see their tips for your business."} Tips already recorded stay in your records.</p>
           {error && <p className="error" role="alert">{error}</p>}
           <div className="modal-actions">
             <button type="button" disabled={busy} onClick={() => void confirmRemove()}>{busy ? "Removing…" : "Confirm Remove"}</button>

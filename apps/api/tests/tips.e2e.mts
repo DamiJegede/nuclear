@@ -159,6 +159,17 @@ const dec2 = await tpay(T, urlFor(pt.uid, 2), 900, "dec2", { tip: 200 });
 eq("a declined amount-only payment cancels its checkout and keeps no tip on it", [dec2.status, (await q("select count(*)::int n from checkouts where status='canceled'"))[0].n - decOrders, (await q("select count(*)::int n from checkouts where tip_amount > 0 and status <> 'paid'"))[0].n], [422, 1, 0]);
 eq("a declined payment of an existing checkout leaves it open for another try", await (async () => { const c = await call("POST", "/v1/terminal/checkouts", { token: T, body: { amount: 900 } }); const d = await payCo(urlFor(pt.uid, 3), c.json.checkout.id, "dec3", { tip: 300 }); if (d.status !== 422) return "not declined"; return (await q("select status from checkouts where id=$1", [c.json.checkout.id]))[0].status; })(), "open");
 
+
+// ============ an order's tip, by person, for the merchant's Orders page ============
+const coOf = async (payId: string) => (await q("select checkout_id from transactions where id=$1", [payId]))[0].checkout_id;
+const p3co = await coOf(p3.json.payment.id);
+const orderTips = async (token: string, coId: string) => call("GET", `/v1/business/checkouts/${coId}/tips`, { token });
+eq("an order's tip by person, largest first", (await orderTips(S, p3co)).json, { tips: [{ staff_account_id: rae.account_id, name: "Rae", amount: 150 }, { staff_account_id: sam.account_id, name: "Sam", amount: 100 }], total: 250, given: 250, returned: 0 });
+eq("an order without a tip has none", (await orderTips(S, await coOf(p4.json.payment.id))).json, { tips: [], total: 0, given: 0, returned: 0 });
+eq("another merchant cannot read it", [(await orderTips(O, p3co)).status, (await orderTips(A, p3co)).status, (await orderTips(S, "0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee")).status], [404, 403, 404]);
+const listed = (await call("GET", "/v1/business/checkouts?status=paid", { token: S })).json.checkouts.find((x: any) => x.id === p3co);
+eq("the paid list carries the tip total and the server's name without the split", [listed.tip_amount, listed.served_by_name, "tips" in listed], [250, "Rae", false]);
+
 // ============ who sees what ============
 const view = async (token: string, qs: string) => call("GET", `/v1/tips${qs}`, { token });
 const bizQ = `?business=${shop.account_id}`;
@@ -185,6 +196,10 @@ eq("another day is empty", (await view(rae.session_token, `${bizQ}&from=2020-01-
 eq("bad dates are refused", [(await view(rae.session_token, `${bizQ}&from=2020-13-01`)).status, (await view(rae.session_token, `${bizQ}&from=2021-01-02&to=2021-01-01`)).status], [400, 400]);
 const pg = (await view(S, "?limit=2")).json;
 eq("pages carry a cursor", [pg.tips.length, pg.next_cursor !== null, (await view(S, `?limit=2&cursor=${pg.next_cursor}`)).json.tips.length], [2, true, 2]);
+const txp1 = (await call("GET", "/v1/business/transactions?limit=2", { token: S })).json;
+const txp2 = (await call("GET", `/v1/business/transactions?limit=2&cursor=${encodeURIComponent(txp1.next_cursor)}`, { token: S })).json;
+eq("the merchant's transaction list sends counts and totals with the first page only", [txp1.counts !== null && txp1.totals !== null, txp2.counts, txp2.totals, txp2.transactions.length], [true, null, null, 2]);
+eq("...and the pages are the same rows in the same order as before", [txp1.transactions.length, new Set([...txp1.transactions, ...txp2.transactions].map((x: any) => x.id)).size], [2, 4]);
 eq("a bad cursor is refused", (await view(S, "?cursor=nonsense")).status, 400);
 
 // per-day totals (program days, New York)
@@ -208,16 +223,27 @@ eq("refunding the non-tip part leaves the tip", [(await refund("tp1", "partial",
 eq("refunding the rest returns the tip", [(await refund("tp1", "full", "r2")).status, await net(p1.json.payment.id)], [201, []]);
 eq("the refund that returned the tip wrote one negative row; the item refund wrote none", (await q("select (select sum(amount)::int from tips where transaction_id=x.id) s from transactions x where x.related_id=$1 and x.type='refund' order by x.created_at", [p1.json.payment.id])), [{ s: null }, { s: -300 }]);
 // p3: 3000 + 250 tip split 150/100. A full refund reverses each share exactly.
+const list = (await call("GET", "/v1/business/transactions?limit=100", { token: S })).json.transactions;
+const refundRow = list.find((r: any) => r.type === "refund" && r.original?.id === p1.json.payment.id);
+const payRow = list.find((r: any) => r.id === p1.json.payment.id);
+eq("a refund carries the payment it refunds: amount with the tip, who served, how", [refundRow.original.amount, refundRow.original.tip, refundRow.original.served_by, refundRow.original.via, refundRow.refund_of === p1.json.payment.id], [2300, 300, "Rae", "tap", true]);
+eq("a payment row has no original", payRow.original, null);
 eq("a full refund of a split tip reverses each share", [(await refund("tp3", "full", "r3")).status, await net(p3.json.payment.id)], [201, []]);
+eq("...and the order's tip by person is empty afterwards, with the whole tip shown as returned", (await orderTips(S, p3co)).json, { tips: [], total: 0, given: 250, returned: 250 });
 
 // a split that does not divide evenly: 1000 + 101 tip, Rae 51 / Sam 50
 const p6 = await pay(1000, "tp6", { tip: 101, tips: [{ staff_id: staffId.rae, amount: 51 }, { staff_id: staffId.sam, amount: 50 }] });
 eq("uneven split recorded", await tipsOf(p6.json.payment.id), [["Rae", 51], ["Sam", 50]]);
-await refund("tp6", "partial", "r6a", 1050);   // 50 beyond the non-tip part
-const mid = await net(p6.json.payment.id);
-eq("a part of the tip is taken back in proportion (the spare cent goes to the larger remainder)", mid, [["Rae", 26], ["Sam", 25]]);
-await refund("tp6", "full", "r6b");
-eq("the rest takes back exactly what remains", await net(p6.json.payment.id), []);
+const straddle = await refund("tp6", "partial", "r6a", 1050);   // 50 beyond the non-tip part: refused, a tip is never returned in part
+eq("an amount that dips into the tip is refused, and says what is allowed", [straddle.status, straddle.json.error, straddle.json.max_amount, straddle.json.remaining], [422, "refund_splits_tip", 1000, 1101]);
+eq("a refused amount changes nothing", [(await q("select count(*)::int n from transactions where related_id=$1 and type='refund'", [p6.json.payment.id]))[0].n, await net(p6.json.payment.id)], [0, [["Rae", 51], ["Sam", 50]]]);
+eq("an amount up to the non-tip part is fine and leaves the tip", [(await refund("tp6", "partial", "r6c", 1000)).status, await net(p6.json.payment.id)], [201, [["Rae", 51], ["Sam", 50]]]);
+eq("after that, only the whole remainder is allowed: any amount short of it is refused", [(await refund("tp6", "partial", "r6d", 40)).json.error, (await refund("tp6", "partial", "r6d", 40)).json.max_amount], ["refund_splits_tip", 0]);
+eq("the rest goes back in full: the whole tip, each person's share exactly", [(await refund("tp6", "full", "r6b")).status, await net(p6.json.payment.id)], [201, []]);
+// a partial amount that equals everything remaining is the same as a full refund
+const p7 = await pay(1000, "tp7", { tip: 100 });
+eq("a partial amount equal to the whole payment returns the tip", [(await refund("tp7", "partial", "r7", 1100)).status, await net(p7.json.payment.id)], [201, []]);
+eq("a payment with no tip is unaffected by the rule", (await refund("tp4", "partial", "r4", 300)).status, 201);
 
 // ============ the books ============
 eq("every payment's tip rows add up to its checkout's tip", (await q("select count(*)::int n from transactions x join checkouts c on c.id = x.checkout_id where x.type='pay' and x.status='completed' and c.tip_amount <> coalesce((select sum(amount) from tips where transaction_id=x.id), 0)"))[0].n, 0);
