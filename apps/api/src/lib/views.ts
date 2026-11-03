@@ -131,20 +131,23 @@ export async function balanceView(sql: Sql, env: Env, a: Auth) {
   const [b] = await sql<{ balance: bigint; balance_pending: bigint; credit_limit: bigint; credit_spent: bigint }[]>`
     select balance, balance_pending, credit_limit, credit_spent from balances where account_id = ${a.accountId}`;
   if (!b) return null;
-  const [e] = await sql<{ total: bigint; benefits: bigint }[]>`
+  const [e] = await sql<{ total: bigint; benefits: bigint; held: bigint; shared_held: bigint }[]>`
     select coalesce(sum(balance), 0)::bigint as total,
-           coalesce(sum(balance) filter (where type = 'benefits'), 0)::bigint as benefits
-      from wallets where account_id = ${a.accountId} and balance is not null`;
+           coalesce(sum(balance) filter (where type = 'benefits'), 0)::bigint as benefits,
+           coalesce(sum(held), 0)::bigint as held,
+           coalesce(sum(held) filter (where balance is null), 0)::bigint as shared_held
+      from wallets where account_id = ${a.accountId} and (balance is not null or held > 0)`;
   const [mine] = a.walletId
-    ? await sql<{ balance: bigint | null; type: string }[]>`select balance, type from wallets where id = ${a.walletId}`
+    ? await sql<{ balance: bigint | null; type: string; held: bigint }[]>`select balance, type, held from wallets where id = ${a.walletId}`
     : [undefined];
   const restricted = b.balance < 0n || b.credit_spent > b.credit_limit;
   const creditAvailable = pos(b.credit_limit - b.credit_spent);
-  const shared = pos(b.balance - e!.total);
+  const shared = pos(b.balance - e!.total - e!.shared_held);   // earmarks and the holds of shared wallets are not available to the others
   const earmarkedWallet = mine?.balance !== null && mine?.balance !== undefined;
   const benefitsWallet = mine?.type === "benefits";
-  const availableToSend = restricted || benefitsWallet ? 0n : earmarkedWallet ? mine!.balance! : shared;
-  const availableToPay = restricted ? 0n : earmarkedWallet ? mine!.balance! : shared + creditAvailable;
+  const mineFree = earmarkedWallet ? pos(mine!.balance! - mine!.held) : 0n;
+  const availableToSend = restricted || benefitsWallet ? 0n : earmarkedWallet ? mineFree : shared;
+  const availableToPay = restricted ? 0n : earmarkedWallet ? mineFree : shared + creditAvailable;
   const common = {
     available_to_send: n(availableToSend),
     available_to_pay: n(availableToPay),
@@ -158,6 +161,7 @@ export async function balanceView(sql: Sql, env: Env, a: Auth) {
     benefits: n(e!.benefits),
     ordinary: n(b.balance - e!.benefits),
     ordinary_shared_available: n(shared),               // what unearmarked wallets can draw on
+    held: n(e!.held),                                   // set aside for open tabs (inside the balance; not available to send or pay)
     earmarked: n(ordinaryEarmarked),                    // ordinary money set aside for specific wallets (Benefits is reported separately)
     daily_headroom: n(await dailyHeadroom(sql, a.accountId, dailyCap(env))),
     balance_pending: n(b.balance_pending),

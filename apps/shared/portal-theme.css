@@ -126,7 +126,6 @@ tr.fail-row { background: var(--fail-row); } tr.refund-row { background: var(--r
 
 /* Stacked cards (a page with several tables) get air between them */
 section > .card + .card, section > .card.flush + .card.flush, .stack > .card + .card { margin-top: 16px; }
-.catalog { grid-template-columns: 216px minmax(0, 1fr); }
 
 /* The "⋯" row menu (merchant portal RowMenu): one quiet button, a small floating panel */
 .menu-btn { width: 34px; height: 34px; padding: 0; display: inline-grid; place-items: center; border-radius: 10px; color: var(--muted); border-color: transparent; background: transparent; }
@@ -186,3 +185,12 @@ td.actions > button.ghost:only-child:hover:not(:disabled) { color: var(--text); 
 /* Page header actions (a period select, Download CSV, Refresh) stay on one row */
 .head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
 .head-actions select { width: auto; min-width: 150px; height: 42px; }
+
+/* Sidebar and filter cards: the same hairlines and pills as the rest of the theme */
+.sidebar { background: color-mix(in srgb, var(--bg) 88%, transparent); border-right-color: var(--line); }
+.sidebar .brand { padding: 0 8px; }
+.sidebar .tab { padding: 9px 14px; }
+.cat-card, .tabbar .subtab { border-color: color-mix(in srgb, var(--text) 14%, var(--line)); }
+.cat-card.active, .tabbar .subtab.active { border-bottom-color: var(--text); }
+.sidebar nav { gap: 0; }
+.sidebar .tab { padding: 7px 14px; }

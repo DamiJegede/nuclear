@@ -38,3 +38,7 @@ The client calls POST /v1/devices/session/extend every time the app launches, us
 This design uses a fresh devices row as the single-use grant for each link, with the hash changing from NULL exactly once. Failed/unredeemed grants can expire without becoming sessions. Primary-holder account login follows its own authenticated issuance path but uses the same hash/expiry/revocation representation; no delegated device gains owner login powers.
 
 JWT validation reference: [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html).
+
+## Tabs
+
+A shared tab (TABS.md) covers a **wallet** as the member, so a delegated wallet session can join a tab (the consent), add items, Close My Tab (place a hold) and Cover for that wallet only, within the wallet's own limits (`allow_pay`, hard balance, daily limit; a wallet with its own balance holds only from that balance), and two wallets of one family account at one table are two members. A delegated session cannot lock a tab or act for another wallet. Agent keys cannot join tabs in version 1.

@@ -86,7 +86,7 @@ export function txRowFromJson(j: Record<string, unknown>): TxRow {
  * Calls one of the money functions (migrations/0002) as a single statement, which is its own transaction. A repeated key that two calls
  * race to write with different lock orders raises a unique violation; the call is then made again and replays the winner.
  */
-export async function callMoney<T>(q: Q, fn: "app_send" | "app_pay_app" | "app_pay_tap" | "app_refund" | "app_refund_resolve" | "app_purchase", arg: Record<string, unknown>): Promise<T> {
+export async function callMoney<T>(q: Q, fn: "app_send" | "app_pay_app" | "app_pay_tap" | "app_refund" | "app_refund_resolve" | "app_purchase" | "app_tab_settle" | "app_tab_release" | "app_close_tab", arg: Record<string, unknown>): Promise<T> {
   const once = async () => (await q.unsafe(`select public.${fn}($1::text::jsonb) as r`, [JSON.stringify(arg)] as never))[0]!.r as T;
   try {
     return await once();

@@ -1,6 +1,7 @@
 import { createEffect, createSignal, lazy, onCleanup, Suspense } from 'solid-js';
 import Home from './Home.jsx';
 const Merchant = lazy(() => import('./Merchant.jsx'));
+const Menu = lazy(() => import('./Menu.jsx'));
 export default function App() {
  const currentPath=()=>window.location.pathname.replace(/\/$/,'') || '/';
  const [path,setPath]=createSignal(currentPath());
@@ -20,5 +21,6 @@ export default function App() {
    ['meta[name="twitter:title"]',title],['meta[name="twitter:description"]',description],
   ]) document.querySelector(selector)?.setAttribute('content',value);
  });
- return <Suspense>{path()==='/merchant' ? <Merchant/> : path()==='/' ? <Home/> : <main><h1>Nothing here.</h1><a href="/">Back to Nuclear</a></main>}</Suspense>;
+ const tableCode=()=>/^\/t\/([A-Za-z0-9_-]{16,64})$/.exec(path())?.[1];
+ return <Suspense>{tableCode() ? <Menu code={tableCode()}/> : path()==='/merchant' ? <Merchant/> : path()==='/' ? <Home/> : <main><h1>Nothing here.</h1><a href="/">Back to Nuclear</a></main>}</Suspense>;
 }

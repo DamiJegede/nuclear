@@ -73,6 +73,7 @@ Before subtracting active reservations, sends may use max(balance, 0); payments 
 | allow_send | Whether the wallet can send funded balance; credit cannot fund sends. |
 | status | Wallet access/lifecycle status. |
 | balance | Nullable bigint: earmarked funds. NULL (default) = the wallet draws on the account's shared funds. A number = money the owner set aside for this wallet: it can spend only up to that amount (a hard limit, never credit, no further approval) and the rest of the account cannot spend it. The amount stays inside balances.balance; sum(wallets.balance) never exceeds the account balance (every money movement locks the balances row first). Agent wallets start at 0; person wallets and the default wallet start NULL. Spends and sends decrement it, incoming sends and refunds to the wallet increase it, closing the wallet releases it. Changes to an earmark are written to `logs` (action `wallet.earmark`). |
+| held | Nonnegative bigint, default 0 (migration 0014, docs/TABS.md): the wallet's active `fund_holds`: money set aside for a tab, still in the account balance but not available to send, pay with, buy with, move or earmark. A wallet with its own balance (earmarked or Benefits) spends `balance - held`; a shared wallet's holds come off the account's shared funds. Maintained only by the tab SQL functions, reconciled against `fund_holds`. |
 | key_hash | Nullable unique SHA-256 of the wallet's agent API key. Agent wallets only (check constraint); one key per wallet; creating a key replaces the old one; only the hash is stored, the key (`nk_agent_` + 43 characters) is created with the wallet and shown once, in the creation response; rotating it later shows the new one once. Closing the wallet clears it. |
 | key_hint | Last 4 characters of the key, to tell keys apart; set exactly when key_hash is. |
 | key_last_used_at | Nullable; when the key last authenticated a request (stamped at most once a minute). |
@@ -327,7 +328,7 @@ One row per 9-digit routing number (migration 0005 as `banks`, renamed in 0006),
 | routing_number | Unique, 9 digits (the ABA checksum is checked before an account is saved). |
 | directory_name | The name the bank directory gives this number (e.g. `JPMORGAN CHASE BANK, NATIONAL ASSOCIATION`); NULL when it has no directory entry (a bank on no instant network). Used to link the number to its institution. |
 | institution_id | Nullable foreign key to `institutions` (ON DELETE SET NULL). Set by name matching or by an admin, and **never replaced by a later lookup**. The name and logo a merchant sees come from the institution; until it is linked the directory's name is shown with a generic icon. |
-| instant | `true` = receives instant payments (RTP `CRDT`, FedNow `CTRO`/`CTSR`), `false` = it does not, **NULL = not known** (never checked, or the lookup failed). NULL is treated as "not instant" when a payout is sent. |
+| instant | `true` = receives instant payments (RTP `CRDT`, FedNow `CTRO`/`CTSR`), `false` = it does not, **NULL = not known** (never checked, or the lookup failed). NULL is covered as "not instant" when a payout is sent. |
 | networks | `{RTP, FedNow}` subset the number takes (a FedNow-only payout is capped at $500K, RTP $1M). |
 | refreshed_at | When the directory was last read **successfully**; an answer older than 30 days is read again (at bank-add, and by the nightly job for numbers in use). |
 | created_at, updated_at | Timestamps. |
@@ -447,6 +448,23 @@ See [ORGANIZATIONS.md](ORGANIZATIONS.md). One row per person an organization cre
 | updated_at | Last change. |
 
 There is no amount column: the amount to credit is only a column of the uploaded CSV, recorded per credit in benefit_run_rows and the transactions.
+
+## Tabs and fund holds (migrations 0014 and 0015: docs/TABS.md)
+
+Six tables and one column for shared tabs and fund holds (applied to nuclear-dev 2026-10-31); the table count above does not include them. The tab tables are order state (mutable until the tab ends, frozen by trigger once it is `closed`); the money stays in `transactions`. `fund_holds` is money set aside, written only by the SQL tab functions together with `wallets.held`.
+
+| Table | Purpose | Key columns |
+| --- | --- | --- |
+| `venue_tables` | A table, counter or bar with a code | `account_id`, `name`, `code` (unique, rotatable, printed on the QR and the NFC cube), `served_by` (default server), `active` |
+| `tabs` | One shared order at a merchant | `account_id`, `table_id` (nullable; at most one open or paying tab per table), `host_wallet_id`, `status` (open, paying, closed, unpaid, canceled, expired), `split_mode` (own, pitch, equal, host: UI Own Tab, Pitch In, Equal Shares, On Me), `cover_cap` (On Me per-person limit), `version`, `invite_code`, `locked`, `served_by`, `tip_mode`, `tip_value`, `tip_amount`, timeline columns, `closed_by` |
+| `tab_members` | One person (a **wallet**) on a tab | primary key (`tab_id`, `wallet_id`), `account_id`, `joined_at` (the consent), `max_tip_bps` (most tip agreed), `settled_at` (position closed), `away_at` (left early, still charged), `removed_at`, `removed_by` |
+| `tab_items` | One ordered line, with who ordered it | `tab_id`, `wallet_id` and `account_id` (both NULL = the Table), `added_by`, `product_id`, snapshot `name`, `unit_price`, `discount`, `taxable`, `quantity`, `note`, `status` (ordered, void) |
+| `tab_covers` | A member covering another member | one coverer per person (unique on `tab_id` + `covered_wallet_id`; NULL = the Table), `payer_wallet_id`, `cap`, `created_at`, `declined_at`, `ended_at` |
+| `fund_holds` | Money set aside on a wallet, and who holds it | `account_id`, `wallet_id`, `kind` (tab), `tab_id`, `amount` (ceiling), `status` (active, captured, released), `ended_at`, `end_reason`, `transaction_id`; exists only for a closed position, a pledge or an Equal Shares ceiling; one active hold per tab and wallet; frozen once ended |
+| `checkouts.tab_id` (column) | Links each payer's payment to its tab | nullable, indexed |
+| `wallets.held` (column) | Sum of the wallet's active holds (see its row above) | default 0, reconciled by `holds_match_balances` |
+
+Why a members table next to the items: a person who joined but has not ordered, authorization, leaving and who holds funds all need a row of their own (docs/TABS.md, "Do we need tab_members").
 
 ## Sales tax columns (migration 0012)
 

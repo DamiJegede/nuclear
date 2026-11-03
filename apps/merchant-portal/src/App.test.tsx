@@ -54,7 +54,7 @@ describe("sign-in", () => {
     expect(signInFn).toHaveBeenCalledWith("cafe@example.com", "correct horse battery");
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tips", "Reports", "Refunds"]);
+    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
   });
 
   it("shows the sales chart: three figures, a custom tooltip and today's figure replaced by the hovered day's", async () => {
@@ -395,6 +395,74 @@ describe("row menus", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete"]);
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("tables and tabs", () => {
+  const TABLE = { id: "t-1", name: "Table 4", code: "abcdefghijklmnopqrstuvwx", link: "https://nclr.app/t/abcdefghijklmnopqrstuvwx", served_by: null, active: true, open_tab_id: "tab-1", created_at: "2026-10-30T12:00:00Z" };
+  const TAB = {
+    id: "tab-1", status: "open", mode: "own", version: 3, locked: false, host_wallet_id: "w-ann", table: { id: "t-1", name: "Table 4" }, tip: { mode: "none", value: 0 }, served_by: null,
+    members: [
+      { wallet_id: "w-ann", name: "Ann", photo: null, host: true, position_closed: false, away: false, subtotal: 2000, covered_by: null, covering: ["w-ben"] },
+      { wallet_id: "w-ben", name: "Ben", photo: null, host: false, position_closed: false, away: false, subtotal: 1000, covered_by: { wallet_id: "w-ann", name: "Ann", photo: null, cap: null, carried: false }, covering: [] },
+    ],
+    table_bill: { subtotal: 0, covered_by: null },
+    items: [{ id: "i-1", wallet_id: "w-ann", name: "Burger", quantity: 1, unit_price: 2000, discount: 0, note: null, status: "ordered", by_staff: false }, { id: "i-2", wallet_id: "w-ben", name: "Fries", quantity: 1, unit_price: 1000, discount: 0, note: null, status: "ordered", by_staff: true }],
+    pays: [{ wallet_id: "w-ann", name: "Ann", photo: null, amount: 3300, total: 3300, tip: 0, tip_clipped: false, for: ["w-ben"] }],
+    bill: { items: 3000, tax: 300, tip: 0, total: 3300 }, short: [], short_total: 0,
+  };
+  const NAVTO = async (user: ReturnType<typeof userEvent.setup>, name: string) => user.click(within(screen.getByRole("navigation")).getByRole("link", { name }));
+
+  it("lists the tables with a QR code to print and the link to write to an NFC cube", async () => {
+    const { user } = await signIn(fakeApi({ tables: vi.fn().mockResolvedValue([TABLE]) } as Partial<Api>));
+    await NAVTO(user, "Tables");
+    expect(await screen.findByRole("heading", { name: "Tables" })).toBeInTheDocument();
+    expect(await screen.findByRole("rowheader", { name: "Table 4" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for Table 4" }));
+    await user.click(screen.getByRole("menuitem", { name: "QR Code and Link" }));
+    expect(await screen.findByText(TABLE.link)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Link" })).toBeInTheDocument();
+  });
+
+  it("adds a table", async () => {
+    const createTable = vi.fn().mockResolvedValue(TABLE);
+    const { user } = await signIn(fakeApi({ tables: vi.fn().mockResolvedValue([]), createTable } as Partial<Api>));
+    await NAVTO(user, "Tables");
+    await user.click(await screen.findByRole("button", { name: "Add Table" }));
+    await user.type(screen.getByLabelText("Name"), "Bar");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(createTable).toHaveBeenCalledWith({ name: "Bar" });
+  });
+
+  it("shows a tab's people, who covers whom, items and who pays; staff void an item and clear the table", async () => {
+    const tabVoidItem = vi.fn().mockResolvedValue({ ...TAB, items: [TAB.items[0]] });
+    const tabClear = vi.fn().mockResolvedValue({ status: "closed", tab: { ...TAB, status: "closed" } });
+    const { user } = await signIn(fakeApi({
+      tabs: vi.fn().mockResolvedValue([{ id: "tab-1", status: "open", mode: "own", table: "Table 4", members: 2, items: 3000, opened_at: "2026-10-30T12:00:00Z", closed_at: null, unpaid_at: null }]),
+      tab: vi.fn().mockResolvedValue(TAB), products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }), tabVoidItem, tabClear,
+    } as Partial<Api>));
+    await NAVTO(user, "Tabs");
+    await user.click(await screen.findByRole("rowheader", { name: "Table 4" }));
+    const win = await screen.findByRole("dialog", { name: /Table 4 · Own Tab · open/ });
+    expect(within(win).getByText("Covered by Ann")).toBeInTheDocument();
+    expect(within(win).getByText(/Ann: \$33\.00, covers Ben/)).toBeInTheDocument();
+    await user.click(within(win).getAllByRole("button", { name: "Void" })[1]!);
+    expect(tabVoidItem).toHaveBeenCalledWith("tab-1", "i-2");
+    await user.click(within(win).getByRole("button", { name: "Clear Table" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Clear Table" })).getByRole("button", { name: "Clear Table" }));
+    expect(tabClear).toHaveBeenCalledWith("tab-1");
+  });
+
+  it("shows a shortfall and does not offer Pay while something is short", async () => {
+    const { user } = await signIn(fakeApi({
+      tabs: vi.fn().mockResolvedValue([{ id: "tab-1", status: "paying", mode: "pitch", table: "Table 4", members: 2, items: 3000, opened_at: "2026-10-30T12:00:00Z", closed_at: null, unpaid_at: null }]),
+      tab: vi.fn().mockResolvedValue({ ...TAB, status: "paying", mode: "pitch", short: [{ wallet_id: null, amount: 1840 }], short_total: 1840 }), products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }),
+    } as Partial<Api>));
+    await NAVTO(user, "Tabs");
+    await user.click(await screen.findByRole("rowheader", { name: "Table 4" }));
+    const win = await screen.findByRole("dialog", { name: /Pitch In · paying/ });
+    expect(within(win).getByRole("alert")).toHaveTextContent("Short $18.40");
+    expect(within(win).getByRole("button", { name: "Pay" })).toBeDisabled();
   });
 });
 

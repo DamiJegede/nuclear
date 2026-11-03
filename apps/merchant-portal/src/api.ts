@@ -105,6 +105,20 @@ export type ProductInput = { name: string; price: number; discount: number; cate
 export type ReportPeriod = "week" | "last_week" | "30d" | "month" | "last_month";
 export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number };
 export type Report = { period: ReportPeriod; from: string; to: string; today: string; fees: number; total: Omit<ReportDay, "date"> & { net: number; net_tax: number }; days: ReportDay[] };
+export type VenueTable = { id: string; name: string; code: string; link: string; served_by: string | null; active: boolean; open_tab_id: string | null; created_at: string };
+export type TabStatus = "open" | "paying" | "unpaid" | "closed" | "canceled" | "expired";
+export type TabSummary = { id: string; status: TabStatus; mode: string; table: string | null; members: number; items: number; opened_at: string; closed_at: string | null; unpaid_at: string | null };
+export type TabFace = { wallet_id: string; name: string; photo: string | null };
+export type TabDetail = {
+  id: string; status: TabStatus; mode: "own" | "pitch" | "equal" | "host"; version: number; locked: boolean; host_wallet_id: string; table: { id: string; name: string } | null;
+  tip: { mode: string; value: number }; served_by: string | null;
+  members: (TabFace & { host: boolean; position_closed: boolean; away: boolean; subtotal: number; covered_by: (TabFace & { cap: number | null; carried: boolean }) | null; covering: string[] })[];
+  table_bill: { subtotal: number; covered_by: (TabFace & { cap: number | null }) | null };
+  items: { id: string; wallet_id: string | null; name: string; quantity: number; unit_price: number; discount: number; note: string | null; status: "ordered" | "void"; by_staff: boolean }[];
+  pays: (TabFace & { amount: number; total: number; tip: number; tip_clipped: boolean; for: string[] })[];
+  bill: { items: number; tax: number; tip: number; total: number };
+  short: { wallet_id: string | null; amount: number; name?: string | null }[]; short_total: number;
+};
 export type TaxSettings = { tax_rate: number; tax_included: boolean };
 export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
 export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; sales_tax?: number; served_by?: string | null; served_by_name?: string | null };
@@ -176,6 +190,20 @@ export function createApi(token: string, base: string = API_URL) {
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
     report: (period: ReportPeriod) => request<Report>("GET", `/v1/business/report?period=${period}`),
+    tables: async () => (await request<{ tables: VenueTable[] }>("GET", "/v1/business/tables")).tables,
+    createTable: async (input: { name: string; served_by?: string | null }) => (await request<{ table: VenueTable }>("POST", "/v1/business/tables", input)).table,
+    updateTable: async (tid: string, patch: Partial<{ name: string; active: boolean; served_by: string | null }>) => (await request<{ table: VenueTable }>("PATCH", `/v1/business/tables/${id(tid)}`, patch)).table,
+    rotateTableCode: async (tid: string) => (await request<{ table: VenueTable }>("POST", `/v1/business/tables/${id(tid)}/rotate-code`)).table,
+    deleteTable: (tid: string) => request<null>("DELETE", `/v1/business/tables/${id(tid)}`),
+    tabs: async (status?: TabStatus) => (await request<{ tabs: TabSummary[] }>("GET", `/v1/business/tabs${qs({ status })}`)).tabs,
+    tab: async (tid: string) => (await request<{ tab: TabDetail }>("GET", `/v1/business/tabs/${id(tid)}`)).tab,
+    tabAddItem: async (tid: string, input: { product_id: string; quantity: number; wallet_id?: string; table?: boolean }) => (await request<{ tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/items`, input)).tab,
+    tabVoidItem: async (tid: string, itemId: string) => (await request<{ tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/items/${id(itemId)}/void`)).tab,
+    tabRemoveMember: async (tid: string, wallet: string) => (await request<{ tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/members/${id(wallet)}/remove`)).tab,
+    tabLock: async (tid: string, locked: boolean) => (await request<{ tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/lock`, { locked })).tab,
+    tabClear: (tid: string) => request<{ status: string; short?: { name: string | null; amount: number }[]; tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/clear`),
+    tabCancel: (tid: string) => request<{ status: string; tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/cancel`),
+    tabPay: (tid: string, version: number) => request<{ payments: { wallet_id: string; amount: number; receipt_url: string | null }[]; tab: TabDetail }>("POST", `/v1/business/tabs/${id(tid)}/pay`, { version }),
     taxSettings: () => request<TaxSettings>("GET", "/v1/business/tax"),
     saveTaxSettings: (input: TaxSettings) => request<TaxSettings>("PUT", "/v1/business/tax", input),
     profile: async () => (await request<{ profile: Profile | null }>("GET", "/v1/business/profile")).profile,

@@ -19,6 +19,8 @@ import { closeOut } from "../lib/settlement";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { abaOk, ACCOUNT_BANK_COLS, ACCOUNT_BANK_FROM, bankChoices, bankView, ensureRouting, refreshBank, type AccountBank } from "../lib/banks";
 import type { Sql } from "../db";
+import { businessTabsRoutes } from "./businessTabs";
+import { releaseHoldsOfMerchant } from "../lib/tabs";
 
 /**
  * Everything a business owner manages from the merchant portal that is not a terminal, staff or refund (those have their own routes):
@@ -46,6 +48,7 @@ business.put("/tax", async (c) => {
   const [t] = await c.get("sql")<{ tax_rate: number; tax_included: boolean }[]>`
     update businesses set tax_rate = ${b.data.tax_rate}, tax_included = ${b.data.tax_included} where account_id = ${accountId} returning tax_rate, tax_included`;
   if (!t) return c.json({ error: "profile_required" }, 409);
+  await releaseHoldsOfMerchant(c.get("sql"), accountId);   // open tabs are priced again: closed positions reopen
   await customerLog(c, accountId, null, "business.tax_changed", { tax_rate: t.tax_rate, tax_included: t.tax_included }).catch(() => null);
   return c.json(t);
 });
@@ -494,3 +497,6 @@ business.post("/checkouts/:id/cancel", async (c) => {
   if (result === "paid") return c.json({ error: "checkout_paid" }, 409);
   return c.json({ checkout: checkoutJson((await getCheckout(sql, accountId, id.data))!, await getItems(sql, id.data)) });
 });
+
+// Tables and tabs (docs/TABS.md): the merchant's tables with their QR / NFC links, and the staff actions on open tabs.
+business.route("/", businessTabsRoutes);

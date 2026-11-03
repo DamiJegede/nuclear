@@ -70,20 +70,17 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
   return (
     <section>
       <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button><RefreshButton onClick={() => void reload()} /></div></div>
-      <div className="catalog">
-        <aside className="card categories" aria-label="Categories">
-          <h2>Categories</h2>
-          <ul>
-            <li><button type="button" className={filter === "" ? "cat active" : "cat"} onClick={() => setFilter("")}>All products {allTotal !== null && <span className="subtab-n">{allTotal}</span>}</button></li>
-            {data.categories.map((c) => (
-              <li key={c.id} className="cat-row">
-                <button type="button" className={filter === c.id ? "cat active" : "cat"} onClick={() => setFilter(c.id)}>{c.name} <span className="subtab-n">{c.products}</span></button>
-                <RowMenu label={`Actions for ${c.name}`} items={[{ label: "Rename", onSelect: () => setCatForm(c) }, { label: "Delete", danger: true, onSelect: () => { setError(null); setCatRemoving(c); } }]} />
-              </li>
-            ))}
-          </ul>
-          <button type="button" className="ghost" onClick={() => setCatForm("new")}>Add Category</button>
-        </aside>
+      <aside className="cat-cards" aria-label="Categories">
+        <button type="button" className={filter === "" ? "cat-card active" : "cat-card"} aria-pressed={filter === ""} onClick={() => setFilter("")}><span>All products</span><span className="kind-count">{allTotal !== null ? int(allTotal) : "–"}</span></button>
+        {data.categories.map((c) => (
+          <div key={c.id} className="cat-row">
+            <button type="button" className={filter === c.id ? "cat-card active" : "cat-card"} aria-pressed={filter === c.id} onClick={() => setFilter(c.id)}><span>{c.name}</span><span className="kind-count">{int(c.products)}</span></button>
+            <RowMenu label={`Actions for ${c.name}`} items={[{ label: "Rename", onSelect: () => setCatForm(c) }, { label: "Delete", danger: true, onSelect: () => { setError(null); setCatRemoving(c); } }]} />
+          </div>
+        ))}
+        <button type="button" className="cat-card add" onClick={() => setCatForm("new")}><span>Add Category</span><span className="kind-count" aria-hidden>+</span></button>
+      </aside>
+      <div>
         <div>
           <div className="filter-box"><input type="search" aria-label="Filter products by name" placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off" /></div>
           <div className="card flush">

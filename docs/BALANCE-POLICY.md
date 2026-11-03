@@ -26,3 +26,14 @@ Approved purchase refunds credit their original funding compartment immediately 
 6. Credit eligibility, repayment schedule, suspension, limits, cost/terms and approved program support are not defined by these three balance fields. Do not launch the credit feature until those product/integration rules are finalized.
 
 No per-load early allowances remain. balance_pending is informational only; update it atomically with funding recognition, clearance and pre-clearance failure/cancellation, without counting events twice. The proposed credit allocation rules require explicit journal attribution; a storage mechanism is still to be finalized before implementation.
+
+## Tabs and holds
+
+**Fund holds exist from the tabs release (owner, 2026-10-31).** A hold sets money aside on a wallet for one shared tab (TABS.md). The money stays in the balance, but it cannot be sent, spent on anything else, used to buy from the store, moved to another wallet or earmarked. A hold is a ceiling: the payment it backs may be less, never more. **A hold exists only when a person closes their position** (to leave a tab early and still be charged), pledges (Pitch In) or sets an Equal Shares ceiling; ordering, and a server assigning an item to someone, never check or hold funds.
+
+- `wallets.held` is the sum of one wallet's active holds (the only new column; nothing is added to `balances`). A `fund_holds` row says who holds what for which tab.
+- A wallet with its own money spends `wallet balance - wallet held`. Shared funds are the balance minus, over the account's wallets, each earmarked wallet's balance and each shared wallet's holds (the same sum that already gives the earmark). To pay a merchant, unused approved credit is added as before. A hold is backed by the same capacity a payment is, so credit can back it.
+- A hold reserves everything a payment checks: funds, the wallet's hard limit, **its daily limit** (`spent_today + held <= limit`) and its status. Events that would unback a hold (suspension, a fund return below it, a lowered earmark, an approved-credit reduction) release it in the same statement, so the position reopens and the tab shows a shortfall.
+- Holds do not touch the daily value cap, the merchant's balance or settlement, and are never created for business or organization accounts. Reconciliation checks `holds_match_wallets`, `holds_belong_to_open_tabs` and `holds_are_backed`.
+- At Pay a person with a closed position has the hold released and the payment made; a person still ordering is checked live inside the same call. Either way Pay refuses with a shortfall and writes nothing if anyone cannot pay; it never records a declined payment.
+

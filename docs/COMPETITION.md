@@ -177,9 +177,9 @@ Square provides front-of-house, kitchen and ordering workflows, with separate KD
 | ID | Nuclear work required | State | Priority |
 | --- | --- | --- | --- |
 | RES-01 | Ship basic priced modifiers, required choices and unavailable-item handling for café/food pilots. Extend into advanced choice constraints, timed menus, bulk menu edits and guided ordering. | Partial | P0 food basics / P1 advanced |
-| RES-02 | Build open checks, named tabs/house accounts, numbering, transfer/merge/split/reopen flows and server ownership. These are launch gates for full-service POS replacement, not the proposed counter-service pilot. Define holds before bar-tab preauthorization. | Missing | P2 / P0 full-service POS |
+| RES-02 | Build open checks, named tabs/house accounts, numbering, transfer/merge/split/reopen flows and server ownership. These are launch gates for full-service POS replacement, not the proposed counter-service pilot. Holds are designed for tabs ([TABS.md](TABS.md)); long-running bar tabs remain out of scope. | Designed 2026-10-31 for shared multi-payer tabs ([TABS.md](TABS.md)): members, items, holds at Close My Tab, four split modes, Cover, host Pay that never declines, one payment per paying wallet; no holds in v1. Not built. House accounts, transfer/merge and shared dishes remain open | P2 / P0 full-service POS |
 | RES-03 | Add floor plans, tables, seats, courses, kitchen firing and send-without-leaving-check behavior; integrate reservations if needed. | Missing | P2 / P0 full-service essentials |
-| RES-04 | Add tableside order entry and QR ordering/payment, order-ready notifications, pickup queues, drive-through lanes and third-party delivery order ingestion. | Missing / Partner | P2 |
+| RES-04 | Add tableside order entry and QR ordering/payment, order-ready notifications, pickup queues, drive-through lanes and third-party delivery order ingestion. | Table QR code / NFC cube ordering and payment designed 2026-10-31 ([TABS.md](TABS.md)); not built. Order-ready notifications, pickup queues, drive-through and delivery ingestion remain missing | P2 |
 | RES-05 | Build a kitchen display with routing, timers, bump/recall, printer fallback and kitchen-performance reporting; no Nuclear software device subscription in the proposed model. | Missing | P2 / P0 if kitchen-dependent |
 | RES-06 | Build a locked-down self-service kiosk, accessible checkout and remote device configuration. Hardware and device management costs need explicit funding. | Missing | P2 |
 | RES-07 | Add recipe/ingredient inventory, yields, waste and food-cost purchasing workflows as the MarketMan-equivalent expansion. | Missing | P3 |
@@ -279,8 +279,8 @@ Square markets checking/debit access, savings automation, earlier deposits, deli
 | BNK-01 | Complete settlement status UX: eligible balance, cutoff, expected arrival, bank failure/return, retries, negative-balance collection and reconciliation. Prove production behavior before advertising settlement speed. | Partial | P0 |
 | BNK-02 | Complete production bank linking and customer funding with finality/return policies and clear pending-fund visibility; pending loads are not immediately spendable. | Partial | P0 |
 | BNK-03 | Evaluate optional instant payouts and display actual eligibility/cost. A credited internal balance is not money delivered to an external bank. | Partial / Partner | P1 |
-| BNK-04 | Treat merchant checking/debit cards, yield-bearing savings, automated savings, early ACH availability and delivery-provider payouts as separate partner products. | Partner | P3 |
-| BNK-05 | Treat business lending and bitcoin receipt/conversion as separate decisions, not ordinary free software features. Existing approved wallet credit is not a merchant lending product. | Partner | P3 |
+| BNK-04 | Cover merchant checking/debit cards, yield-bearing savings, automated savings, early ACH availability and delivery-provider payouts as separate partner products. | Partner | P3 |
+| BNK-05 | Cover business lending and bitcoin receipt/conversion as separate decisions, not ordinary free software features. Existing approved wallet credit is not a merchant lending product. | Partner | P3 |
 
 Consumer cash-out remains outside the agreed model. Merchant settlement is an existing permitted flow. Do not turn the internal pooled-bank accounting into an advertised consumer checking account by analogy with Square.
 

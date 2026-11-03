@@ -28,6 +28,7 @@ import { dropDay, probeCounters, readCounters, shardCount, track } from "../lib/
 import { readStats, refreshLive, refreshReconciliation } from "../lib/statsCache";
 import { accountCheck, reconciliationOk } from "../lib/stats";
 import { returnFunding } from "../lib/fund";
+import { releaseHoldsOfAccount, releaseHoldsOfWallet } from "../lib/tabs";
 import { MFA_CHALLENGE_SECONDS, hashPassword, signMfaChallenge, verifyMfaChallenge } from "../crypto"; // hashing helpers are shared with customer accounts
 import {
   ACCESS_TOKEN_LENGTH, completeMfa, findSession, generateAccessId, generateAccessToken, login, mfaEnable,
@@ -945,6 +946,7 @@ admin.put("/users/:id/status", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const rows = await c.get("sql")`update accounts set status = ${body.data.status} where id = ${id.data} and type = 'C' and status <> 'closed' returning id, status, name`;
   if (!rows.length) return c.json({ error: "not_found" }, 404);
+  if (body.data.status === "suspended") await releaseHoldsOfAccount(c.get("sql"), id.data);   // money held for a tab is released; the tab shows the shortfall
   await adminLog(c, body.data.status === "suspended" ? "user.suspended" : "user.reactivated", { type: "user", id: id.data, label: rows[0]!.name });
   return c.json({ user: { id: rows[0]!.id, status: rows[0]!.status } });
 });
@@ -956,6 +958,7 @@ admin.put("/wallets/:id/status", async (c) => {
   if (!body.success) return c.json({ error: "invalid_request" }, 400);
   const rows = await c.get("sql")`update wallets w set status = ${body.data.status} from accounts a where w.id = ${id.data} and a.id = w.account_id and a.type = 'C' and w.status <> 'closed' returning w.id, w.status, w.display_name, w.account_id`;
   if (!rows.length) return c.json({ error: "not_found" }, 404);
+  if (body.data.status === "suspended") await releaseHoldsOfWallet(c.get("sql"), id.data);
   await adminLog(c, body.data.status === "suspended" ? "wallet.suspended" : "wallet.reactivated", { type: "wallet", id: id.data, label: rows[0]!.display_name }, { account_id: rows[0]!.account_id });
   return c.json({ wallet: { id: rows[0]!.id, status: rows[0]!.status } });
 });

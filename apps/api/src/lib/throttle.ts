@@ -23,6 +23,8 @@ export const RULES = {
   terminalCloseOut: { limit: 20, windowSec: 60 * 60 },   // taps at a terminal, wrong ones included (a mistaken tap must not lock the merchant out of closing)           // a merchant closing out (one settlement a day goes through; this stops hammering)
   orbBind: { limit: 20, windowSec: 60 * 60 },           // bind authorizations per terminal
   shopOrder: { limit: 10, windowSec: 60 },
+  tabJoin: { limit: 60, windowSec: 60 * 60 },             // opening or joining a tab by code, per account
+  tabJoinIp: { limit: 60, windowSec: 60 },
   agentRequests: { limit: 120, windowSec: 60 },         // every request by an agent key
   orgApi: { limit: 120, windowSec: 60 },                // every request by an organization Benefits API key
   agentMoney: { limit: 30, windowSec: 60 },             // sends and payments by an agent key

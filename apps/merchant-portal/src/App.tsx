@@ -6,6 +6,8 @@ import { Catalog } from "./views/Catalog";
 import { StaffHome } from "./views/StaffHome";
 import { Tips } from "./views/Tips";
 import { Reports } from "./views/Reports";
+import { Tables } from "./views/Tables";
+import { Tabs } from "./views/Tabs";
 import { EmailLink, emailLinkFromLocation } from "./views/EmailLink";
 import { Login } from "./views/Login";
 import { Orders } from "./views/Orders";
@@ -23,7 +25,7 @@ const KEY = "nuclear.merchant.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "reports" | "refunds" | "profile";
+export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "tables" | "tabs" | "reports" | "refunds" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
@@ -33,6 +35,8 @@ export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "terminals", label: "Terminals", path: "/terminals" },
   { page: "orbs", label: "Orbs", path: "/orbs" },
   { page: "staff", label: "Staff", path: "/staff" },
+  { page: "tables", label: "Tables", path: "/tables" },
+  { page: "tabs", label: "Tabs", path: "/tabs" },
   { page: "tips", label: "Tips", path: "/tips" },
   { page: "reports", label: "Reports", path: "/reports" },
   { page: "refunds", label: "Refunds", path: "/refunds" },
@@ -121,7 +125,7 @@ export function App({
 
   return (
     <div className="shell">
-      <header className="topbar">
+      <header className="sidebar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Business</span></div>
         <nav aria-label="Sections">
           {NAV.map((n) => (
@@ -142,6 +146,8 @@ export function App({
         {page === "orbs" && <Orbs api={api} onError={onError} />}
         {page === "staff" && <Staff api={api} onError={onError} />}
         {page === "tips" && <Tips api={api} onError={onError} />}
+        {page === "tables" && <Tables api={api} onError={onError} />}
+        {page === "tabs" && <Tabs api={api} onError={onError} />}
         {page === "reports" && <Reports api={api} onError={onError} />}
         {page === "refunds" && <Refunds api={api} onError={onError} />}
         {page === "profile" && <Profile api={api} account={account} onChanged={() => void loadAccount()} onError={onError} />}

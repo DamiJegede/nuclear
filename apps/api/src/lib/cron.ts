@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { easternDate } from "./dates";
 import { limiterFor, sweep } from "./throttle";
 import { purge } from "./retention";
+import { expireTabs } from "./tabs";
 import { refreshStaleBanks } from "./banks";
 import { remindUnclaimed } from "./orgMail";
 import { runDuePrograms } from "./programs";
@@ -21,6 +22,8 @@ export async function dailyJobs(scheduledTime: number, env: Env) {
   try {
     const swept = await sweep(limiterFor(env));
     // Finished sessions and used or expired links go; never blocks the rest of the job.
+    // Idle tabs expire (every hold released, nothing charged); never blocks the rest of the job.
+    await expireTabs(sql).catch((err) => console.error("tab expiry failed", err));
     const purged = await purge(sql).catch((err) => (console.error("purge failed", err), null));
     // A visible heartbeat: `select value from system where key = 'cron_last_run'` shows when the cron last fired.
     await sql`insert into system (key, value) values ('cron_last_run', ${new Date(scheduledTime).toISOString()})

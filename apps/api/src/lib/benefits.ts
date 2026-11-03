@@ -64,7 +64,7 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
       tx<({ credit_limit: bigint; credit_spent: bigint } & CapRow)[]>`
         select b.balance, b.credit_limit, b.credit_spent, ${tx.unsafe(CAP_COLS)}
           from balances b join accounts a on a.id = b.account_id where b.account_id = ${i.accountId} for no key update of b`,
-      tx<{ id: string; status: string; balance: bigint | null }[]>`select id, status, balance from wallets where id in (${i.fromWalletId}, ${i.toWalletId}) order by id for no key update`,
+      tx<{ id: string; status: string; balance: bigint | null; held: bigint }[]>`select id, status, balance, held from wallets where id in (${i.fromWalletId}, ${i.toWalletId}) order by id for no key update`,
       tx<{ status: string }[]>`select status from accounts where id = ${i.accountId}`,
       tx<MoveRow[]>`select ${tx.unsafe(M_COLS)} from txn where idempotency_key = ${idem}`,
     ]);
@@ -81,7 +81,7 @@ export async function moveFunds(sql: Sql, i: MoveInput): Promise<MoveOutcome> {
     if (!acct || acct.status !== "active") code = "account_unavailable";
     else if (bal.balance < 0n || bal.credit_spent > bal.credit_limit) code = "account_restricted";
     else if (sw.status !== "active" || dw.status !== "active") code = "wallet_unavailable";
-    else if ((sw.balance ?? 0n) < i.amount) code = "wallet_balance_exceeded";
+    else if ((sw.balance ?? 0n) - sw.held < i.amount) code = "wallet_balance_exceeded";   // money held for a tab cannot move
     else if (i.amount > room) code = "daily_value_limit_exceeded";
     const t: NewTx = { type: "move", declined: code, from: i.fromWalletId, to: i.toWalletId, amount: i.amount, account: i.accountId, idem };
     const rowOf2 = (w: { id: string; created_at: Date }): MoveRow => ({

@@ -5,6 +5,8 @@
 Status: Working draft for product discussion.
 Date: October 11, 2026.
 
+Shared tabs (October 31, 2026): [TABS.md](TABS.md) specifies tabs for tables, with a QR code and NFC cube, fund holds, four split modes (Own Tab, Pitch In, Equal Shares, On Me), Cover, tip split by spend and one payment per paying wallet (design only).
+
 Application build scope added October 13, 2026: [PLATFORM-SCOPE.md](PLATFORM-SCOPE.md) expands onboarding, account, funding, in-store payment, online payment, family setup, and merchant settlement into screens, permissions, operation states, recovery rules, and build packages. Use it as the planning entry point for these flows; this document retains ecosystem scope and hardware decisions.
 
 The compact schema is recorded in [TABLES.md](TABLES.md) (it began as twelve tables and has grown; TABLES.md has the current count and every table). It includes devices, fundings, tags, tag_models, passes and the adopted ledger_entries plan. tags contains physical inventory and wallet assignments; tag_models contains sale models; passes contains Apple/Google passes. Physical-tag replay counters live in tags and survive wallet reassignment. Separate profile, address and subscription-plan tables remain outside the initial scope. Individual bank-load attempts live in fundings; a fund transaction is created only on confirmed successful release; pending bank loads are unavailable for both sends and payments; approved credit may fund payments only. Schema planning only; no database migration has been applied. Current funds/credit policy: [BALANCE-POLICY.md](BALANCE-POLICY.md); the prior early-spend policy is withdrawn. Owner-issued device links replace wallets.member_account_id; devices stores the session hash/expiry/revocation state, with 90-day sessions extended at each app launch: [WALLET-ACCESS-POLICY.md](WALLET-ACCESS-POLICY.md).
@@ -170,6 +172,24 @@ The priorities below are proposed: Foundation is required by accepted architectu
 | PL-03 | Platform | Accessible UI, understandable errors, and explicit loading/recovery states | Launch |
 | PL-04 | Platform | Retention, backup restoration, and incident recovery procedures | Foundation; targets undecided |
 | PL-05 | Platform | Localization, additional currencies, and geographic expansion | Later |
+| TB-01 | Tabs | Table QR code / NFC cube that opens the merchant's menu and opens or shows the table's tab (design: [TABS.md](TABS.md)) | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-02 | Tabs | Show the faces and names of everyone on an open tab; join explicitly; invite friends by link or QR; lock joins | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-03 | Tabs | Join is the consent (with a tip limit); adding and server-assigned items never check or hold funds | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-04 | Tabs | Close My Tab: fix my share, hold my funds and leave early, still charged at Pay; reopen any time before Pay | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-05 | Tabs | One tab tip split across payers by the ratio of spend, exact to the cent; a tip above a person's limit is clipped for that person | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-06 | Tabs | Four split modes chosen by the host: Own Tab, Pitch In, Equal Shares, On Me | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-07 | Tabs | Cover: tap members' faces to pay their bill (optional limit); covered and carried people see who is paying and may decline a Cover | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-08 | Tabs | Leaving early is allowed only after closing the position; a leaver is charged from the held funds | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-09 | Tabs | Host (or a manager for a host who has gone) presses Pay: no known shortfall, every payer checked live in the same call, one payment each, never a declined row | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-10 | Tabs | Tax, receipts, refunds, reports and settlement through the existing payment code; real lines or share lines per payment | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-11 | Tabs | Staff view of open tabs, holds and covers; void items, add for a member, remove, lock, assign server, hand over host, cancel | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-12 | Tabs | Pay a share at the counter by tap when a wallet cannot cover it online | Not built (terminal) |
+| TB-13 | Tabs | Idle tabs expire after 12 hours: every hold released, nothing charged; Pay frees the table at once (a failed close leaves an `unpaid` tab off the table) | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-14 | Tabs | Near-real-time tab screen by conditional read (`?since=version`), push later | Conditional read built; push needs the app |
+| TB-15 | Tabs | Delegated wallet sessions (family members) and Benefits wallets can be tab members; agents cannot | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-17 | Tabs | Pitch In and Equal Shares always show the shortfall (who is short, by how much) and cannot close until it is zero | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-18 | Tabs | Verbal orders: staff assign an item to a member or to the Table with no funds check (the Table is paid by the host unless a member covers it) | Built 2026-10-31 (API, merchant portal); customer screens need the app |
+| TB-16 | Holds | Fund holds on wallets (`wallets.held`, `fund_holds`), subtracted by every send, payment, purchase, move and earmark | Built 2026-10-31 (API, merchant portal); customer screens need the app |
 
 Catalog and inventory are still launch-scope decisions. A wallet is now explicit product scope; the bank account, custody, and legal program structure remain to be finalized.
 
@@ -244,7 +264,7 @@ Once these are decided, each launch feature should receive a concrete screen/API
 
 - Product target: $2,000 maximum daily associated value, aggregated across access to the shared wallet.
 - Use one defined program-day timezone and a server-side counter. Purchases do not decrease it.
-- Draft conservative cap treatment: reserve headroom for accepted pending loads without granting spendable value, and count actual value once on successful release. Headroom reservation and failed-load treatment must be defined separately from available balance. Approved-refund daily-value treatment is finalized 2026-10-20 in BALANCE-POLICY.md and ORGANIZATIONS.md: refunds are never limited by and never counted toward the cap (they may take ordinary funds above it), and spending does not reopen addition headroom that day. Treatment of promotions, P2P receipts, failed loads and separate reversals must also be reflected in the implementation.
+- Draft conservative cap treatment: reserve headroom for accepted pending loads without granting spendable value, and count actual value once on successful release. Headroom reservation and failed-load treatment must be defined separately from available balance. Approved-refund daily-value treatment is finalized 2026-10-20 in BALANCE-POLICY.md and ORGANIZATIONS.md: refunds are never limited by and never counted toward the cap (they may take ordinary funds above it), and spending does not reopen addition headroom that day. Coverment of promotions, P2P receipts, failed loads and separate reversals must also be reflected in the implementation.
 - Reserve both wallet-balance headroom and daily-value headroom for concurrent loads. Pending funding cannot bypass either cap.
 - Example: $1,500 opening value, $1,000 spent, then $600 added gives $2,100 daily associated value; reject that addition even though the ending balance would be $1,100.
 - This is not a universal statutory $2,000 spending limit. FinCEN's cited threshold concerns the closed-loop prepaid-program exclusion. P2P and the actual acceptance network require classification of the whole design; staying under the number alone does not establish exemption. [FinCEN rule guidance, questions 1 and 17](https://www.fincen.gov/resources/statutes-regulations/guidance/final-rule-definitions-and-other-regulations-relating).
@@ -350,6 +370,7 @@ Ordinary wage payment and optional wallet reload are distinct flows. Free mercha
 - P2P is atomic, idempotent, subject to recipient headroom and sender authority, and cannot move restricted pending funds.
 - Device access links cannot grant access after expiry, replay or revocation; minor profiles and assigned tags follow guardian permissions.
 - Membership downgrade preserves access to existing funds while applying the approved restrictions to new loads.
+- Tabs (TABS.md): a held amount cannot be spent, sent, moved or earmarked and holds always match `wallets.held`; ordering and assignment never check or hold funds; a person who only joined is never charged beyond their tip limit; someone who closed their position and left is still charged; Pay never writes a declined payment (it refuses with a shortfall); in every mode the payments add up exactly to the tab's net, tax and tip; covered and carried people see who pays; a Pay alongside a member's own payment cannot deadlock or double-debit.
 
 ## 14. Selected Orb battery
 

@@ -1,3 +1,4 @@
+import { fitHolds } from "./tabs";
 import { CAP_COLS, capApplies, capHeadroom, capToday, type CapRow } from "./cap";
 import { BANK_WALLET, SYSTEM_ACCOUNT } from "./system";
 import { insertTx } from "./txn";
@@ -120,6 +121,12 @@ export type ReturnOutcome =
  * the sandbox rail has an admin route for it.
  */
 export async function returnFunding(sql: Sql, i: { fundingId: string; code: string }): Promise<ReturnOutcome> {
+  const out = await returnFundingTx(sql, i);
+  // the balance fell: holds that are no longer backed are released (newest first) so the tab shows a shortfall instead of a surprise at Pay
+  if (out.kind === "ok" && !out.replayed) await fitHolds(sql, out.funding.account_id);
+  return out;
+}
+async function returnFundingTx(sql: Sql, i: { fundingId: string; code: string }): Promise<ReturnOutcome> {
   return sql.begin(async (tx): Promise<ReturnOutcome> => {
     const [f] = await tx<(FundingRow & { transaction_id: string | null })[]>`select ${tx.unsafe(F_COLS)} from fundings where id = ${i.fundingId} for no key update`;
     if (!f) return { kind: "error", status: 404, error: "funding_not_found" };

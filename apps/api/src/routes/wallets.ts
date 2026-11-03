@@ -9,6 +9,7 @@ import { LINK_TTL, newAgentKey, signWalletLink } from "../crypto";
 import { amount as amountPositive, amountOrZero, n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { setWalletBalance } from "../lib/walletFunds";
+import { releaseHoldsOfWallet } from "../lib/tabs";
 import { moveFunds } from "../lib/benefits";
 import { WALLET_COLS as COLS, walletJson, type WalletRow } from "../lib/views";
 import { dailyCap } from "../lib/config";
@@ -161,6 +162,8 @@ wallets.patch("/:id", requireOwner, async (c) => {
     if (body.data.status === "closed" && cur.type === "benefits" && (cur.balance ?? 0n) > 0n) {
       return { error: "benefits_wallet_not_empty", status: 422 as const };
     }
+    // a wallet that can no longer pay gives its tab holds back at once (the tab then shows a shortfall)
+    if ((body.data.status !== undefined && body.data.status !== "active") || body.data.allow_pay === false) await releaseHoldsOfWallet(tx, id.data);
     if (body.data.status === "closed") await tx`update wallets set key_hash = null, key_hint = null, key_last_used_at = null where id = ${id.data}`;
     if (body.data.status === "closed" && cur.balance !== null && cur.type !== "benefits") {
       // A closed wallet gives its earmarked funds back to the shared funds.
@@ -230,7 +233,7 @@ wallets.put("/:id/balance", requireOwner, async (c) => {
   });
   if (!out.ok) {
     const status = out.error === "not_found" ? 404 : out.error === "wallet_closed" ? 409 : 422;
-    return c.json({ error: out.error, ...(out.available !== undefined ? { available: n(out.available) } : {}) }, status);
+    return c.json({ error: out.error, ...(out.available !== undefined ? { available: n(out.available) } : {}), ...(out.held !== undefined ? { held: n(out.held) } : {}) }, status);
   }
   return c.json({ wallet: walletJson(out.wallet), change: n(out.delta) });
 });
