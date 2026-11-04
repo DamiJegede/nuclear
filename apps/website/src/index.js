@@ -6,7 +6,7 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
-    if (url.pathname === "/" || url.pathname === "/merchants" || url.pathname === "/merchants/") {
+    if (url.pathname === "/merchants" || url.pathname === "/merchants/") {
       url.pathname = "/merchant";
       return Response.redirect(url.toString(), 302);
     }
