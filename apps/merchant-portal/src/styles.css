@@ -509,3 +509,5 @@ dl.facts .fact dd { margin: 0; font-weight: 400; font-size: 13px; text-align: ri
 .tabbar .subtab { margin: 0; padding: 14px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: center; }
 .tabbar .subtab:hover { background: var(--pop-bg); color: var(--pop-text); }
 .tabbar .subtab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.bank-choice.selected { outline: 2px solid var(--ink, currentColor); outline-offset: -2px; }
+.bank-found { margin: 4px 0 2px; }

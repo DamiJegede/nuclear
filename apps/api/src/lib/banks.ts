@@ -182,3 +182,19 @@ export async function refreshStaleBanks(env: Env, sql: Sql, limit = 50): Promise
  *  `choices` (brands to pick from, the partner bank last) and `needs_choice` are there only when the routing number belongs to a partner bank with brands. */
 export const bankView = (b: Pick<RoutingRow, "id" | "name" | "icon" | "instant"> | null | undefined, choices: { id: string; name: string; icon: string | null }[] = [], picked = false) =>
   b ? { id: b.id, name: b.name, icon: imageUrl(b.icon), instant: b.instant, ...(choices.length ? { choices, needs_choice: !picked } : {}) } : null;
+
+/**
+ * What the bank form shows as soon as a routing number is typed: the bank, whether it takes instant payouts, and, for a partner bank that brands run
+ * on, the brands to pick from. It reads the same cache as saving a bank (`refreshBank`: one lookup per bank for everyone, the attempt marker stops a
+ * repeat within the hour), but a number the directory does not know leaves no row behind. Never throws.
+ */
+export async function lookupRouting(env: Env, sql: Sql, routing: string) {
+  const [existing] = await sql<{ id: string }[]>`select id from routing_numbers where routing_number = ${routing}`;
+  const bank = await refreshBank(env, sql, await ensureRouting(sql, routing));
+  if (!existing && !bank.directory_name) {
+    await sql`delete from routing_numbers r where r.id = ${bank.id} and r.directory_name is null and not exists (select 1 from bank_accounts a where a.routing_number_id = r.id)`;
+    return null;
+  }
+  const [h] = await sql<{ has_brands: boolean }[]>`select exists (select 1 from institution_hosts where host_id = ${bank.institution_id}) as has_brands`;
+  return { bank, choices: await bankChoices(sql, { institution_id: bank.institution_id, has_brands: !!h?.has_brands }) };
+}

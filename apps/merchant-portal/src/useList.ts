@@ -9,15 +9,16 @@ import { peek, put } from "./cache";
 export function useList<T>(load: () => Promise<T>, onError: (e: unknown) => void, key?: string) {
   const [data, setData] = useState<T | null>(() => (key ? peek<T>(key) ?? null : null));
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(() => (key ? peek<T>(key) !== undefined : false));   // true once a value (even null) has arrived
   const run = useCallback(async () => {
-    try { const d = await load(); setData(d); if (key) put(key, d); setFailed(false); } catch (e) { setFailed(true); onError(e); }
+    try { const d = await load(); setData(d); setLoaded(true); if (key) put(key, d); setFailed(false); } catch (e) { setFailed(true); onError(e); }
   }, [load, onError, key]);
   useEffect(() => {
     const cached = key ? peek<T>(key) : undefined;
-    if (cached !== undefined) { setData(cached); setFailed(false); return; }
+    if (cached !== undefined) { setData(cached); setLoaded(true); setFailed(false); return; }
     void run();
   }, [run, key]);
-  return { data, failed, retry: () => void run(), setData };
+  return { data, failed, loaded, retry: () => void run(), setData };
 }
 
 export const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "Never");

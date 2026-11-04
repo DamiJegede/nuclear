@@ -2,7 +2,7 @@
 
 A record of what has been built, what is live, and what is still open. For rules and conventions see `../AGENTS.md`; for the data model see `TABLES.md` (this folder).
 
-Last updated 2026-10-23.
+Last updated 2026-11-04.
 
 ## What it is
 
@@ -21,12 +21,14 @@ The money core, the schema and the sessions were rebuilt on a local Postgres fol
 
 | Piece | Where | Version |
 | --- | --- | --- |
-| API Worker `nuclear-api` | https://api.nclr.app | `9c0faff8` |
-| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `3539d557` |
-| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `dadc40ba` |
-| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `5abfec46` |
-| MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `da12a0e8` |
-| Database | PlanetScale `nuclear/nuclear-dev` main, 29 tables, scheme v2 (3 migrations) | |
+| API Worker `nuclear-api` | https://api.nclr.app | `c5a434d5` (2026-11-04) |
+| Admin portal `nuclear-admin` | https://nuclear-admin.a-space.workers.dev | `0288acf2` |
+| Merchant portal `nuclear-merchant` | https://nuclear-merchant.a-space.workers.dev | `a7e66973` (2026-11-04) |
+| Organization portal `nuclear-organization` | https://nuclear-organization.a-space.workers.dev | `cceab13f` |
+| MCP server `nuclear-mcp` (agent wallets) | https://nuclear-mcp.a-space.workers.dev/mcp | `bafbd52c` |
+| Website `nclr` (homepage, `/merchant`, `/t/<table code>` menu page) | https://nclr.app | deployed from `apps/website` |
+| Bank proxy (Cross River forwarder) | https://bank.nclr.app (Lightsail `crs-banking-dev`) | Caddy |
+| Database | PlanetScale `nuclear/nuclear-dev` main, scheme v2, migrations 0001 to 0015 | |
 | Storage | R2 `nuclear-images` (public pictures), R2 `nuclear-uploads` (private files) | |
 
 Quality: 38 API test suites (about 1,560 checks, run on a throwaway local Postgres), 167 admin-portal tests, 30 merchant-portal tests, 52 organization-portal tests, all passing. Every deploy is followed by a read-only smoke test.
@@ -147,3 +149,22 @@ Specified in [TABS.md](TABS.md). **Built, applied to nuclear-dev and deployed** 
 
 **Not built:** the customer app screens (join, order, Close My Tab, Cover, pay, receipt) and push (they need the consumer app), the terminal screens (tab list, verbal-order assignment by face, the counter-checkout fallback TB-12), manager staff roles (the merchant owner acts as the manager until STF-01), a merchant-portal screen for a table's tab history beyond the list, and reconciliation checks `holds_are_backed` and `tab_paid_once` in the admin stats (the tests assert them).
 
+## Banks, close-out and Cross River — 2026-10-28
+
+Migrations 0005 to 0008. `routing_numbers` (one row per 9-digit number: the directory's name, instant or not, networks) and `institutions` (one name and logo per bank people know; 50 seeded with logos, plus 13 partner banks and 22 neobanks and fintechs with their `hosts`), managed on the admin Banks page (Institutions and Routing Numbers tabs, with a badge for banks missing a logo or link). A merchant adding a payout bank gets the bank's name, logo and whether payouts can be instant; when the routing number is a partner bank that brands run on (Column hosts Mercury and Brex), they pick the brand. **Close Out**: a merchant can end the day now (Today card, or a staff tap on the terminal); the whole balance goes by instant payment where the bank supports it, else same-day ACH, one settlement per merchant per day. `collect_return` (0008) takes back a collection the bank returns after it arrived.
+
+**Cross River (sandbox):** one pooled account for the whole scheme (owner decision). The Worker reaches the bank through a forwarder on `bank.nclr.app` (the bank allowlists one static IP), holds the credentials and makes every call: directory lookups, ACH and instant payments (`CR_PAYOUTS=true`) and a signed webhook route (`/v1/bank-hooks/crb`). **Proven:** a close-out at a test bank fell back from instant to same-day ACH in one request and the webhook settled the row with no manual step. **Not proven:** a successful instant payment (needs a real receiving account), an ACH return event, the instant-payment event names. Details in `docs/CROSS-RIVER.md` and AGENTS.md.
+
+**Bank form autocomplete (2026-11-04):** at 9 digits with a good checksum the form calls `GET /v1/business/bank/lookup?routing=`, which reads the same cache as saving (one bank call per new or stale number, an hourly marker stops repeats; an unknown or unreachable number leaves no row). The bank and, for a partner bank, the brand buttons appear under the routing box, and `PUT /v1/business/bank` takes the pick as `institution_id`. The Which Bank Is This? window after saving stays as the fallback. Suite `banks` (11 new checks) and 63 merchant portal tests pass. **To confirm:** the partner relationships (which brands run on which bank) were seeded from memory, and a Choice Financial Group number only offers brands if their `hosts` include it.
+
+## Sales tax, reports and receipts — 2026-10-31
+
+Migrations 0011 to 0013. `merchant_snapshots` (per merchant per program day, final, written by the nightly cron) feed the Overview sales chart (Today's Sales, Processing Fees always $0.00, one bar per day, a period select) and the daily report. **Sales tax:** one rate per business (added on top or included), each product taxable or not, tax on the checkout, one rounding per order shared over the lines; refunds return their share of the tax. Merchant portal: Sales Tax card on Profile, a switch in the product window, tax line on an opened order, a Reports page (per day: payments, sales, refunds, tips, taxable and exempt sales, tax collected and returned) with Download CSV. Payments carry a `receipt_url` and `GET /v1/receipts/:token` serves a public receipt (items with tax, tip, refunds, no payer details). Not built: per-location rates (the rate lives on the business).
+
+## Merchant portal theme and website — 2026-10-30 to 2026-11-04
+
+The merchant portal now uses the shared theme (`apps/shared/portal-theme.css`: warm paper background, ink buttons, Rethink Sans) with a sidebar, filter cards and a "⋯" row menu for rows with two or more actions; the admin and organization portals still need the import. The website (`apps/website`, Worker `nclr`) is deployed at nclr.app: the homepage at `/`, the merchant marketing site at `/merchant` (the Team preview now shows tips for the week; `/merchants` redirects there), and `/t/<table code>`, the read-only menu behind a table's QR code or NFC cube.
+
+## Open items (updated 2026-11-04)
+
+Customer app screens for tabs and the terminal screens for tabs, the iPad POS app target, Orb board support (the PCB is a routed engineering draft, not fabrication-ready), pass issuance, real consumer bank linking and funding, a production ACH provider (only the sandbox is wired), consumer claim and Benefits screens, merchant staff login, an admin screen for tips, and email (off until nclr.app is a verified sending domain). `SANDBOX_FUNDING` is still on: dev only. **Known test issue:** `settlement.e2e.mts` hard-codes a 2026-11-03 clock and failed on 2026-11-04 (the date-dependent cause is likely, not confirmed by a run without the bank-form changes).

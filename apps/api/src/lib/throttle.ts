@@ -18,6 +18,7 @@ export const RULES = {
   verifyResend: { limit: 3, windowSec: 60 * 60 },       // asking for another verification email, per account
   lookupEmail: { limit: 30, windowSec: 60 * 60 },      // recipient lookup by email, per account (stops enumeration)
   lookupHandle: { limit: 60, windowSec: 60 },
+  bankLookup: { limit: 60, windowSec: 60 * 60 },        // the bank form's routing number check, per account (each new bank is one call to the bank)
   tagClaim: { limit: 20, windowSec: 60 * 60 },
   closeOut: { limit: 5, windowSec: 60 * 60 },
   terminalCloseOut: { limit: 20, windowSec: 60 * 60 },   // taps at a terminal, wrong ones included (a mistaken tap must not lock the merchant out of closing)           // a merchant closing out (one settlement a day goes through; this stops hammering)

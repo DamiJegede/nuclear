@@ -218,6 +218,40 @@ await call("PUT", "/v1/business/bank/institution", { token: G.session_token, bod
 eq("a replaced bank starts again without a pick", [(await addBank(G, "101050001", "0000999900")).json.bank.institution.needs_choice, (await q("select count(*)::int n from bank_accounts where institution_id is not null and status='active'"))[0].n], [true, 2]);
 eq("brands in use count as in use (no logo needed notice) and the routing number list still shows the partner", [(await get("admin", "banks/attention")).json.needs_logo >= 3, (await get("admin", "routing-numbers?q=101050001")).json.routing_numbers[0].institution], [true, "Column"]);
 
+// ---- the bank form's routing number check (GET /bank/lookup): same cache as saving, nothing saved for an unknown number
+const look = (m: any, r: string, e?: any) => call("GET", `/v1/business/bank/lookup?routing=${r}`, { token: m.session_token, env: e });
+calls.length = 0;
+const lk1 = await look(A, "101050001");
+eq("lookup of a cached partner bank answers with the brands and makes no bank call", [lk1.status, lk1.json.bank.name, lk1.json.bank.needs_choice, lk1.json.bank.choices.map((x: any) => x.name), calls.length], [200, "Column", true, ["Brex", "Mercury", "Column"], 0]);
+const lk2 = await look(A, "110000000");
+eq("a plain bank has no choices and says whether it takes instant payouts", [lk2.json.bank.instant, lk2.json.bank.choices, lk2.json.bank.needs_choice], [true, undefined, undefined]);
+eq("a bad checksum or length is refused before anything else", [(await look(A, "110000001")).status, (await look(A, "1100")).status], [422, 422]);
+const n0 = (await q("select count(*)::int n from routing_numbers"))[0].n;
+calls.length = 0;
+const lk3 = await look(A, "100000007"), lk4 = await look(A, "100000007");
+eq("a number the directory does not know answers null and leaves no row; repeats within the hour do not call the bank again", [lk3.json.bank, lk4.json.bank, calls.length, (await q("select count(*)::int n from routing_numbers"))[0].n], [null, null, 1, n0]);
+down = true; calls.length = 0;
+const lk5 = await look(A, "100000010");
+down = false;
+eq("a bank that cannot be reached answers null and leaves no row", [lk5.status, lk5.json.bank, (await q("select count(*)::int n from routing_numbers where routing_number = '100000010'"))[0].n], [200, null, 0]);
+const lkNew = await look(A, "061000052"); calls.length = 0;
+directory["061000052"] = { found: true, name: "Fresh Bank", instant: false, networks: [] };
+await q("delete from system where key = 'bank_lookup:061000052'");
+const lk6 = await look(A, "061000052");
+eq("a real new bank is saved by the lookup, so adding it afterwards needs no second call", [lkNew.json.bank, lk6.json.bank.name, lk6.json.bank.instant, (await addBank(A, "061000052", "0000111122")).status, calls.filter((r) => r === "061000052").length], [null, "Fresh Bank", false, 201, 1]);
+const lkAuth = await app.fetch(new Request("http://x/v1/business/bank/lookup?routing=110000000"), env, ctx);
+eq("signed-out callers get 401", lkAuth.status, 401);
+let limited = 0; for (let i = 0; i < 70; i++) if ((await look(B, "110000000")).status === 429) limited++;
+eq("the lookup is rate limited per account", limited > 0, true);
+
+// ---- the brand chosen on the form is saved with the bank
+const P = await merchant("Pitch", "pitch@x.test");
+const bad = await call("PUT", "/v1/business/bank", { token: P.session_token, body: { routing_number: "110000000", account_number: "0001234567", institution_id: lk1.json.bank.choices[0].id } });
+eq("a brand that does not belong to this routing number is refused", [bad.status, bad.json.error, (await q("select count(*)::int n from bank_accounts where account_id = $1", [P.account_id]))[0].n], [422, "invalid_choice", 0]);
+const mercuryChoice = lk1.json.bank.choices.find((x: any) => x.name === "Mercury");
+const okp = await call("PUT", "/v1/business/bank", { token: P.session_token, body: { routing_number: "101050001", account_number: "0001234567", institution_id: mercuryChoice.id } });
+eq("saving with the brand picked on the form: reads Mercury at once and does not ask again", [okp.status, okp.json.bank.institution.name, okp.json.bank.institution.needs_choice], [201, "Mercury", false]);
+
 // matching reads the institutions once per batch, however many routing numbers wait; reading a bank does no matching at all
 for (let n = 0; n < 40; n++) await q("insert into routing_numbers (routing_number, directory_name) values ($1, 'ZZZ UNKNOWN BANK') on conflict do nothing", [String(900000000 + n)]);
 const seen: string[] = [];

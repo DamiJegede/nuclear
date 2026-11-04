@@ -17,7 +17,7 @@ import { n } from "../lib/money";
 import { requireOwner, requireSession } from "../session";
 import { closeOut } from "../lib/settlement";
 import { RULES, byAccount, rateLimit } from "../lib/throttle";
-import { abaOk, ACCOUNT_BANK_COLS, ACCOUNT_BANK_FROM, bankChoices, bankView, ensureRouting, refreshBank, type AccountBank } from "../lib/banks";
+import { abaOk, ACCOUNT_BANK_COLS, ACCOUNT_BANK_FROM, bankChoices, bankView, ensureRouting, lookupRouting, refreshBank, type AccountBank } from "../lib/banks";
 import type { Sql } from "../db";
 import { businessTabsRoutes } from "./businessTabs";
 import { releaseHoldsOfMerchant } from "../lib/tabs";
@@ -210,6 +210,15 @@ business.get("/bank", async (c) => {
   return c.json({ bank: await bankJson(sql, r, r ? await accountBank(sql, r.id, accountId) : null) });
 });
 
+// What the bank form shows once a routing number is typed (before anything is saved): the bank, instant or not, and the brands to pick from when it
+// is a partner bank. Same cache as saving; a number the directory does not know answers `bank: null` and leaves nothing behind.
+business.get("/bank/lookup", rateLimit("bank-lookup", RULES.bankLookup, byAccount), async (c) => {
+  const routing = c.req.query("routing") ?? "";
+  if (!/^\d{9}$/.test(routing) || !abaOk(routing)) return c.json({ error: "invalid_routing_number" }, 422);
+  const r = await lookupRouting(c.env, c.get("sql"), routing);
+  return c.json({ bank: r ? bankView(r.bank, r.choices, false) : null });
+});
+
 // The merchant says which brand this bank account is when its routing number belongs to a partner bank that several brands run on (Column: Mercury,
 // Brex...). Only the brands of that partner, or the partner itself, are accepted; the pick belongs to this bank account alone.
 business.put("/bank/institution", async (c) => {
@@ -231,7 +240,7 @@ business.put("/bank/institution", async (c) => {
 // Set or replace the payout bank: the previous one is marked removed. Needs the business profile first. The bank (by routing number) is looked up
 // once for everyone (lib/banks.ts): the answer says whether payouts can be instant; a lookup that fails or is slow never blocks saving the bank.
 business.put("/bank", async (c) => {
-  const b = z.object({ routing_number: z.string().trim().regex(/^\d{9}$/), account_number: z.string().trim().regex(/^\d{4,17}$/) }).safeParse(await c.req.json().catch(() => null));
+  const b = z.object({ routing_number: z.string().trim().regex(/^\d{9}$/), account_number: z.string().trim().regex(/^\d{4,17}$/), institution_id: uuid.optional() }).safeParse(await c.req.json().catch(() => null));
   if (!b.success) return c.json({ error: "invalid_request" }, 400);
   if (!abaOk(b.data.routing_number)) return c.json({ error: "invalid_routing_number" }, 422);
   const { accountId } = c.get("auth");
@@ -242,12 +251,19 @@ business.put("/bank", async (c) => {
   const account = encryptBankField(c.env.BANK_ENCRYPTION_KEY, accountId, "account", b.data.account_number);
   const sql = c.get("sql");
   const bank = await ensureRouting(sql, routing);
+  // A brand picked on the form (Mercury on Column) must be one of this routing number's choices, found once its answer is in.
+  let picked: string | null = null;
+  if (b.data.institution_id) {
+    const looked = await lookupRouting(c.env, sql, routing);
+    if (!looked?.choices.some((x) => x.id === b.data.institution_id)) return c.json({ error: "invalid_choice" }, 422);
+    picked = b.data.institution_id;
+  }
   const out = await sql.begin(async (tx) => {
     const [p] = await tx<{ bank_account_id: string | null }[]>`select bank_account_id from businesses where account_id = ${accountId} for no key update`;
     if (!p) return { error: "profile_required" as const };
     const [n] = await tx<BankAccountRow[]>`
-      insert into bank_accounts (account_id, routing_number, account_number, last4, routing_number_id)
-      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}, ${bank.id}) returning id, last4, status, created_at, routing_number_id`;
+      insert into bank_accounts (account_id, routing_number, account_number, last4, routing_number_id, institution_id)
+      values (${accountId}, ${routing}, ${account}, ${b.data.account_number.slice(-4)}, ${bank.id}, ${picked}) returning id, last4, status, created_at, routing_number_id`;
     await tx`update businesses set bank_account_id = ${n!.id} where account_id = ${accountId}`;
     if (p.bank_account_id) await tx`update bank_accounts set status = 'removed' where id = ${p.bank_account_id} and account_id = ${accountId}`;
     return { bank: n! };

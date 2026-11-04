@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
-import { ApiError, type Account, type Api, type BusinessDocument, type Device, type Payout, type PayoutBank as Bank, type Profile as BusinessProfile, type TaxSettings } from "../api";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ApiError, type Account, type Api, type BusinessDocument, type Device, type Institution, type Payout, type PayoutBank as Bank, type Profile as BusinessProfile, type TaxSettings } from "../api";
 import { money } from "../format";
 import { digitsOnly } from "../inputs";
 import { drop } from "../cache";
@@ -340,7 +340,7 @@ const speedNotice = (b: { name: string | null; instant: boolean | null } | null)
 
 /** Where settlements will be paid. Only the last four digits of the account are ever shown; Edit reveals the change and remove buttons. */
 function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
-  const { data, failed, retry } = useList<Bank | null>(useCallback(() => api.bank(), [api]), onError, "bank");
+  const { data, failed, loaded, retry } = useList<Bank | null>(useCallback(() => api.bank(), [api]), onError, "bank");
   const payouts = useList<Payout[]>(useCallback(() => api.payouts(), [api]), onError, "payouts");
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -351,6 +351,17 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
+  // What the form learns when a full routing number is typed or pasted: the bank (null = unknown or still looking) and, for a partner bank, the brand picked.
+  const [found, setFound] = useState<{ routing: string; bank: Institution | null } | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
+  useEffect(() => {
+    setPick(null);
+    if (routing.length !== 9) { setFound(null); return; }
+    let live = true;
+    api.lookupBank(routing).then((bank) => { if (live) setFound({ routing, bank }); }).catch(() => { if (live) setFound({ routing, bank: null }); });
+    return () => { live = false; };
+  }, [api, routing]);
+  const looked = found?.routing === routing ? found.bank : null;
 
   async function choose(id: string) {
     setBusy(true); setError(null);
@@ -366,7 +377,7 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
     if (account.length < 4 || account.length > 17) return setError("The account number is 4 to 17 digits.");
     setBusy(true);
     try {
-      const saved = await api.saveBank({ routing_number: routing, account_number: account });
+      const saved = await api.saveBank({ routing_number: routing, account_number: account, ...(pick ? { institution_id: pick } : {}) });
       setNotice(speedNotice(saved.institution));
       setAdding(false); setEditing(false); setRouting(""); setAccount(""); retry();
       if (saved.institution?.needs_choice) setChoosing(true);
@@ -384,7 +395,7 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
   return (
     <EditCard title="Payout Bank" editing={editing} onToggle={() => { setEditing((e) => !e); setError(null); }}>
       {failed && !data ? <p className="error" role="alert">Couldn't load the bank. <button className="link" onClick={retry}>Try Again</button></p>
-        : data === null && !failed ? <p className="muted" role="status">Loading…</p>
+        : !loaded && !failed ? <p className="muted" role="status">Loading…</p>
         : null}
       {data ? (
         <>
@@ -396,7 +407,7 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
           <p className="sub">{data.institution?.instant === true ? "Instant payouts" : "Same-day ACH payouts"}</p>
           {data.institution?.needs_choice && <p className="hint">Is this {data.institution.name} or a bank built on it? <button type="button" className="link" onClick={() => { setError(null); setChoosing(true); }}>Choose Your Bank</button></p>}
         </>
-      ) : data === null && failed ? null : <p className="dim">No payout bank yet.</p>}
+      ) : loaded ? <p className="dim">No payout bank yet.</p> : null}
       {notice && <p role="status" className="hint">{notice}</p>}
       {editing && (
         <div className="modal-actions left">
@@ -427,6 +438,31 @@ function PayoutBank({ api, onError }: { api: Api; onError: (e: unknown) => void 
           <form onSubmit={save} className="modal-form">
             <div className="fields">
               <label className="wide">Routing number<input inputMode="numeric" maxLength={9} autoComplete="off" value={routing} onChange={(e) => setRouting(digitsOnly(e.target.value))} /></label>
+              {routing.length === 9 && found?.routing === routing && looked && (
+                <div className="wide bank-found" aria-live="polite">
+                  {looked.choices?.length ? (
+                    <>
+                      <p className="hint">This routing number belongs to {looked.choices[looked.choices.length - 1]?.name}, which other banks and apps are built on. Choose the one you bank with.</p>
+                      <ul className="bank-choices">
+                        {looked.choices.map((c) => (
+                          <li key={c.id}>
+                            <button type="button" className={`ghost bank-choice${pick === c.id ? " selected" : ""}`} aria-pressed={pick === c.id} onClick={() => setPick(c.id)}>
+                              {c.icon ? <img className="bank-icon" src={c.icon} alt="" /> : <span className="bank-glyph" aria-hidden="true">🏦</span>}
+                              <span>{c.name}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="bank-line">
+                      {looked.icon ? <img className="bank-icon" src={looked.icon} alt="" /> : <span className="bank-glyph" aria-hidden="true">🏦</span>}
+                      <span className="bank-name">{looked.name ?? "Your bank"}</span>
+                    </p>
+                  )}
+                  {(!looked.choices?.length || pick) && <p className="hint">{speedNotice(pick ? { name: looked.choices?.find((c) => c.id === pick)?.name ?? looked.name, instant: looked.instant } : looked)}</p>}
+                </div>
+              )}
               <label className="wide">Account number<input inputMode="numeric" maxLength={17} autoComplete="off" value={account} onChange={(e) => setAccount(digitsOnly(e.target.value))} /></label>
             </div>
             {error && <p className="error" role="alert">{error}</p>}
