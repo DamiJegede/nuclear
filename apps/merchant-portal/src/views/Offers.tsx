@@ -32,13 +32,14 @@ export function Offers({ api, onError }: { api: Api; onError: (e: unknown) => vo
           : data.length === 0 ? <p className="muted pad">No offers yet. Add one, such as buy one get one free.</p>
           : (
             <table>
-              <thead><tr><th scope="col">Offer</th><th scope="col">Rule</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">Offer</th><th scope="col">Rule</th><th scope="col">When</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {data.map((o) => (
                   <tr key={o.id}>
                     <th scope="row">{o.name}</th>
                     <td>{o.description}</td>
-                    <td><span className={`pill ${o.active ? "available" : "pending"}`}>{o.active ? "active" : "off"}</span></td>
+                    <td>{o.schedule_text ?? <span className="muted">Always</span>}</td>
+                    <td><span className={`pill ${o.active && o.live_now ? "available" : "pending"}`}>{!o.active ? "off" : o.live_now ? "active" : "scheduled"}</span></td>
                     <td className="actions">
                       <RowMenu label={`Actions for ${o.name}`} items={[
                         { label: o.active ? "Turn Off" : "Turn On", onSelect: () => void api.updateOffer(o.id, { active: !o.active }).then(retry).catch(onError) },
@@ -65,6 +66,7 @@ export function Offers({ api, onError }: { api: Api; onError: (e: unknown) => vo
   );
 }
 
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DISCOUNTS: { label: string; percent: number | "custom" }[] = [{ label: "Free", percent: 100 }, { label: "Half price", percent: 50 }, { label: "Custom", percent: "custom" }];
 
 /** A product choice with a search box: the list is read from the server by name, so a long catalogue is never cut off. */
@@ -99,14 +101,27 @@ function OfferForm({ api, offer, onSaved, onClose, onError }: { api: Api; offer?
   const [kind, setKind] = useState<number | "custom">(preset);
   const [custom, setCustom] = useState(offer && preset === "custom" ? String(offer.percent_off) : "25");
   const [name, setName] = useState(offer?.name ?? "");
+  const sch = offer?.schedule;
+  const [scheduled, setScheduled] = useState(!!(sch && (sch.days || sch.from_time || sch.starts_on || sch.ends_on)));
+  const [days, setDays] = useState<number[]>(sch?.days ?? [1, 2, 3, 4, 5, 6, 7]);
+  const [fromTime, setFromTime] = useState(sch?.from_time ?? "");
+  const [toTime, setToTime] = useState(sch?.to_time ?? "");
+  const [startsOn, setStartsOn] = useState(sch?.starts_on ?? "");
+  const [endsOn, setEndsOn] = useState(sch?.ends_on ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const percent = kind === "custom" ? Number(custom) : kind;
-  const ok = !!buy.id && (same || !!get.id) && Number(buyQty) >= 1 && Number(getQty) >= 1 && Number.isInteger(percent) && percent >= 1 && percent <= 100;
+  const timesOk = (!fromTime && !toTime) || (!!fromTime && !!toTime && fromTime !== toTime);
+  const datesOk = !startsOn || !endsOn || startsOn <= endsOn;
+  const scheduleOk = !scheduled || (days.length > 0 && timesOk && datesOk);
+  const ok = !!buy.id && (same || !!get.id) && Number(buyQty) >= 1 && Number(getQty) >= 1 && Number.isInteger(percent) && percent >= 1 && percent <= 100 && scheduleOk;
 
   async function save() {
     setBusy(true); setError(null);
-    const input = { buy_product_id: buy.id, buy_qty: Number(buyQty), get_product_id: same ? null : get.id, get_qty: Number(getQty), percent_off: percent, ...(name.trim() ? { name: name.trim() } : {}) };
+    const when = scheduled
+      ? { days: days.length === 7 ? null : days, from_time: fromTime || null, to_time: toTime || null, starts_on: startsOn || null, ends_on: endsOn || null }
+      : { days: null, from_time: null, to_time: null, starts_on: null, ends_on: null };
+    const input = { buy_product_id: buy.id, buy_qty: Number(buyQty), get_product_id: same ? null : get.id, get_qty: Number(getQty), percent_off: percent, ...when, ...(name.trim() ? { name: name.trim() } : {}) };
     try { if (offer) await api.updateOffer(offer.id, input); else await api.createOffer(input); onSaved(); }
     catch (e) { onError(e); setError("Couldn't save the offer. Try again."); }
     finally { setBusy(false); }
@@ -129,6 +144,29 @@ function OfferForm({ api, offer, onSaved, onClose, onError }: { api: Api; offer?
           ))}
         </fieldset>
         {kind === "custom" && <label>Percent off<input inputMode="numeric" value={custom} maxLength={3} onChange={(e) => setCustom(e.target.value.replace(/\D/g, ""))} /></label>}
+        <fieldset className="choice-grid" role="radiogroup" aria-label="When">
+          <label className="choice"><input type="radio" name="when" checked={!scheduled} onChange={() => setScheduled(false)} /><span>Always</span></label>
+          <label className="choice"><input type="radio" name="when" checked={scheduled} onChange={() => setScheduled(true)} /><span>On a schedule</span></label>
+        </fieldset>
+        {scheduled && (
+          <div className="schedule">
+            <div className="day-chips" role="group" aria-label="Days">
+              {DAYS.map((d, i) => <button key={d} type="button" className={days.includes(i + 1) ? "chip active" : "chip ghost"} aria-pressed={days.includes(i + 1)} onClick={() => setDays(days.includes(i + 1) ? days.filter((x) => x !== i + 1) : [...days, i + 1].sort())}>{d}</button>)}
+            </div>
+            <div className="inline">
+              <label>From<input type="time" aria-label="From time" value={fromTime} onChange={(e) => setFromTime(e.target.value)} /></label>
+              <label>Until<input type="time" aria-label="Until time" value={toTime} onChange={(e) => setToTime(e.target.value)} /></label>
+            </div>
+            <div className="inline">
+              <label>Starts on<input type="date" aria-label="Starts on" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} /></label>
+              <label>Ends on<input type="date" aria-label="Ends on" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} /></label>
+            </div>
+            <p className="note muted">Times are New York time, like your reports. Leave the times empty for all day and the dates empty for no end. A window that ends before it starts, such as 10 PM to 2 AM, runs past midnight.</p>
+            {!timesOk && <p className="error" role="alert">Set both times, and make them different.</p>}
+            {!datesOk && <p className="error" role="alert">The start date is after the end date.</p>}
+            {days.length === 0 && <p className="error" role="alert">Pick at least one day.</p>}
+          </div>
+        )}
         <label>Name (optional)<input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder="Shown to customers; we write one if you leave it empty" /></label>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions"><button type="button" className="ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" disabled={busy || !ok}>Save</button></div>

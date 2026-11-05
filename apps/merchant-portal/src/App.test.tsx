@@ -26,7 +26,7 @@ function fakeApi(over: Partial<Api> = {}): Api {
     documents: vi.fn().mockResolvedValue([]),
     devices: vi.fn().mockResolvedValue([]),
     overview: vi.fn().mockResolvedValue({ balance: 125000, balance_pending: 0, terminals: { count: 1, paired: 1 }, pending_refunds: { count: 0, amount: 0 }, staff: { count: 0, writers: 0 }, open_orders: 0, city: "Brooklyn", state: "NY", categories: 0, products: 0, best_seller: null, today: { transactions: 0, since: null, closed_out_at: null }, yesterday: { net: 0 }, payout_bank: null }),
-    report: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-10-30", today: "2026-10-30", fees: 0, total: { payments: 3, sales: 4640, refunds: 1, refunded: 432, tips: 300, taxable: 3000, exempt: 1400, tax: 247, tax_refunded: 33, net: 4208, net_tax: 214 }, days: [{ date: "2026-10-29", payments: 1, sales: 1546, refunds: 0, refunded: 0, tips: 0, taxable: 1197, exempt: 250, tax: 99, tax_refunded: 0 }, { date: "2026-10-30", payments: 2, sales: 3094, refunds: 1, refunded: 432, tips: 300, taxable: 1803, exempt: 1150, tax: 148, tax_refunded: 33 }] }),
+    report: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-10-30", today: "2026-10-30", fees: 0, total: { payments: 3, sales: 4640, refunds: 1, refunded: 432, tips: 300, taxable: 3000, exempt: 1400, tax: 247, tax_refunded: 33, discounts: 900, offers: 700, net: 4208, net_tax: 214 }, days: [{ date: "2026-10-29", payments: 1, sales: 1546, refunds: 0, refunded: 0, tips: 0, taxable: 1197, exempt: 250, tax: 99, tax_refunded: 0, discounts: 0, offers: 0 }, { date: "2026-10-30", payments: 2, sales: 3094, refunds: 1, refunded: 432, tips: 300, taxable: 1803, exempt: 1150, tax: 148, tax_refunded: 33, discounts: 900, offers: 700 }] }),
     sales: vi.fn().mockResolvedValue({ period: "week", from: "2026-10-26", to: "2026-11-01", today: "2026-10-30", fees: 0, total: 5000, days: [{ date: "2026-10-26", sales: 0, payments: 0 }, { date: "2026-10-27", sales: 2000, payments: 2 }, { date: "2026-10-28", sales: 0, payments: 0 }, { date: "2026-10-29", sales: 1000, payments: 1 }, { date: "2026-10-30", sales: 2000, payments: 1 }, { date: "2026-10-31", sales: 0, payments: 0 }, { date: "2026-11-01", sales: 0, payments: 0 }] }),
     payouts: vi.fn().mockResolvedValue([]),
     taxSettings: vi.fn().mockResolvedValue({ tax_rate: 0, tax_included: false }),
@@ -437,7 +437,8 @@ describe("tables and tabs", () => {
     expect(createTable).toHaveBeenCalledWith({ name: "Bar" });
   });
 
-  const OFFER = { id: "o-1", name: "Buy Beer, get 1 free", description: "Buy Beer, get 1 free", buy_product_id: "p-beer", buy_product_name: "Beer", buy_qty: 1, get_product_id: "p-beer", get_product_name: "Beer", get_qty: 1, percent_off: 100, same_product: true, active: true, created_at: "2026-11-05T12:00:00Z" };
+  const NEVER = { days: null, from_time: null, to_time: null, starts_on: null, ends_on: null };
+  const OFFER = { schedule: NEVER, schedule_text: null, live_now: true, id: "o-1", name: "Buy Beer, get 1 free", description: "Buy Beer, get 1 free", buy_product_id: "p-beer", buy_product_name: "Beer", buy_qty: 1, get_product_id: "p-beer", get_product_name: "Beer", get_qty: 1, percent_off: 100, same_product: true, active: true, created_at: "2026-11-05T12:00:00Z" };
   const PRODUCTS = { products: [{ id: "p-beer", name: "Beer", active: true }, { id: "p-wine", name: "Wine", active: true }], next_cursor: null, total: 2 };
 
   it("lists the offers in words and turns one off", async () => {
@@ -452,6 +453,27 @@ describe("tables and tabs", () => {
     expect(updateOffer).toHaveBeenCalledWith("o-1", { active: false });
   });
 
+  it("shows when an offer applies and saves a happy hour schedule", async () => {
+    const HAPPY = { ...OFFER, id: "o-2", name: "Happy hour", schedule: { days: [1, 2, 3, 4, 5], from_time: "16:00", to_time: "18:00", starts_on: null, ends_on: null }, schedule_text: "Mon–Fri, 4–6 PM", live_now: false };
+    const createOffer = vi.fn().mockResolvedValue(HAPPY);
+    const { user } = await signIn(fakeApi({ offers: vi.fn().mockResolvedValue([OFFER, HAPPY]), createOffer, products: vi.fn().mockResolvedValue(PRODUCTS) } as Partial<Api>));
+    await NAVTO(user, "Offers");
+    const row = (await screen.findByRole("rowheader", { name: "Happy hour" })).closest("tr")!;
+    expect(within(row).getByText("Mon–Fri, 4–6 PM")).toBeInTheDocument();
+    expect(within(row).getByText("scheduled")).toBeInTheDocument();
+    expect(within((await screen.findByRole("rowheader", { name: "Buy Beer, get 1 free" })).closest("tr")!).getByText("Always")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add Offer" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Customer buys" }), "p-beer");
+    await user.click(screen.getByRole("radio", { name: "On a schedule" }));
+    await user.click(screen.getByRole("button", { name: "Sat" }));
+    await user.click(screen.getByRole("button", { name: "Sun" }));
+    await user.type(screen.getByLabelText("From time"), "16:00");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();       // one time without the other
+    await user.type(screen.getByLabelText("Until time"), "18:00");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: null, get_qty: 1, percent_off: 100, days: [1, 2, 3, 4, 5], from_time: "16:00", to_time: "18:00", starts_on: null, ends_on: null });
+  });
+
   it("adds a buy-one-get-one-free offer, and a buy-this-get-that half price offer", async () => {
     const createOffer = vi.fn().mockResolvedValue(OFFER);
     const { user } = await signIn(fakeApi({ offers: vi.fn().mockResolvedValue([]), createOffer, products: vi.fn().mockResolvedValue(PRODUCTS) } as Partial<Api>));
@@ -459,14 +481,14 @@ describe("tables and tabs", () => {
     await user.click(await screen.findByRole("button", { name: "Add Offer" }));
     await user.selectOptions(await screen.findByRole("combobox", { name: "Customer buys" }), "p-beer");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: null, get_qty: 1, percent_off: 100 });
+    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: null, get_qty: 1, percent_off: 100, ...NEVER });
     await user.click(await screen.findByRole("button", { name: "Add Offer" }));
     await user.selectOptions(await screen.findByRole("combobox", { name: "Customer buys" }), "p-beer");
     await user.click(screen.getByRole("radio", { name: "Another product" }));
     await user.selectOptions(await screen.findByRole("combobox", { name: "Customer gets" }), "p-wine");
     await user.click(screen.getByRole("radio", { name: "Half price" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: "p-wine", get_qty: 1, percent_off: 50 });
+    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: "p-wine", get_qty: 1, percent_off: 50, ...NEVER });
   });
 
   it("shows a tab's people, who covers whom, items and who pays; staff void an item and clear the table", async () => {
@@ -509,6 +531,8 @@ describe("reports", () => {
     expect(await screen.findByRole("heading", { name: "Reports" })).toBeInTheDocument();
     expect(await within(await screen.findByRole("article", { name: "Net sales" })).findByText("$42.08")).toBeInTheDocument();
     expect(within(screen.getByRole("article", { name: "Sales tax" })).getByText("$2.14")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "Discounts" })).getByText("$9.00")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "Discounts" })).getByText("$7.00 from offers")).toBeInTheDocument();
     const rows = within(screen.getByRole("table")).getAllByRole("row").map((r) => r.textContent);
     expect(rows[1]).toContain("Oct 30");
     expect(rows[2]).toContain("Oct 29");

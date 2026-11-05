@@ -29,7 +29,8 @@ export default function Menu(props) {
        <h2>Offers</h2>
        <ul style={{ 'list-style': 'none', padding: 0 }}>
         <For each={menu().offers}>{(o) => (
-         <li style={{ padding: '0.5rem 0', 'border-bottom': '1px solid #8883' }}><strong>{o.name}</strong>{o.name !== o.description ? <span style={{ opacity: 0.7 }}> · {o.description}</span> : null}</li>
+         <li style={{ padding: '0.5rem 0', 'border-bottom': '1px solid #8883' }}><strong>{o.name}</strong>{o.name !== o.description ? <span style={{ opacity: 0.7 }}> · {o.description}</span> : null}
+          {o.schedule_text ? <div style={{ opacity: 0.7 }}>{o.schedule_text} · {o.live_now ? 'on now' : 'not on right now'}</div> : null}</li>
         )}</For>
        </ul>
        <p style={{ opacity: 0.7 }}>Offers are applied to your order automatically.</p>

@@ -244,7 +244,7 @@ A checkout is settled by at most one completed pay transaction (unique index on 
 
 ## offers
 
-A merchant's "buy X, get Y free or part price" deals (docs/OFFERS.md; migration 0016). Applied by the SQL function `app_offers` before sales tax; the offer a line was priced by is snapshotted on the checkout line (`items[].offer`).
+A merchant's "buy X, get Y free or part price" deals (docs/OFFERS.md; migration 0016). Applied by the SQL function `app_offers` before sales tax, only while `offer_live(offer, now)` (docs/OFFERS.md); the offer a line was priced by is snapshotted on the checkout line (`items[].offer`: id, name, percent_off and `amount`, the part price per unit in cents).
 
 | Field | Description |
 | --- | --- |
@@ -257,6 +257,9 @@ A merchant's "buy X, get Y free or part price" deals (docs/OFFERS.md; migration 
 | get_qty | 1-20 units given per set. |
 | percent_off | 1-100; 100 = free. Rounded down on the price after the product's own discount. |
 | active | Whether the offer applies. |
+| days | Nullable smallint[] of ISO weekdays 1-7 the offer applies on; NULL = every day. |
+| from_time, to_time | Nullable time pair (both or neither, never equal), New York time. to_time before from_time = past midnight, belonging to the day it started. |
+| starts_on, ends_on | Nullable dates (New York), first and last day the offer applies, starts_on <= ends_on. |
 | created_at, updated_at | Timestamps. |
 
 ## tips
@@ -490,6 +493,8 @@ Why a members table next to the items: a person who joined but has not ordered, 
 ## merchant_snapshots
 
 (Migration 0013 adds `taxable_v`, `exempt_v`, `tax_v` and `tax_refunded_v`: item sales on taxed lines, item sales on lines without tax, sales tax collected on completed payments, sales tax returned by completed refunds. Days before sales tax existed are rightly zero.)
+
+(Migration 0017 adds `discounts_v` (line discount × units on completed payments: products' own discounts and offers) and `offers_v` (the offers' part); the days already snapshotted were filled by the migration. Refunds do not reduce them.)
 
 One final row per merchant per program day (America/New_York) that had activity, written by the nightly cron (`app_merchant_snapshot(from, to)`, migration 0011, which also backfilled the days before it). The merchant transaction list reads its counts and completed totals from these rows for finished days, counts the days after the last one live (normally today) and always counts refund requests (pending, rejected: a pending one changes state) live, so the cost depends on the days in the period, not its transactions. `system.merchant_snapshot_day` is the last day covered.
 

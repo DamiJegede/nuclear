@@ -51,11 +51,12 @@ export async function merchantDailySales(sql: Sql, merchantId: string, from: str
   return days;
 }
 
-export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number };
-const ZERO = (date: string): ReportDay => ({ date, payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0 });
-type StatRow = { d: string; pay_done_n: bigint; pay_v: bigint; refund_done_n: bigint; refund_v: bigint; tips_v: bigint; taxable_v: bigint; exempt_v: bigint; tax_v: bigint; tax_refunded_v: bigint };
+export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number;
+  /** Line discounts x units on completed payments (products' own discounts and offers), and the part offers gave. Not reduced by refunds. */ discounts: number; offers: number };
+const ZERO = (date: string): ReportDay => ({ date, payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0, discounts: 0, offers: 0 });
+type StatRow = { d: string; pay_done_n: bigint; pay_v: bigint; refund_done_n: bigint; refund_v: bigint; tips_v: bigint; taxable_v: bigint; exempt_v: bigint; tax_v: bigint; tax_refunded_v: bigint; discounts_v: bigint; offers_v: bigint };
 const dayOf = (r: StatRow): ReportDay => ({ date: r.d, payments: Number(r.pay_done_n), sales: Number(r.pay_v), refunds: Number(r.refund_done_n), refunded: Number(r.refund_v), tips: Number(r.tips_v),
-  taxable: Number(r.taxable_v), exempt: Number(r.exempt_v), tax: Number(r.tax_v), tax_refunded: Number(r.tax_refunded_v) });
+  taxable: Number(r.taxable_v), exempt: Number(r.exempt_v), tax: Number(r.tax_v), tax_refunded: Number(r.tax_refunded_v), discounts: Number(r.discounts_v), offers: Number(r.offers_v) });
 
 /**
  * The merchant's daily report for `from..to` (inclusive, at most 92 days, every day present): completed sales and refunds, tips, taxable and exempt item sales,
@@ -68,13 +69,13 @@ export async function merchantDailyReport(sql: Sql, merchantId: string, from: st
   if (!marker || from <= marker) {
     const snapTo = marker && marker < to ? marker : to;
     for (const r of await sql<StatRow[]>`
-      select snapshot_date::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v from merchant_snapshots
+      select snapshot_date::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v, discounts_v, offers_v from merchant_snapshots
        where merchant_account_id = ${merchantId} and snapshot_date >= ${from}::date and snapshot_date <= ${snapTo}::date`) got.set(r.d, dayOf(r));
   }
   const liveFrom = marker && marker >= from ? addDays(marker, 1) : from;
   if (liveFrom <= to) {
     for (const r of await sql<StatRow[]>`
-      select day::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v
+      select day::text as d, pay_done_n, pay_v, refund_done_n, refund_v, tips_v, taxable_v, exempt_v, tax_v, tax_refunded_v, discounts_v, offers_v
         from merchant_day_stats(${liveFrom}::date, ${to}::date, ${merchantId})`) got.set(r.d, dayOf(r));
   }
   const days: ReportDay[] = [];

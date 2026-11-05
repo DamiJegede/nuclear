@@ -74,7 +74,7 @@ business.get("/report", async (c) => {
   const [from, to] = periodRange(period as ReportPeriod, today);
   const days = await merchantDailyReport(c.get("sql"), c.get("auth").accountId, from, to > today ? today : to);
   const total = days.reduce((a, d) => ({ payments: a.payments + d.payments, sales: a.sales + d.sales, refunds: a.refunds + d.refunds, refunded: a.refunded + d.refunded, tips: a.tips + d.tips,
-    taxable: a.taxable + d.taxable, exempt: a.exempt + d.exempt, tax: a.tax + d.tax, tax_refunded: a.tax_refunded + d.tax_refunded }), { payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0 });
+    taxable: a.taxable + d.taxable, exempt: a.exempt + d.exempt, tax: a.tax + d.tax, tax_refunded: a.tax_refunded + d.tax_refunded, discounts: a.discounts + d.discounts, offers: a.offers + d.offers }), { payments: 0, sales: 0, refunds: 0, refunded: 0, tips: 0, taxable: 0, exempt: 0, tax: 0, tax_refunded: 0, discounts: 0, offers: 0 });
   return c.json({ period, from, to: to > today ? today : to, today, fees: 0, total: { ...total, net: total.sales - total.refunded, net_tax: total.tax - total.tax_refunded }, days });
 });
 

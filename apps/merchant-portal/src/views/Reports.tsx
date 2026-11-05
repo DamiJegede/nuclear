@@ -20,10 +20,10 @@ export function Reports({ api, onError }: { api: Api; onError: (e: unknown) => v
 
   function download() {
     if (!data) return;
-    const lines = ["Date,Payments,Sales,Refunds,Net sales,Taxable sales,Exempt sales,Sales tax collected,Sales tax returned,Tips"];
-    for (const d of data.days) lines.push([d.date, d.payments, dollars(d.sales), dollars(d.refunded), dollars(d.sales - d.refunded), dollars(d.taxable), dollars(d.exempt), dollars(d.tax), dollars(d.tax_refunded), dollars(d.tips)].join(","));
+    const lines = ["Date,Payments,Sales,Refunds,Net sales,Discounts,Of which offers,Taxable sales,Exempt sales,Sales tax collected,Sales tax returned,Tips"];
+    for (const d of data.days) lines.push([d.date, d.payments, dollars(d.sales), dollars(d.refunded), dollars(d.sales - d.refunded), dollars(d.discounts), dollars(d.offers), dollars(d.taxable), dollars(d.exempt), dollars(d.tax), dollars(d.tax_refunded), dollars(d.tips)].join(","));
     const t = data.total;
-    lines.push(["Total", t.payments, dollars(t.sales), dollars(t.refunded), dollars(t.net), dollars(t.taxable), dollars(t.exempt), dollars(t.tax), dollars(t.tax_refunded), dollars(t.tips)].join(","));
+    lines.push(["Total", t.payments, dollars(t.sales), dollars(t.refunded), dollars(t.net), dollars(t.discounts), dollars(t.offers), dollars(t.taxable), dollars(t.exempt), dollars(t.tax), dollars(t.tax_refunded), dollars(t.tips)].join(","));
     const url = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url; a.download = `report-${data.from}-to-${data.to}.csv`; a.click();
@@ -43,6 +43,7 @@ export function Reports({ api, onError }: { api: Api; onError: (e: unknown) => v
         <>
           <div className="grid reports-summary">
             <article className="card" aria-label="Net sales"><h2>Net Sales</h2><p className="big">{money(data.total.net)}</p><p className="sub">{money(data.total.sales)} sales, {money(data.total.refunded)} refunded</p></article>
+            <article className="card" aria-label="Discounts"><h2>Discounts</h2><p className="big">{money(data.total.discounts)}</p><p className="sub">{money(data.total.offers)} from offers</p></article>
             <article className="card" aria-label="Sales tax"><h2>Sales Tax</h2><p className="big">{money(data.total.net_tax)}</p><p className="sub">{money(data.total.tax)} collected, {money(data.total.tax_refunded)} returned</p></article>
             <article className="card" aria-label="Taxable and exempt"><h2>Taxable Sales</h2><p className="big">{money(data.total.taxable)}</p><p className="sub">{money(data.total.exempt)} exempt</p></article>
             <article className="card" aria-label="Tips"><h2>Tips</h2><p className="big">{money(data.total.tips)}</p><p className="sub">{int(data.total.payments)} payment{data.total.payments === 1 ? "" : "s"}</p></article>
@@ -50,21 +51,21 @@ export function Reports({ api, onError }: { api: Api; onError: (e: unknown) => v
           <div className="card flush">
             <div className="table-wrap">
               <table>
-                <thead><tr><th scope="col">Day</th><th scope="col" className="num">Payments</th><th scope="col" className="num">Sales</th><th scope="col" className="num">Refunds</th><th scope="col" className="num">Net</th><th scope="col" className="num">Tax Collected</th><th scope="col" className="num">Tax Returned</th><th scope="col" className="num">Tips</th></tr></thead>
+                <thead><tr><th scope="col">Day</th><th scope="col" className="num">Payments</th><th scope="col" className="num">Sales</th><th scope="col" className="num">Refunds</th><th scope="col" className="num">Net</th><th scope="col" className="num">Discounts</th><th scope="col" className="num">Tax Collected</th><th scope="col" className="num">Tax Returned</th><th scope="col" className="num">Tips</th></tr></thead>
                 <tbody>
                   {[...data.days].reverse().map((d) => (
                     <tr key={d.date}>
                       <th scope="row">{dayLabel(d.date)}</th>
-                      <td className="num">{int(d.payments)}</td><td className="num">{money(d.sales)}</td><td className="num">{money(d.refunded)}</td><td className="num">{money(d.sales - d.refunded)}</td>
+                      <td className="num">{int(d.payments)}</td><td className="num">{money(d.sales)}</td><td className="num">{money(d.refunded)}</td><td className="num">{money(d.sales - d.refunded)}</td><td className="num">{money(d.discounts)}</td>
                       <td className="num">{money(d.tax)}</td><td className="num">{money(d.tax_refunded)}</td><td className="num">{money(d.tips)}</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot><tr><th scope="row">Total</th><td className="num">{int(data.total.payments)}</td><td className="num">{money(data.total.sales)}</td><td className="num">{money(data.total.refunded)}</td><td className="num">{money(data.total.net)}</td><td className="num">{money(data.total.tax)}</td><td className="num">{money(data.total.tax_refunded)}</td><td className="num">{money(data.total.tips)}</td></tr></tfoot>
+                <tfoot><tr><th scope="row">Total</th><td className="num">{int(data.total.payments)}</td><td className="num">{money(data.total.sales)}</td><td className="num">{money(data.total.refunded)}</td><td className="num">{money(data.total.net)}</td><td className="num">{money(data.total.discounts)}</td><td className="num">{money(data.total.tax)}</td><td className="num">{money(data.total.tax_refunded)}</td><td className="num">{money(data.total.tips)}</td></tr></tfoot>
               </table>
             </div>
           </div>
-          <p className="muted note">Days run midnight to midnight New York time. Sales are completed payments (tips and tax included); the tax columns are what your orders recorded, for your own filing.</p>
+          <p className="muted note">Days run midnight to midnight New York time. Sales are completed payments (tips and tax included). Discounts are what your products' own discounts and offers took off the items sold, and are not reduced by refunds. The tax columns are what your orders recorded, for your own filing.</p>
         </>
       )}
     </section>

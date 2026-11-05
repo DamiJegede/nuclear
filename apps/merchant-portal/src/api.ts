@@ -95,11 +95,13 @@ export type Profile = { legal_name: string; display_name: string; tax_id_last4: 
 export type ProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
 export type PayoutBank = { id: string; last4: string; status: string; created_at: string; institution: Institution | null };
 export type Payout = { id: string; kind: "payout" | "collection"; amount: number; status: string; status_code: string | null; timestamp: string; completed_at: string | null; bank_last4: string | null; source?: "nightly" | "close_out"; rail?: "instant" | "ach" };
+export type OfferSchedule = { days: number[] | null; from_time: string | null; to_time: string | null; starts_on: string | null; ends_on: string | null };
 export type Offer = {
+  schedule: OfferSchedule; schedule_text: string | null; live_now: boolean;
   id: string; name: string; description: string; buy_product_id: string; buy_product_name: string; buy_qty: number;
   get_product_id: string; get_product_name: string; get_qty: number; percent_off: number; same_product: boolean; active: boolean; created_at: string;
 };
-export type OfferInput = { name?: string; buy_product_id: string; buy_qty: number; get_product_id: string | null; get_qty: number; percent_off: number; active?: boolean };
+export type OfferInput = Partial<OfferSchedule> & { name?: string; buy_product_id: string; buy_qty: number; get_product_id: string | null; get_qty: number; percent_off: number; active?: boolean };
 export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
 export type Product = {
   id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
@@ -108,7 +110,7 @@ export type Product = {
 export type ProductInput = { name: string; price: number; discount: number; category_id: string | null; stock: number | null; active: boolean; taxable: boolean };
 /** Sales tax settings: the rate in basis points (825 = 8.25%) and whether prices already include it. */
 export type ReportPeriod = "week" | "last_week" | "30d" | "month" | "last_month";
-export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number };
+export type ReportDay = { date: string; payments: number; sales: number; refunds: number; refunded: number; tips: number; taxable: number; exempt: number; tax: number; tax_refunded: number; discounts: number; offers: number };
 export type Report = { period: ReportPeriod; from: string; to: string; today: string; fees: number; total: Omit<ReportDay, "date"> & { net: number; net_tax: number }; days: ReportDay[] };
 export type VenueTable = { id: string; name: string; code: string; link: string; served_by: string | null; active: boolean; open_tab_id: string | null; created_at: string };
 export type TabStatus = "open" | "paying" | "unpaid" | "closed" | "canceled" | "expired";
@@ -125,7 +127,7 @@ export type TabDetail = {
   short: { wallet_id: string | null; amount: number; name?: string | null }[]; short_total: number;
 };
 export type TaxSettings = { tax_rate: number; tax_included: boolean };
-export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number };
+export type CheckoutItem = { id: string; product_id: string | null; name: string; unit_price: number; discount: number; net_price: number; quantity: number; refunded_quantity: number; pending_refund_quantity: number; refundable_quantity: number; offer?: { id: string; name: string; percent_off: number } | null };
 export type Checkout = { id: string; status: "open" | "paid" | "canceled" | "expired"; reference: string | null; currency: string; total: number; terminal_id: string | null; expires_at: string | null; created_at: string; items: CheckoutItem[]; tip_amount?: number; sales_tax?: number; served_by?: string | null; served_by_name?: string | null };
 
 // ---- Public calls (no session) ----------------------------------------------------------------------

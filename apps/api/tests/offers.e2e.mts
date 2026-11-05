@@ -102,7 +102,7 @@ const b3 = await mk([{ product_id: beer.id, quantity: 3 }]);
 eq("three beers: one set, the third is paid", [b3.total, lines(b3)], [1800, [["Beer", 2, 900, null], ["Beer", 1, 0, 100]]]);
 eq("one beer: nothing is free", [(await mk([{ product_id: beer.id, quantity: 1 }])).total], [900]);
 eq("four beers: two sets", [(await mk([{ product_id: beer.id, quantity: 4 }])).total], [1800]);
-eq("the checkout line snapshot stores the offer's id, name and percent", (await coAt(b2.id)).items.map((i: any) => i.offer ?? null), [null, { id: bogo.id, name: bogo.name, percent_off: 100 }]);
+eq("the checkout line snapshot stores the offer's id, name and percent", (await coAt(b2.id)).items.map((i: any) => i.offer ?? null), [null, { id: bogo.id, name: bogo.name, amount: 900, percent_off: 100 }]);
 
 // ============ buy 2 get 1 half price ============
 const w3 = await mk([{ product_id: wine.id, quantity: 3 }]);
@@ -183,6 +183,92 @@ eq("a changed offer re-words an automatic name and keeps a custom one", await (a
   const b = (await call("PATCH", `/v1/business/offers/${cross.id}`, { token: S, body: { percent_off: 100 } })).json.offer.name;
   return [a, b];
 })(), ["Buy Beer, get 1 50% off", "Starter and a main"]);
+
+
+// ============ time windows ============
+const live = async (id: string, at: string) => (await q("select public.offer_live(o, $2::timestamptz) as v from offers o where o.id = $1", [id, at]))[0].v;
+const hh = await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, name: "Happy hour", days: [1, 2, 3, 4, 5], from_time: "16:00", to_time: "18:00" });
+const happy = hh.json.offer;
+eq("a schedule is stored and read back in words", [hh.status, happy.schedule, happy.schedule_text], [201, { days: [1, 2, 3, 4, 5], from_time: "16:00", to_time: "18:00", starts_on: null, ends_on: null }, "Mon–Fri, 4 PM–6 PM"]);
+// 2026-11-03 is a Tuesday and New York is on EST (UTC-5): 17:00 EST = 22:00Z
+eq("live on a weekday inside the window; the window starts at 4 PM and ends before 6 PM", await Promise.all(["2026-11-03T22:00:00Z", "2026-11-03T21:00:00Z", "2026-11-03T22:59:59Z", "2026-11-03T20:59:59Z", "2026-11-03T23:00:00Z"].map((t) => live(happy.id, t))), [true, true, true, false, false]);
+eq("not live at the weekend, even inside the hours", await Promise.all(["2026-11-07T22:00:00Z", "2026-11-08T22:00:00Z"].map((t) => live(happy.id, t))), [false, false]);
+const night = (await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, name: "Late", days: [5], from_time: "22:00", to_time: "02:00" })).json.offer;
+// Friday 2026-11-06: 23:00 EST = 04:00Z Nov 7; Saturday 01:00 EST = 06:00Z Nov 7; Saturday 23:00 = 04:00Z Nov 8
+eq("a window past midnight belongs to the day it started: Friday 11 PM and Saturday 1 AM, not Saturday 11 PM or Friday 1 AM", await Promise.all(["2026-11-07T04:00:00Z", "2026-11-07T06:00:00Z", "2026-11-08T04:00:00Z", "2026-11-06T06:00:00Z", "2026-11-07T07:00:00Z"].map((t) => live(night.id, t))), [true, true, false, false, false]);
+const dated = (await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, name: "December", starts_on: "2026-12-01", ends_on: "2026-12-31" })).json.offer;
+eq("a date range covers its first and last day (New York dates), nothing outside", await Promise.all(["2026-12-01T06:00:00Z", "2026-12-01T04:59:59Z", "2027-01-01T04:59:59Z", "2027-01-01T05:00:00Z"].map((t) => live(dated.id, t))), [true, false, true, false]);
+const weekend = (await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, days: [6, 7] })).json.offer;
+eq("a day-only schedule needs no times", [dated.schedule_text, weekend.schedule_text], ["Every day, Dec 1 – Dec 31", "Sat–Sun"]);
+await call("DELETE", `/v1/business/offers/${weekend.id}`, { token: S });
+eq("a bad schedule is refused: one time, equal times, no days, dates out of order, a bad day, a bad time", await Promise.all([
+  { from_time: "16:00" }, { from_time: "16:00", to_time: "16:00" }, { days: [] }, { starts_on: "2026-12-31", ends_on: "2026-12-01" }, { days: [8] }, { from_time: "25:00", to_time: "26:00" },
+].map(async (sch) => (await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, ...sch })).status)), [422, 422, 400, 422, 400, 400]);
+const allDays = (await offer({ buy_product_id: wine.id, buy_qty: 1, get_qty: 1, percent_off: 50, days: [1, 2, 3, 4, 5, 6, 7] })).json.offer;
+eq("all seven days is the same as no schedule", allDays.schedule, { days: null, from_time: null, to_time: null, starts_on: null, ends_on: null });
+await call("DELETE", `/v1/business/offers/${allDays.id}`, { token: S });
+// pricing at a chosen moment: the happy hour gives the second wine half price only inside it
+const wineLines = JSON.stringify([{ product_id: wine.id, name: "Wine", unit_price: 1400, discount: 0, quantity: 2, taxable: true }]);
+const at = async (t: string) => (await q("select public.app_offers($1::uuid, $2::text::jsonb, $3::timestamptz) as r", [shop.account_id, wineLines, t]))[0].r.map((l: any) => [l.quantity, l.unit_price - l.discount]);
+// the 2-for-1.. offers on wine from before (buy 2 get 1 half) do not apply to two units; only Happy hour does
+await call("PATCH", `/v1/business/offers/${night.id}`, { token: S, body: { active: false } });
+eq("two wines at 5 PM on a Tuesday: the second is half price", await at("2026-11-03T22:00:00Z"), [[1, 1400], [1, 700]]);
+eq("two wines at 7 PM or on a Saturday: full price", [await at("2026-11-04T00:00:00Z"), await at("2026-11-07T22:00:00Z")], [[[2, 1400]], [[2, 1400]]]);
+// through the API, a window around now applies and one that has passed or not begun does not
+const nowNY = (await q("select to_char(now() at time zone 'America/New_York' - interval '1 hour', 'HH24:MI') as a, to_char(now() at time zone 'America/New_York' + interval '1 hour', 'HH24:MI') as b, to_char(now() at time zone 'America/New_York' + interval '2 hour', 'HH24:MI') as c, to_char(now() at time zone 'America/New_York' + interval '3 hour', 'HH24:MI') as d"))[0];
+await call("PATCH", `/v1/business/offers/${happy.id}`, { token: S, body: { days: null, from_time: nowNY.a, to_time: nowNY.b } });
+const hapNow = await mk([{ product_id: wine.id, quantity: 2 }]);
+eq("a window around now applies to a new checkout", [hapNow.total, (await call("GET", "/v1/business/offers", { token: S })).json.offers.find((o: any) => o.id === happy.id).live_now], [2100, true]);
+await call("PATCH", `/v1/business/offers/${happy.id}`, { token: S, body: { from_time: nowNY.c, to_time: nowNY.d } });
+eq("a window later today does not, and the offer says it is not live", [(await mk([{ product_id: wine.id, quantity: 2 }])).total, (await call("GET", "/v1/business/offers", { token: S })).json.offers.find((o: any) => o.id === happy.id).live_now], [2800, false]);
+eq("clearing the schedule with nulls makes it apply all day again", [(await call("PATCH", `/v1/business/offers/${happy.id}`, { token: S, body: { days: null, from_time: null, to_time: null } })).json.offer.schedule_text, (await mk([{ product_id: wine.id, quantity: 2 }])).total], [null, 2100]);
+eq("an order made inside a window keeps its price when the window closes", await (async () => {
+  await call("PATCH", `/v1/business/offers/${happy.id}`, { token: S, body: { from_time: nowNY.a, to_time: nowNY.b } });
+  const open = await mk([{ product_id: wine.id, quantity: 2 }]);
+  await call("PATCH", `/v1/business/offers/${happy.id}`, { token: S, body: { from_time: nowNY.c, to_time: nowNY.d } });
+  return [open.total, (await call("POST", "/v1/terminal/payments", { token: T, key: "w1", body: { checkout_id: open.id, credential: tap() } })).json.payment.amount];
+})(), [2100, 2100]);
+eq("the menu lists scheduled offers with their words and whether they are on", (await call("GET", `/v1/menu/${table.code}`)).json.offers.filter((o: any) => o.name === "Happy hour").map((o: any) => [o.schedule_text, o.live_now]), [[`${(await call("GET", "/v1/business/offers", { token: S })).json.offers.find((o: any) => o.id === happy.id).schedule_text}`, false]]);
+eq("the terminal list carries live_now too", (await call("GET", "/v1/terminal/offers", { token: T })).json.offers.find((o: any) => o.name === "Happy hour").live_now, false);
+await call("DELETE", `/v1/business/offers/${happy.id}`, { token: S });
+for (const o of [night, dated]) await call("DELETE", `/v1/business/offers/${o.id}`, { token: S });
+for (const o of (await call("GET", "/v1/business/offers", { token: S })).json.offers) if (o.schedule_text) await call("DELETE", `/v1/business/offers/${o.id}`, { token: S });
+
+// ============ refunds of offer lines ============
+await q("update terminals set allow_refunds = true where account_id = $1", [shop.account_id]);
+const refund = (attempt: string, key: string, body: object) => call("POST", "/v1/terminal/refunds", { token: T, key, body: { attempt, ...body } });
+const sold = (await call("GET", "/v1/terminal/payments/o3", { token: T })).json;
+const kegItems = sold.items ?? sold.payment?.items ?? [];
+const paidLine = kegItems.find((i: any) => !i.offer), freeLine = kegItems.find((i: any) => i.offer);
+eq("a paid order shows its lines with the offer and what each unit cost", kegItems.map((i: any) => [i.quantity, i.net_price, i.offer?.percent_off ?? null, i.refundable_quantity]), [[2, 500, null, 2], [2, 0, 100, 2]]);
+const onlyFree = await refund("o3", "rf1", { mode: "items", items: [{ checkout_item_id: freeLine.id, quantity: 2 }], restock: true });
+eq("returning only units that were free has nothing to refund, and says so", [onlyFree.status, onlyFree.json.error], [422, "nothing_to_refund"]);
+const stockBefore = (await q("select stock from products where id=$1", [keg.id]))[0].stock;
+const mixed2 = await refund("o3", "rf2", { mode: "items", items: [{ checkout_item_id: freeLine.id, quantity: 2 }, { checkout_item_id: paidLine.id, quantity: 1 }], restock: true });
+eq("a paid unit with the free ones returns what was paid (5.00) and all three go back on the shelf", [mixed2.status, mixed2.json.refund?.amount ?? mixed2.json.amount, (await q("select stock from products where id=$1", [keg.id]))[0].stock - stockBefore], [201, 500, 3]);
+const rest = await refund("o3", "rf3", { mode: "items", items: [{ checkout_item_id: paidLine.id, quantity: 1 }] });
+eq("the last paid unit brings the refunds to what the customer paid", [rest.status, Number((await q("select coalesce(sum(amount),0) a from transactions where type='refund' and status='completed' and related_id = (select id from transactions where idem like '%:t:o3' )"))[0].a)], [201, 1000]);
+const after = (await call("GET", "/v1/terminal/payments/o3", { token: T })).json.items ?? [];
+eq("every unit is now refunded", after.map((i: any) => i.refundable_quantity), [0, 0]);
+// an amount refund works as before on an order with an offer
+await call("PATCH", `/v1/business/offers/${bogo.id}`, { token: S, body: { percent_off: 100 } });
+const wholeCo = await call("POST", "/v1/terminal/payments", { token: T, key: "w2", body: { items: [{ product_id: beer.id, quantity: 2 }], credential: tap() } });
+eq("a full refund of an order with an offer returns what it cost", [(await refund("w2", "rf4", { mode: "full" })).json.refund?.amount ?? null, wholeCo.json.payment.amount], [900, 900]);
+
+// ============ discounts in the reports ============
+const rows = await q(`select (i->>'discount')::bigint * (i->>'quantity')::bigint as d, coalesce((i->'offer'->>'amount')::bigint, 0) * (i->>'quantity')::bigint as o
+  from transactions t join checkouts c on c.id = t.checkout_id join wallets w on w.id = t.to_wallet_id, jsonb_array_elements(c.items) i
+ where t.type = 'pay' and t.status = 'completed' and w.account_id = $1`, [shop.account_id]);
+const wantD = rows.reduce((a: number, r: any) => a + Number(r.d), 0), wantO = rows.reduce((a: number, r: any) => a + Number(r.o), 0);
+const rep2 = (await call("GET", "/v1/business/report?period=month", { token: S })).json;
+eq("the report counts the discounts and what offers gave, from the orders", [rep2.total.discounts > 0, rep2.total.offers > 0, rep2.total.discounts, rep2.total.offers], [true, true, wantD, wantO]);
+eq("the discounts are a total of the days", rep2.total.discounts, rep2.days.reduce((a: number, d: any) => a + d.discounts, 0));
+eq("another business has none", (await call("GET", "/v1/business/report?period=week", { token: O })).json.total.discounts, 0);
+const todayRep = rep2.days.find((d: any) => d.date === rep2.today);
+await q("select public.app_merchant_snapshot($1::date, $1::date)", [rep2.today]);
+const snapRep = (await call("GET", "/v1/business/report?period=month", { token: S })).json;
+eq("the nightly snapshot stores the same figures the live report gave", [snapRep.days.find((d: any) => d.date === rep2.today).discounts, snapRep.days.find((d: any) => d.date === rep2.today).offers], [todayRep.discounts, todayRep.offers]);
+eq("the snapshot row carries them, and a frozen day still cannot be changed", await q("update merchant_snapshots set discounts_v = 0 where snapshot_date = $1", [rep2.today]).then(() => "ok", (e: any) => e.message.slice(0, 40).length > 0 ? "refused" : "?"), "refused");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await adm.end(); process.exit(fail ? 1 : 0);

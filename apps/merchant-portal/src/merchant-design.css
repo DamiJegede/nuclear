@@ -172,3 +172,13 @@ button:not(.link, .photo-btn, .menu-btn):focus-visible { outline-offset: 4px; }
   .modal-actions { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+/* Reports: five summary cards share the row */
+.reports-summary { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+/* Offer schedule: day chips and the time and date pairs */
+.schedule { display: grid; gap: 12px; margin: 4px 0 8px; }
+.day-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 6px 12px; border-radius: 99px; font-weight: 600; }
+.chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.schedule .inline > label { flex: 1; }
