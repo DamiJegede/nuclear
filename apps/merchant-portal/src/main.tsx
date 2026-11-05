@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 import "../../shared/portal-theme.css";
+import "./merchant-design.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

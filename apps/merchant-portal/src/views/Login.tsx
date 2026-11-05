@@ -56,10 +56,17 @@ export function Login({ signIn, signUp, onSignedIn, notice, requestPasswordReset
   }
 
   return (
-    <div className="login">
+    <div className="login merchant-login">
+      <aside className="login-story" aria-label="Nuclear Business">
+        <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Business</span></div>
+        <div className="login-message"><p className="eyebrow">A little less busywork.</p><h2>More space for<br />your business.</h2><p>Sales, your team, and the details that keep things moving. All in one place.</p><div className="login-orbit" aria-hidden="true"><span>✳</span></div></div>
+        <p className="login-caption">Good business starts with a clear view.</p>
+      </aside>
       <form onSubmit={submit} className="card login-card" aria-labelledby="login-title">
         <div className="brand big"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Business</span></div>
-        <h1 id="login-title" className="sr-only">{mode === "forgot" ? "Forgot password" : mode === "in" ? "Sign in" : "Create a business account"}</h1>
+        <p className="eyebrow">Your business, together.</p>
+        <h1 id="login-title">{mode === "forgot" ? "Forgot password" : mode === "in" ? "Welcome back." : "Create a business account"}</h1>
+        <p className="login-intro">{mode === "forgot" ? "We'll help you get back to your business." : mode === "in" ? "Sign in for a clear view of your day." : "A simpler way to manage your everyday."}</p>
         {notice && <p className="notice" role="status">{notice}</p>}
         {mode === "up" && (
           <>

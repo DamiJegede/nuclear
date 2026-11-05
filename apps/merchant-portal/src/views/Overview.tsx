@@ -52,8 +52,8 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
   const nav = (page: string) => (e: React.MouseEvent) => { e.preventDefault(); go(page); };
 
   return (
-    <section>
-      <div className="head"><h1>Overview</h1><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
+    <section className="overview-page">
+      <div className="head"><div><p className="eyebrow">Your business at a glance</p><h1>Overview</h1><p className="page-description">A clear view of sales and everything that keeps your business moving.</p></div><div className="head-actions"><RefreshButton onClick={retry} /></div></div>
       {refundCount > 0 && (
         <div className="banner bad" role="status">
           {int(refundCount)} refund{refundCount === 1 ? "" : "s"} ({money(pendingTotal)}) waiting for your approval. <button type="button" className="link" onClick={() => go("refunds")}>Review Refunds</button>
@@ -62,7 +62,7 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
 
       <SalesChart api={api} onError={onError} />
 
-      <div className="grid three">
+      <div className="grid three overview-primary">
         <article className="card linkcard profile-tile" aria-label="Profile">
           <button type="button" className="photo-btn" aria-label="Replace profile picture" onClick={() => input.current?.click()}>
             <Avatar name={account.name} photo={account.photo} />
@@ -103,7 +103,7 @@ export function Overview({ api, account, onChanged, onError, go }: { api: Api; a
         </article>
       </div>
 
-      <div className="grid">
+      <div className="grid overview-secondary">
         <article className="card linkcard" aria-label="Terminals"><h2><a href="/terminals" className="stretched" onClick={nav("terminals")}>Terminals</a></h2><p className="big">{int(data.terminals.count)}</p><p className="sub">{int(data.terminals.paired)} with an Orb paired</p></article>
         <article className="card linkcard" aria-label="Awaiting approval"><h2><a href="/refunds" className="stretched" onClick={nav("refunds")}>Awaiting Approval</a></h2><p className="big">{int(refundCount)}</p><p className="sub">{money(pendingTotal)} in pending refunds</p></article>
         <article className="card linkcard" aria-label="Staff"><h2><a href="/staff" className="stretched" onClick={nav("staff")}>Staff</a></h2><p className="big">{int(data.staff.count)}</p><p className="sub">{int(data.staff.writers)} can approve refunds</p></article>

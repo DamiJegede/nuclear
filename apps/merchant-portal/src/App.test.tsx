@@ -55,7 +55,7 @@ describe("sign-in", () => {
     expect(signInFn).toHaveBeenCalledWith("cafe@example.com", "correct horse battery");
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
-    expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
+    expect(within(await screen.findByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
   });
 
   it("shows the sales chart: three figures, a custom tooltip, and the figures do not change on hover", async () => {
@@ -413,7 +413,7 @@ describe("tables and tabs", () => {
     pays: [{ wallet_id: "w-ann", name: "Ann", photo: null, amount: 3300, total: 3300, tip: 0, tip_clipped: false, for: ["w-ben"] }],
     bill: { items: 3000, tax: 300, tip: 0, total: 3300 }, short: [], short_total: 0,
   };
-  const NAVTO = async (user: ReturnType<typeof userEvent.setup>, name: string) => user.click(within(screen.getByRole("navigation")).getByRole("link", { name }));
+  const NAVTO = async (user: ReturnType<typeof userEvent.setup>, name: string) => user.click(within(await screen.findByRole("navigation")).getByRole("link", { name }));
 
   it("lists the tables with a QR code to print and the link to write to an NFC cube", async () => {
     const { user } = await signIn(fakeApi({ tables: vi.fn().mockResolvedValue([TABLE]) } as Partial<Api>));
@@ -472,7 +472,7 @@ describe("reports", () => {
   it("shows net sales, sales tax collected and returned, tips and a row per day, newest first, and downloads a CSV", async () => {
     const api = fakeApi();
     const { user } = await signIn(api);
-    await user.click(within(screen.getByRole("navigation")).getByRole("link", { name: "Reports" }));
+    await user.click(within(await screen.findByRole("navigation")).getByRole("link", { name: "Reports" }));
     expect(await screen.findByRole("heading", { name: "Reports" })).toBeInTheDocument();
     expect(await within(await screen.findByRole("article", { name: "Net sales" })).findByText("$42.08")).toBeInTheDocument();
     expect(within(screen.getByRole("article", { name: "Sales tax" })).getByText("$2.14")).toBeInTheDocument();

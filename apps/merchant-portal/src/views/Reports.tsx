@@ -41,7 +41,7 @@ export function Reports({ api, onError }: { api: Api; onError: (e: unknown) => v
       </div>
       {!data ? (failed ? <p className="error" role="alert">Couldn't load the report. <button className="link" onClick={retry}>Try Again</button></p> : <p className="muted" role="status">Loading…</p>) : (
         <>
-          <div className="grid">
+          <div className="grid reports-summary">
             <article className="card" aria-label="Net sales"><h2>Net Sales</h2><p className="big">{money(data.total.net)}</p><p className="sub">{money(data.total.sales)} sales, {money(data.total.refunded)} refunded</p></article>
             <article className="card" aria-label="Sales tax"><h2>Sales Tax</h2><p className="big">{money(data.total.net_tax)}</p><p className="sub">{money(data.total.tax)} collected, {money(data.total.tax_refunded)} returned</p></article>
             <article className="card" aria-label="Taxable and exempt"><h2>Taxable Sales</h2><p className="big">{money(data.total.taxable)}</p><p className="sub">{money(data.total.exempt)} exempt</p></article>

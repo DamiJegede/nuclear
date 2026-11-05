@@ -6,7 +6,6 @@ import { useList } from "../useList";
 
 const PERIODS: { value: SalesPeriod; label: string }[] = [{ value: "week", label: "This week" }, { value: "last_week", label: "Last week" }, { value: "30d", label: "Last 30 days" }];
 const dayName = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-const initial = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "narrow", timeZone: "UTC" });
 
 /** A dollar amount that counts up or down to its new value (about 0.45 s, eased) whenever it changes; the first value shows at once. No motion when the person prefers less of it. */
 function Money({ cents }: { cents: number }) {
@@ -45,10 +44,11 @@ export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) =
   const label = PERIODS.find((p) => p.value === period)!.label;
   return (
     <article className="card sales-card" aria-label="Sales">
+      <div className="sales-title"><h2>Sales performance</h2><span className="chart-legend"><i aria-hidden="true" />Daily sales</span></div>
       <div className="sales-head">
         <div className="sales-figures">
           <div><p className="sub">Today's sales</p><p className="big lg"><Money cents={todayCents} /></p></div>
-          <div><p className="sub">Processing fees</p><p className="big lg"><Money cents={data?.fees ?? 0} /></p></div>
+          <div><p className="sub">Processing fees</p><p className="big lg fees-value"><Money cents={data?.fees ?? 0} /></p></div>
           <div><p className="sub">{label}</p><p className="big lg"><Money cents={data?.total ?? 0} /></p></div>
         </div>
         <select aria-label="Period" value={period} onChange={(e) => { setHover(null); setPeriod(e.target.value as SalesPeriod); }}>
@@ -63,7 +63,7 @@ export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) =
               onMouseEnter={() => setHover(d.date)} onFocus={() => setHover(d.date)} onBlur={() => setHover(null)}>
               <div className="sales-bar" style={{ height: `${d.sales > 0 ? Math.max(4, Math.round((d.sales / peak) * 100)) : 2}%` }} />
               {d.date === hover && <div className="sales-tip" aria-hidden><span>{dayName(d.date)}</span><strong>{money(d.sales)}</strong></div>}
-              <span className="sales-day" aria-hidden>{data.days.length <= 7 ? initial(d.date) : i % 7 === 0 ? d.date.slice(5).replace("-", "/") : ""}</span>
+              <span className="sales-day" aria-hidden>{data.days.length <= 7 ? new Date(d.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }) : i % 7 === 0 ? d.date.slice(5).replace("-", "/") : ""}</span>
             </div>
           ))}
         </div>

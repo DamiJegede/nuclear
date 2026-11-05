@@ -41,6 +41,21 @@ export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "reports", label: "Reports", path: "/reports" },
   { page: "refunds", label: "Refunds", path: "/refunds" },
 ];
+const NAV_ICONS: Record<string, string> = {
+  overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+  transactions: "M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4",
+  orders: "M6 3h12v18l-3-2-3 2-3-2-3 2V3z M9 8h6M9 12h6",
+  catalog: "M4 4h16v16H4z M4 10h16M10 10v10",
+  terminals: "M4 4h16v12H4z M8 21h8M12 16v5",
+  orbs: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
+  staff: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M18 4a4 4 0 0 1 0 7M22 21v-2a4 4 0 0 0-3-4",
+  tables: "M3 8h18v6H3zM6 14v7M18 14v7M6 3v5M18 3v5",
+  tabs: "M3 5h18v14H3z M7 9h10M7 13h6",
+  tips: "M12 3v18M17 7H9a3 3 0 0 0 0 6h6a3 3 0 0 1 0 6H6",
+  reports: "M4 21V3M4 21h17M9 17v-5M14 17V8M19 17V4",
+  refunds: "M4 10a8 8 0 1 1 1 8M4 4v6h6",
+};
+const NAV_GROUPS: Record<string, string> = { overview: "Workspace", terminals: "Operations", tips: "Finances" };
 const PROFILE_PATH = "/profile";
 const pageFromPath = (path: string): Page => {
   const clean = path.replace(/\/+$/, "") || "/";
@@ -125,19 +140,24 @@ export function App({
 
   return (
     <div className="shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <header className="sidebar">
         <div className="brand"><span className="mark" aria-hidden>◎</span> Nuclear <span className="muted">Business</span></div>
         <nav aria-label="Sections">
           {NAV.map((n) => (
-            <a key={n.page} href={n.path} className={page === n.page ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}>{n.label}</a>
+            <div key={n.page} className="nav-item">
+              {NAV_GROUPS[n.page] && <p className="nav-group">{NAV_GROUPS[n.page]}</p>}
+              <a href={n.path} className={page === n.page ? "tab active" : "tab"} aria-current={page === n.page ? "page" : undefined} onClick={(e) => { e.preventDefault(); setPage(n.page); }}><svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={NAV_ICONS[n.page]} /></svg>{n.label}</a>
+            </div>
           ))}
         </nav>
         <div className="who">
-          <a href={PROFILE_PATH} className={page === "profile" ? "tab active" : "tab"} aria-current={page === "profile" ? "page" : undefined} title="Profile and security" onClick={(e) => { e.preventDefault(); setPage("profile"); }}>{account.name}</a>
+          <a href={PROFILE_PATH} className={page === "profile" ? "tab active" : "tab"} aria-current={page === "profile" ? "page" : undefined} title="Profile and security" aria-label={account.name} onClick={(e) => { e.preventDefault(); setPage("profile"); }}><span className="account-monogram" aria-hidden="true">{account.name.slice(0, 1)}</span><span className="account-copy"><strong>{account.name}</strong><small>Profile & security</small></span></a>
           <button className="ghost" onClick={() => void signOut()}>Sign out</button>
         </div>
       </header>
-      <main>
+      <main id="main-content" tabIndex={-1}>
+        <div className="workspace-bar"><span>Nuclear Business <span aria-hidden="true">/</span> <strong>{page === "profile" ? "Profile" : NAV.find((n) => n.page === page)?.label}</strong></span><span className="workspace-name">{account.name}</span></div>
         {page === "overview" && <Overview api={api} account={account} onChanged={() => void loadAccount()} onError={onError} go={(p) => setPage(p as Page)} />}
         {page === "transactions" && <Transactions api={api} onError={onError} />}
         {page === "orders" && <Orders api={api} onError={onError} />}

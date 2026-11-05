@@ -1,0 +1,146 @@
+/* Merchant-only refinements, layered after the shared Nuclear theme. */
+:root { --radius: 18px; --muted: #66695e; }
+@media (prefers-color-scheme: dark) { :root { --muted: #a9ad9f; } }
+/* Keep short mobile pages at the top instead of stretching implicit grid rows. */
+.shell { grid-template-columns: 242px minmax(0, 1fr); align-content: start; }
+.sidebar { padding: 32px 18px 20px; gap: 28px; height: 100dvh; background: var(--surface); }
+.sidebar .brand { gap: 7px; white-space: nowrap; padding: 0 10px; }
+.sidebar .brand .muted { font-size: 12px; }
+.sidebar nav { gap: 4px; }
+.nav-group { margin: 22px 12px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .13em; font-weight: 700; color: var(--muted); }
+.nav-item:first-child .nav-group { margin-top: 0; }
+.sidebar .tab { display: flex; align-items: center; gap: 12px; padding: 10px 12px; font-size: 14px; border-radius: 10px; font-weight: 500; }
+.nav-icon { width: 19px; height: 19px; flex: none; }
+.sidebar .tab.active { font-weight: 700; }
+.sidebar .who { border-top: 1px solid var(--line); padding-top: 18px; gap: 10px; }
+.sidebar .who .tab { gap: 10px; padding: 8px; }
+.account-monogram { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 11px; display: grid; place-items: center; background: var(--bg); color: var(--text); flex: none; text-transform: uppercase; }
+.account-copy { min-width: 0; display: grid; }
+.account-copy strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.account-copy small { font-size: 11px; color: inherit; opacity: .75; text-transform: none; }
+.sidebar .who > button { font-size: 12px; border-color: transparent; align-self: start; margin-left: 42px; padding: 4px 8px; color: var(--muted); }
+.shell > main { max-width: 1336px; padding: 0 48px 72px; }
+.workspace-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 80px; margin-bottom: 32px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.workspace-bar > span > span { margin: 0 10px; opacity: .55; }
+.workspace-bar strong { color: var(--text); font-weight: 500; }
+.workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+h1 { font-size: clamp(28px, 3vw, 36px); letter-spacing: -.045em; }
+.page-description { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+.head { margin-bottom: 26px; gap: 18px; }
+.head-actions { flex-wrap: wrap; }
+.card { padding: 24px; }
+.card.flush { padding: 0; }
+.grid, .grid.three { gap: 16px; }
+.reports-summary { margin-bottom: 20px; }
+.sales-card { padding: 26px 30px 18px; margin-bottom: 20px; }
+.sales-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.sales-title h2 { font-size: 14px; color: var(--text); text-transform: none; letter-spacing: -.01em; margin: 0; }
+.chart-legend { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+.chart-legend i { width: 7px; height: 7px; background: var(--text); border-radius: 50%; }
+.sales-figures { gap: clamp(24px, 4vw, 64px); }
+.sales-figures > div + div { border-left: 1px solid var(--line); padding-left: 28px; }
+.big.lg { font-size: clamp(28px, 3vw, 42px); font-weight: 500; letter-spacing: -.045em; }
+.fees-value { color: var(--good); }
+.sales-head select { min-width: 138px; font-size: 13px; height: 38px; }
+.sales-bars { height: 168px; margin: 34px 0 30px; background: repeating-linear-gradient(to top, transparent 0, transparent calc(25% - 1px), color-mix(in srgb, var(--line) 45%, transparent) calc(25% - 1px), color-mix(in srgb, var(--line) 45%, transparent) 25%); }
+.sales-bar { max-width: 52px; background: color-mix(in srgb, var(--text) 75%, var(--surface)); border-radius: 7px 7px 0 0; }
+.sales-day { font-size: 11px; }
+.sales-col:first-child .sales-tip { left: 0; transform: none; }
+.sales-col:last-child .sales-tip { left: auto; right: 0; transform: none; }
+.overview-primary .big.xl { font-size: clamp(28px, 3.6vw, 46px); letter-spacing: -.04em; overflow-wrap: anywhere; }
+.overview-primary .big.md { font-size: 18px; }
+.overview-primary .profile-tile { padding: 24px; gap: 12px; min-height: 0; }
+.profile-tile .photo-btn .avatar { width: 64px; height: 64px; font-size: 24px; border-radius: 20px; }
+.profile-tile .photo-hint { border-radius: 20px; }
+.profile-tile .tile-name { font-size: 19px; letter-spacing: -.025em; }
+.profile-tile .tile-line { font-size: 12px; }
+.tile-rule { margin: 20px 0; }
+.overview-secondary { margin-top: 20px; }
+.overview-secondary .card { min-height: 142px; }
+.linkcard h2 a::before { content: '↗' / '';  position: absolute; top: 20px; right: 20px; font-size: 16px; font-weight: 400; opacity: .55; }
+.overview-secondary .big { font-size: 32px; margin: 12px 0 4px; font-weight: 500; }
+.overview-secondary .sub { font-size: 12px; }
+.linkcard { overflow-wrap: anywhere; }
+.card.flush thead { background: color-mix(in srgb, var(--text) 2%, var(--surface)); }
+th, td { padding-top: 15px; padding-bottom: 15px; vertical-align: middle; }
+.tx-row:hover > td, .expand-row:hover > td { background: color-mix(in srgb, var(--text) 3%, transparent); }
+input, select, textarea { transition: border-color .15s, box-shadow .15s; }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 13%, transparent); }
+input[type=checkbox] { accent-color: var(--text); }
+button:where(:not(.tab, .subtab, .cat, .photo-btn, .link, .icon-btn)):hover:not(:disabled) { transform: none; box-shadow: none; }
+button:not(.link, .photo-btn, .menu-btn):focus-visible { outline-offset: 4px; }
+.skip-link { position: fixed; z-index: 100; top: 12px; left: 12px; padding: 12px 18px; border-radius: 10px; background: var(--pop-bg); color: var(--pop-text); transform: translateY(-160%); }
+.skip-link:focus { transform: translateY(0); }
+#main-content:focus { outline: none; }
+.merchant-login { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 20px; gap: 48px; }
+.login-story { align-self: stretch; position: relative; overflow: hidden; border-radius: 24px; background: #e9eddf; color: #20221f; padding: 40px; display: flex; flex-direction: column; justify-content: space-between; min-height: 680px; }
+.login-story .muted, .login-story .eyebrow { color: #606653; }
+.login-message { max-width: 430px; padding-top: 50px; }
+.login-message h2 { color: #20221f; font-size: clamp(36px, 4.6vw, 68px); font-weight: 500; line-height: 1.04; letter-spacing: -.055em; text-transform: none; margin: 16px 0 24px; }
+.login-message > p:not(.eyebrow) { font-size: 15px; line-height: 1.7; color: #606653; max-width: 310px; }
+.login-orbit { width: 200px; height: 200px; display: grid; place-items: center; margin: 35px 0 20px auto; border: 1px solid #bac3aa; border-radius: 50%; position: relative; }
+.login-orbit::before, .login-orbit::after { content: ''; position: absolute; inset: 18px; border: 1px solid #bac3aa; border-radius: 50%; }
+.login-orbit::after { inset: 40px; }
+.login-orbit span { font-size: 100px; color: #f45935; line-height: 1; z-index: 1; }
+.login-caption { font-size: 11px; color: #606653; margin: 24px 0 0; }
+.merchant-login .login-card { width: min(400px, 100%); padding: 28px 12px; border: 0; background: transparent; box-shadow: none; justify-self: center; }
+.merchant-login .login-card > .brand { display: none; }
+.merchant-login .login-card h1 { font-size: 34px; font-weight: 500; letter-spacing: -.04em; margin: 0; }
+.login-intro { margin: 2px 0 24px; color: var(--muted); font-size: 14px; }
+.merchant-login .login-card label { color: var(--text); font-size: 12px; margin: 6px 0 0; }
+.merchant-login .login-card input { height: 48px; }
+.merchant-login .login-card button[type=submit] { min-height: 48px; margin-top: 16px; }
+.merchant-login .login-card .hint { font-size: 12px; line-height: 1.8; }
+@media (min-width: 861px) and (max-height: 850px) { .sidebar { padding-top: 24px; gap: 20px; } .sidebar .tab { padding-top: 7px; padding-bottom: 7px; } .nav-group { margin-top: 14px; } }
+@media (max-width: 1180px) { .shell > main { padding-left: 28px; padding-right: 28px; } .sales-figures { gap: 22px; } .sales-figures > div + div { padding-left: 20px; } .sales-card { padding: 24px; } .grid.overview-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { height: auto; padding: 16px 20px 12px; gap: 14px; position: static; }
+  .sidebar .brand { padding: 0; }
+  .sidebar nav { display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; gap: 4px; padding-bottom: 4px; }
+  .nav-item { flex: none; } .nav-group { display: none; }
+  .sidebar .tab { padding: 9px 12px; white-space: nowrap; }
+  .sidebar .who { padding: 0; border: 0; gap: 8px; }
+  .sidebar .who .tab { padding: 0; } .sidebar .who > button { margin: 0; padding: 8px; }
+  .account-copy { display: none; }
+  .shell > main { padding: 0 24px 48px; }
+  .workspace-bar { min-height: 58px; margin-bottom: 24px; }
+  .grid.three.overview-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .overview-primary .card { padding: 20px; }
+  .overview-primary .big.xl { font-size: 28px; }
+  .merchant-login { gap: 24px; }
+  .login-story { padding: 28px; }
+}
+@media (max-width: 640px) {
+  .shell > main { padding-left: 16px; padding-right: 16px; }
+  .workspace-name { display: none; }
+  .head { align-items: flex-start; }
+  .head-actions { max-width: 100%; gap: 8px; }
+  .head-actions select { min-width: 120px; flex: 1; }
+  .head-actions button { font-size: 12px; }
+  .sales-card { padding: 20px 16px 14px; }
+  .sales-head { gap: 20px; }
+  .sales-figures { display: grid; width: 100%; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .sales-figures > div:first-child { grid-column: 1 / -1; }
+  .sales-figures > div + div { border: 0; padding: 0; }
+  .sales-figures > div:first-child .big { font-size: 40px; }
+  .sales-figures .big { font-size: 26px; }
+  .sales-bars { margin-top: 24px; height: 140px; gap: 12px; }
+  .grid.three.overview-primary { grid-template-columns: 1fr; }
+  .profile-tile { flex-direction: row; text-align: left; justify-content: flex-start; }
+  .profile-tile .tile-text { width: auto; }
+  .grid.overview-secondary { gap: 10px; }
+  .overview-secondary .card { padding: 18px 14px; }
+  .overview-secondary h2 { font-size: 10px; padding-right: 14px; }
+  .linkcard h2 a::before { right: 12px; top: 16px; }
+  .merchant-login { display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 24px; }
+  .login-story { background: transparent; padding: 0; min-height: 0; align-self: center; }
+  .login-message, .login-caption { display: none; }
+  .login-story .brand .muted { color: var(--muted); }
+  .login-story .brand { color: var(--text); }
+  .merchant-login .login-card { padding: 24px 0; }
+  .modal { padding: 22px; }
+  .modal-actions { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
