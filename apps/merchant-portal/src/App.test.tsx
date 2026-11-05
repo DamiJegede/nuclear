@@ -58,7 +58,7 @@ describe("sign-in", () => {
     expect(within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
   });
 
-  it("shows the sales chart: three figures, a custom tooltip and today's figure replaced by the hovered day's", async () => {
+  it("shows the sales chart: three figures, a custom tooltip, and the figures do not change on hover", async () => {
     const api = fakeApi();
     const { user } = await signIn(api);
     const card = await screen.findByRole("article", { name: "Sales" });
@@ -69,7 +69,8 @@ describe("sign-in", () => {
     expect(await within(card).findByText("$50.00")).toBeInTheDocument();    // the week's total, always shown (waits for the data)
     expect(within(card).getByRole("group", { name: /Sales by day, 2026-10-26 to 2026-11-01/ })).toBeInTheDocument();
     await user.hover(within(card).getByLabelText(/Tue, Oct 27: \$20.00/));
-    expect(within(card).getByText("Tue, Oct 27", { selector: ".sub" })).toBeInTheDocument();   // replaces "Today's sales"
+    expect(within(card).queryByText("Tue, Oct 27", { selector: ".sub" })).toBeNull();           // the first figure stays Today's sales
+    expect(within(card).getByText("Today's sales")).toBeInTheDocument();
     expect(card.querySelector(".sales-tip")).toHaveTextContent("Tue, Oct 27$20.00");
     expect(card.querySelector(".sales-col.active")).not.toBeNull();
     await user.unhover(within(card).getByLabelText(/Tue, Oct 27: \$20.00/));

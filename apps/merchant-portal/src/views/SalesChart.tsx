@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Api, SalesPeriod, Sales } from "../api";
 import { money } from "../format";
+import { peek } from "../cache";
 import { useList } from "../useList";
 
 const PERIODS: { value: SalesPeriod; label: string }[] = [{ value: "week", label: "This week" }, { value: "last_week", label: "Last week" }, { value: "30d", label: "Last 30 days" }];
@@ -29,22 +30,24 @@ function Money({ cents }: { cents: number }) {
 }
 
 /**
- * Sales per day (from the daily snapshots, today live). Always three figures: the day under the pointer (today when none), the processing fees (always
+ * Sales per day (from the daily snapshots, today live). Always three figures that do not move with the pointer: today's sales, the processing fees (always
  * $0.00 on Nuclear wallet payments) and the total of the chosen period (this week and last 30 days include today's running sales). Hovering or focusing
- * a bar lights it up and shows its day and total in a tooltip.
+ * a bar lights it up and shows its day and total in a tooltip, which is the only thing that changes.
  */
 export function SalesChart({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   const [period, setPeriod] = useState<SalesPeriod>("week");
   const [hover, setHover] = useState<string | null>(null);
   const { data } = useList<Sales>(useCallback(() => api.sales(period), [api, period]), onError, `sales:${period}`);
-  const shown = data ? data.days.find((d) => d.date === (hover ?? data.today)) : undefined;
+  // Today's sales: from this period's days when today is in them, else from the already loaded week (last week does not contain today).
+  const week = peek<Sales>("sales:week");
+  const todayCents = (data?.days.find((d) => d.date === data.today) ?? week?.days.find((d) => d.date === week.today))?.sales ?? 0;
   const peak = Math.max(1, ...(data?.days.map((d) => d.sales) ?? []));
   const label = PERIODS.find((p) => p.value === period)!.label;
   return (
     <article className="card sales-card" aria-label="Sales">
       <div className="sales-head">
         <div className="sales-figures">
-          <div><p className="sub">{hover && data ? (hover === data.today ? "Today's sales" : dayName(hover)) : "Today's sales"}</p><p className="big lg"><Money cents={shown?.sales ?? 0} /></p></div>
+          <div><p className="sub">Today's sales</p><p className="big lg"><Money cents={todayCents} /></p></div>
           <div><p className="sub">Processing fees</p><p className="big lg"><Money cents={data?.fees ?? 0} /></p></div>
           <div><p className="sub">{label}</p><p className="big lg"><Money cents={data?.total ?? 0} /></p></div>
         </div>
