@@ -11,7 +11,7 @@ import { Modal } from "./Modal";
 
 type Load = { categories: Category[] };
 
-/** The product catalog: categories on the left, products on the right (add, edit, deactivate, delete, picture). */
+/** The product catalog: filter products by name and category, and manage categories separately. */
 export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => void }) {
   usePageTitle("Catalog");
   const [data, setData] = useState<Load | null>(null);
@@ -20,6 +20,7 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
   const [q, setQ] = useState("");
   const [form, setForm] = useState<Product | "new" | null>(null);
   const [removing, setRemoving] = useState<Product | null>(null);
+  const [managingCategories, setManagingCategories] = useState(false);
   const [catForm, setCatForm] = useState<Category | "new" | null>(null);
   const [catRemoving, setCatRemoving] = useState<Category | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,56 +71,71 @@ export function Catalog({ api, onError }: { api: Api; onError: (e: unknown) => v
   return (
     <section>
       <div className="head"><h1>Catalog</h1><div className="head-actions"><button type="button" onClick={() => setForm("new")}>Add Product</button><RefreshButton onClick={() => void reload()} /></div></div>
-      <aside className="cat-cards" aria-label="Categories">
-        <button type="button" className={filter === "" ? "cat-card active" : "cat-card"} aria-pressed={filter === ""} onClick={() => setFilter("")}><span>All products</span><span className="kind-count">{allTotal !== null ? int(allTotal) : "–"}</span></button>
-        {data.categories.map((c) => (
-          <div key={c.id} className="cat-row">
-            <button type="button" className={filter === c.id ? "cat-card active" : "cat-card"} aria-pressed={filter === c.id} onClick={() => setFilter(c.id)}><span>{c.name}</span><span className="kind-count">{int(c.products)}</span></button>
-            <RowMenu label={`Actions for ${c.name}`} items={[{ label: "Rename", onSelect: () => setCatForm(c) }, { label: "Delete", danger: true, onSelect: () => { setError(null); setCatRemoving(c); } }]} />
-          </div>
-        ))}
-        <button type="button" className="cat-card add" onClick={() => setCatForm("new")}><span>Add Category</span><span className="kind-count" aria-hidden>+</span></button>
-      </aside>
-      <div>
-        <div>
-          <div className="filter-box"><input type="search" aria-label="Filter products by name" placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off" /></div>
-          <div className="card flush">
-            {products.failed && !rows ? <p className="error pad" role="alert">Couldn't load products. <button className="link" onClick={products.retry}>Try Again</button></p>
-              : !rows ? <p className="muted pad" role="status">Loading…</p>
-              : rows.length === 0 ? <p className="muted pad">{!filter && !term ? "No products yet. Add your first one." : "No products match."}</p> : (
-              <table>
-                <thead><tr><th scope="col">Product</th><th scope="col">Category</th><th scope="col" className="num">Price</th><th scope="col" className="num">Stock</th><th scope="col" className="num">Sold Today</th><th scope="col" className="num">Sold</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
-                <tbody>
-                  {rows.map((p) => (
-                    <tr key={p.id}>
-                      <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}</span></span></th>
-                      <td>{catName(p.category_id)}</td>
-                      <td className="num">{p.discount > 0 ? <><s className="muted">{money(p.price)}</s> {money(p.effective_price)}</> : money(p.price)}</td>
-                      <td className="num">{p.stock === null ? "Untracked" : int(p.stock)}</td>
-                      <td className="num">{int(p.sold_today)}</td>
-                      <td className="num">{int(p.total_sold)}</td>
-                      <td><span className={`pill ${!p.active ? "closed" : p.status === "sold_out" ? "pending" : "available"}`}>{!p.active ? "inactive" : p.status === "sold_out" ? "sold out" : "active"}</span></td>
-                      <td className="actions">
-                        <RowMenu label={`Actions for ${p.name}`} items={[
-                          { label: p.active ? "Deactivate" : "Activate", onSelect: () => void toggle(p) },
-                          { label: "Edit", onSelect: () => setForm(p) },
-                          { label: "Delete", danger: true, onSelect: () => { setError(null); setRemoving(p); } },
-                        ]} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-          {rows && rows.length > 0 && (
-            <p className="more">
-              <span className="muted">Showing {int(rows.length)} of {int(products.total)}</span>
-              {products.hasMore && <button type="button" className="ghost" disabled={products.more} onClick={() => void products.loadMore()}>{products.more ? "Loading…" : "Load More"}</button>}
-            </p>
-          )}
-        </div>
+      <div className="catalog-toolbar" role="group" aria-label="Catalog controls">
+        <input type="search" aria-label="Filter products by name" placeholder="Search products" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off" />
+        <select aria-label="Filter products by category" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="">All categories{allTotal !== null ? ` (${int(allTotal)})` : ""}</option>
+          {data.categories.map((category) => (
+            <option key={category.id} value={category.id}>{category.name} ({int(category.products)})</option>
+          ))}
+        </select>
+        <button type="button" className="ghost" aria-expanded={managingCategories} aria-controls="catalog-categories" onClick={() => setManagingCategories((open) => !open)}>Manage Categories</button>
       </div>
+      <section id="catalog-categories" className="card catalog-categories" aria-labelledby="catalog-categories-title" hidden={!managingCategories}>
+        <div className="card-head">
+          <h2 id="catalog-categories-title">Categories</h2>
+          <button type="button" className="ghost" onClick={() => setCatForm("new")}>Add Category</button>
+        </div>
+        {data.categories.length ? (
+          <ul className="catalog-category-list">
+            {data.categories.map((category) => (
+              <li key={category.id}>
+                <span className="catalog-category-name">{category.name}</span>
+                <span className="sub">{int(category.products)} {category.products === 1 ? "product" : "products"}</span>
+                <RowMenu label={`Actions for ${category.name}`} items={[
+                  { label: "Rename", onSelect: () => setCatForm(category) },
+                  { label: "Delete", danger: true, onSelect: () => { setError(null); setCatRemoving(category); } },
+                ]} />
+              </li>
+            ))}
+          </ul>
+        ) : <p className="sub">No categories yet.</p>}
+      </section>
+      <div className="card flush">
+        {products.failed && !rows ? <p className="error pad" role="alert">Couldn't load products. <button className="link" onClick={products.retry}>Try Again</button></p>
+          : !rows ? <p className="muted pad" role="status">Loading…</p>
+          : rows.length === 0 ? <p className="muted pad">{!filter && !term ? "No products yet. Add your first one." : "No products match."}</p> : (
+          <table>
+            <thead><tr><th scope="col">Product</th><th scope="col">Category</th><th scope="col" className="num">Price</th><th scope="col" className="num">Stock</th><th scope="col" className="num">Sold Today</th><th scope="col" className="num">Sold</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {rows.map((p) => (
+                <tr key={p.id}>
+                  <th scope="row"><span className="cell-flex">{p.photo ? <img className="thumb" src={p.photo} alt="" width={40} height={40} loading="lazy" /> : <span className="thumb thumb-empty" aria-hidden>▭</span>}<span>{p.name}</span></span></th>
+                  <td>{catName(p.category_id)}</td>
+                  <td className="num">{p.discount > 0 ? <><s className="muted">{money(p.price)}</s> {money(p.effective_price)}</> : money(p.price)}</td>
+                  <td className="num">{p.stock === null ? "Untracked" : int(p.stock)}</td>
+                  <td className="num">{int(p.sold_today)}</td>
+                  <td className="num">{int(p.total_sold)}</td>
+                  <td><span className={`pill ${!p.active ? "closed" : p.status === "sold_out" ? "pending" : "available"}`}>{!p.active ? "inactive" : p.status === "sold_out" ? "sold out" : "active"}</span></td>
+                  <td className="actions">
+                    <RowMenu label={`Actions for ${p.name}`} items={[
+                      { label: p.active ? "Deactivate" : "Activate", onSelect: () => void toggle(p) },
+                      { label: "Edit", onSelect: () => setForm(p) },
+                      { label: "Delete", danger: true, onSelect: () => { setError(null); setRemoving(p); } },
+                    ]} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {rows && rows.length > 0 && (
+        <p className="more">
+          <span className="muted">Showing {int(rows.length)} of {int(products.total)}</span>
+          {products.hasMore && <button type="button" className="ghost" disabled={products.more} onClick={() => void products.loadMore()}>{products.more ? "Loading…" : "Load More"}</button>}
+        </p>
+      )}
 
       {form && <ProductForm api={api} product={form === "new" ? undefined : form} categories={data.categories} defaultCategory={filter} onClose={() => setForm(null)} onError={onError} onSaved={async () => { setForm(null); await reload(); }} />}
       {catForm && <CategoryForm api={api} category={catForm === "new" ? undefined : catForm} onClose={() => setCatForm(null)} onError={onError} onSaved={async () => { setCatForm(null); await reload(); }} />}

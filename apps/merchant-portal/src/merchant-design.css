@@ -33,6 +33,34 @@ h1 { font-size: clamp(28px, 3vw, 36px); letter-spacing: -.045em; }
 .card.flush { padding: 0; }
 .grid, .grid.three { gap: 16px; }
 .reports-summary { margin-bottom: 20px; }
+
+.catalog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.catalog-toolbar > input, .catalog-toolbar > select { min-width: 0; }
+.catalog-toolbar > button { min-height: 42px; }
+.catalog-categories { margin-bottom: 16px; }
+.catalog-categories .card-head { align-items: center; margin-bottom: 12px; }
+.catalog-category-list { list-style: none; margin: 0; padding: 0; }
+.catalog-category-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.catalog-category-name { font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .catalog-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+  .catalog-toolbar > input { grid-column: 1 / -1; }
+  .catalog-toolbar > button { padding-inline: 12px; }
+  .catalog-categories { padding: 16px; }
+}
 .sales-card { padding: 26px 30px 18px; margin-bottom: 20px; }
 .sales-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
 .sales-title h2 { font-size: 14px; color: var(--text); text-transform: none; letter-spacing: -.01em; margin: 0; }

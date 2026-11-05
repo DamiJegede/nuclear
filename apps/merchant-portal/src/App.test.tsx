@@ -322,7 +322,7 @@ describe("catalog", () => {
     expect(row).toHaveTextContent("$4.00");
     expect(row).toHaveTextContent("Drinks");
     expect(screen.getByRole("row", { name: /Bagel/ })).toHaveTextContent("Untracked");
-    await user.click(within(screen.getByRole("complementary", { name: "Categories" })).getByRole("button", { name: /^Drinks/ }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter products by category" }), CATEGORY.id);
     expect(screen.queryByRole("row", { name: /Bagel/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add Product" }));
     const dlg = screen.getByRole("dialog");
@@ -345,7 +345,7 @@ describe("catalog", () => {
     await user.click(await navLink("Catalog"));
     expect(await screen.findByText("Thing 01")).toBeInTheDocument();
     expect(screen.getByText("Showing 20 of 25")).toBeInTheDocument();
-    expect(within(screen.getByRole("complementary", { name: "Categories" })).getByRole("button", { name: /^All products/ })).toHaveTextContent("25");
+    expect(screen.getByRole("option", { name: "All categories (25)" })).toHaveProperty("selected", true);
     await user.click(screen.getByRole("button", { name: "Load More" }));
     expect(await screen.findByText("Thing 25")).toBeInTheDocument();
     expect(products).toHaveBeenLastCalledWith({ cursor: "c2" });
@@ -393,7 +393,8 @@ describe("row menus", () => {
   it("a category has the same menu: Rename and Delete", async () => {
     const { user } = await signIn(fakeApi({ categories: vi.fn().mockResolvedValue([CATEGORY]), products: vi.fn().mockResolvedValue({ products: [], next_cursor: null, total: 0 }) }));
     await user.click(await navLink("Catalog"));
-    await user.click(await screen.findByRole("button", { name: `Actions for ${CATEGORY.name}` }));
+    await user.click(await screen.findByRole("button", { name: "Manage Categories" }));
+    await user.click(screen.getByRole("button", { name: `Actions for ${CATEGORY.name}` }));
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete"]);
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
