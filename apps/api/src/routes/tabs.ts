@@ -1,3 +1,4 @@
+import { listOffers, offerJson } from "../lib/offers";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -56,17 +57,19 @@ menu.get("/:code", async (c) => {
   const sql = c.get("sql");
   const t = await tableByCode(sql, c.req.param("code"));
   if (!t) return c.json({ error: "table_not_found" }, 404);
-  const [[m], [tax], products] = await Promise.all([
+  const [[m], [tax], products, offers] = await Promise.all([
     sql<{ id: string; name: string; photo: string | null }[]>`select id, name, photo from accounts where id = ${t.account_id}`,
     sql<{ rate: number; included: boolean }[]>`select coalesce(tax_rate, 0) as rate, coalesce(tax_included, false) as included from businesses where account_id = ${t.account_id}`,
     sql<{ id: string; name: string; price: bigint; discount: bigint; photo: string | null; taxable: boolean; category: string | null }[]>`
       select p.id, p.name, p.price, p.discount, p.photo, p.taxable, c.name as category
         from products p left join categories c on c.id = p.category_id
        where p.account_id = ${t.account_id} and p.active and p.status = 'available' and (c.id is null or c.active) order by c.name nulls last, p.name, p.id limit 500`,
+    listOffers(sql, t.account_id, true),
   ]);
   return c.json({
     merchant: { name: m!.name, photo: imageUrl(m!.photo) }, table: { name: t.name }, tax: { rate: tax?.rate ?? 0, included: tax?.included ?? false },
     products: products.map((p) => ({ id: p.id, name: p.name, price: n(p.price), discount: n(p.discount), photo: imageUrl(p.photo), taxable: p.taxable, category: p.category })),
+    offers: offers.map(offerJson),
   });
 });
 

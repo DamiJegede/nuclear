@@ -5,6 +5,7 @@ import { connect } from "../src/db.ts";
 import { runSettlement, confirmSettlement, pollSubmittedSettlements } from "../src/lib/settlement.ts";
 import { sandboxAch, type AchProvider } from "../src/lib/ach.ts";
 import { dailyJobs } from "../src/lib/cron.ts";
+import { addDays, easternDate } from "../src/lib/dates.ts";
 import { migrate, resetSchema, PG_URL } from "./db.ts";
 resetSchema(); migrate();
 const adm = postgres(PG_URL, { max: 3, onnotice: () => {} });
@@ -142,9 +143,11 @@ eq("it is logged", (await q("select count(*)::int n from logs where action='sett
 
 // ---- the daily job runs it too
 await sale(C, 55);
-const job: any = await dailyJobs(Date.parse("2026-11-03T05:00:00Z"), env);
-eq("the daily cron settles the day that just ended", [job.settlement.ran, job.settlement.cutoff_date, job.settlement.payout_total], [true, "2026-11-02", 55]);
-eq("and a second cron the same night adds nothing", (await dailyJobs(Date.parse("2026-11-03T05:30:00Z"), env) as any).settlement, { ran: false, reason: "already_done" });
+// the job runs the night after today (relative to the real clock, since the manual run above settled today)
+const today = easternDate(new Date()), night = addDays(today, 1);
+const job: any = await dailyJobs(Date.parse(`${night}T05:00:00Z`), env);
+eq("the daily cron settles the day that just ended", [job.settlement.ran, job.settlement.cutoff_date, job.settlement.payout_total], [true, today, 55]);
+eq("and a second cron the same night adds nothing", (await dailyJobs(Date.parse(`${night}T05:30:00Z`), env) as any).settlement, { ran: false, reason: "already_done" });
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await sql.end(); await adm.end();

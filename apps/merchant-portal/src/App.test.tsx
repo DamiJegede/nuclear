@@ -55,7 +55,7 @@ describe("sign-in", () => {
     expect(signInFn).toHaveBeenCalledWith("cafe@example.com", "correct horse battery");
     expect(await screen.findByRole("article", { name: "Today" })).toHaveTextContent("$1,250.00");
     expect(sessionStorage.getItem("nuclear.merchant.session")).toBe("tok-1");
-    expect(within(await screen.findByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
+    expect(within(await screen.findByRole("navigation")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Overview", "Transactions", "Orders", "Catalog", "Offers", "Terminals", "Orbs", "Staff", "Tables", "Tabs", "Tips", "Reports", "Refunds"]);
   });
 
   it("shows the sales chart: three figures, a custom tooltip, and the figures do not change on hover", async () => {
@@ -435,6 +435,38 @@ describe("tables and tabs", () => {
     await user.type(screen.getByLabelText("Name"), "Bar");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(createTable).toHaveBeenCalledWith({ name: "Bar" });
+  });
+
+  const OFFER = { id: "o-1", name: "Buy Beer, get 1 free", description: "Buy Beer, get 1 free", buy_product_id: "p-beer", buy_product_name: "Beer", buy_qty: 1, get_product_id: "p-beer", get_product_name: "Beer", get_qty: 1, percent_off: 100, same_product: true, active: true, created_at: "2026-11-05T12:00:00Z" };
+  const PRODUCTS = { products: [{ id: "p-beer", name: "Beer", active: true }, { id: "p-wine", name: "Wine", active: true }], next_cursor: null, total: 2 };
+
+  it("lists the offers in words and turns one off", async () => {
+    const updateOffer = vi.fn().mockResolvedValue({ ...OFFER, active: false });
+    const { user } = await signIn(fakeApi({ offers: vi.fn().mockResolvedValue([OFFER]), updateOffer } as Partial<Api>));
+    await NAVTO(user, "Offers");
+    expect(await screen.findByRole("heading", { name: "Offers" })).toBeInTheDocument();
+    expect(await screen.findByRole("rowheader", { name: "Buy Beer, get 1 free" })).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for Buy Beer, get 1 free" }));
+    await user.click(screen.getByRole("menuitem", { name: "Turn Off" }));
+    expect(updateOffer).toHaveBeenCalledWith("o-1", { active: false });
+  });
+
+  it("adds a buy-one-get-one-free offer, and a buy-this-get-that half price offer", async () => {
+    const createOffer = vi.fn().mockResolvedValue(OFFER);
+    const { user } = await signIn(fakeApi({ offers: vi.fn().mockResolvedValue([]), createOffer, products: vi.fn().mockResolvedValue(PRODUCTS) } as Partial<Api>));
+    await NAVTO(user, "Offers");
+    await user.click(await screen.findByRole("button", { name: "Add Offer" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Customer buys" }), "p-beer");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: null, get_qty: 1, percent_off: 100 });
+    await user.click(await screen.findByRole("button", { name: "Add Offer" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Customer buys" }), "p-beer");
+    await user.click(screen.getByRole("radio", { name: "Another product" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Customer gets" }), "p-wine");
+    await user.click(screen.getByRole("radio", { name: "Half price" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(createOffer).toHaveBeenLastCalledWith({ buy_product_id: "p-beer", buy_qty: 1, get_product_id: "p-wine", get_qty: 1, percent_off: 50 });
   });
 
   it("shows a tab's people, who covers whom, items and who pays; staff void an item and clear the table", async () => {

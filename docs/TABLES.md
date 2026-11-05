@@ -242,6 +242,23 @@ An order a merchant creates and a customer pays (by tap or in the app). Owned by
 
 A checkout is settled by at most one completed pay transaction (unique index on transactions.checkout_id for completed payments); declined attempts remain against it and it stays open for another try. A trigger on transactions requires a payment's or refund's checkout and terminal to belong to the merchant. **Every payment is a checkout** (changed 2026-10-30, migration 0009; owner decision): an amount-only tap or app payment writes a checkout too (no items, `total` = the amount), directly as `paid` in the same call, and as `canceled` (tip cleared) if the payment is declined, exactly as a payment with items does. A completed payment therefore always has a `checkout_id` (new rows; older ones may be empty). The nightly purge removes canceled checkouts older than 97 days and open ones that expired more than 97 days ago, once nothing references them (two small partial indexes serve it). Per-line refunded quantities are not stored: an item refund's transaction carries `meta.items`, and a pending request carries them on `refunds.items`; the quantities already refunded or reserved are the sums over those, read while the payment row is locked. A merchant's Orders page lists checkouts.
 
+## offers
+
+A merchant's "buy X, get Y free or part price" deals (docs/OFFERS.md; migration 0016). Applied by the SQL function `app_offers` before sales tax; the offer a line was priced by is snapshotted on the checkout line (`items[].offer`).
+
+| Field | Description |
+| --- | --- |
+| id | Primary key (uuidv7). |
+| account_id | Foreign key to the merchant's type-B accounts.id. |
+| name | 1-80 characters, shown to customers; the API writes the rule in words when the merchant leaves it empty. |
+| buy_product_id | Foreign key to products.id (on delete cascade): the product the customer buys. |
+| buy_qty | 1-20 units bought for one set. |
+| get_product_id | Nullable foreign key to products.id (on delete cascade); NULL = the same product as `buy_product_id`. |
+| get_qty | 1-20 units given per set. |
+| percent_off | 1-100; 100 = free. Rounded down on the price after the product's own discount. |
+| active | Whether the offer applies. |
+| created_at, updated_at | Timestamps. |
+
 ## tips
 
 Who a tip belongs to (migration 0009). A tip is part of the payment (`transactions.amount` includes it and the payment's checkout says how much, in `checkouts.tip_amount`); this table only records the people it goes to. **Nuclear shows tips to staff, it never pays them out**: the business pays its staff.

@@ -1,3 +1,4 @@
+import { listOffers, offerJson } from "../lib/offers";
 import { Hono } from "hono";
 import { imageUrl } from "../lib/images";
 import { z } from "zod";
@@ -432,6 +433,9 @@ terminalSelf.get("/products", async (c) => {
      order by name, id`;
   return c.json({ products: rows.map(productJson) });
 });
+
+// The merchant's live offers (docs/OFFERS.md), so the POS can show them. The server applies them to every order; the POS never works out a price.
+terminalSelf.get("/offers", async (c) => c.json({ offers: (await listOffers(c.get("sql"), c.get("terminal").accountId, true)).map(offerJson) }));
 
 // Restock: add units to a tracked product. Increments (not "set to") so concurrent sales are never
 // overwritten; a sold-out product becomes available again. expected_stock is an optional guard: the

@@ -24,6 +24,17 @@ export default function Menu(props) {
       <h1>{menu().merchant.name}</h1>
       <p>{menu().table.name}</p>
      </header>
+     <Show when={(menu().offers ?? []).length > 0}>
+      <section aria-label="Offers">
+       <h2>Offers</h2>
+       <ul style={{ 'list-style': 'none', padding: 0 }}>
+        <For each={menu().offers}>{(o) => (
+         <li style={{ padding: '0.5rem 0', 'border-bottom': '1px solid #8883' }}><strong>{o.name}</strong>{o.name !== o.description ? <span style={{ opacity: 0.7 }}> · {o.description}</span> : null}</li>
+        )}</For>
+       </ul>
+       <p style={{ opacity: 0.7 }}>Offers are applied to your order automatically.</p>
+      </section>
+     </Show>
      <For each={groups()}>{([category, items]) => (
       <section>
        <h2>{category}</h2>

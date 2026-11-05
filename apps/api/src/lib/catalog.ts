@@ -18,6 +18,8 @@ export type CartLine = {
   taxRate?: number;
   taxIncluded?: boolean;
   tax?: number;
+  /** The offer that made this line's price (docs/OFFERS.md): the units given at a part price carry it, full-price units do not. */
+  offer?: { id: string; name: string; percent_off: number };
 };
 /** `total` is what the items cost to pay: the tax is added to it unless the merchant's prices include it; `salesTax` is the tax either way. */
 export type Cart = { lines: CartLine[]; total: bigint; salesTax: bigint };
@@ -67,6 +69,10 @@ export async function quoteCart(q: Q, merchantId: string, items: ItemIn[]): Prom
     lines.push({ productId, name: p.name, price: p.price, discount: p.discount, quantity, taxable: p.taxable });
   }
   if (total <= 0n || total > MAX_AMOUNT) return { error: "invalid_total", status: 422 };
+  // The merchant's offers split the lines into full-price and offer-price units (the same SQL the one-step payment uses), then the tax is worked out on what is paid.
+  const [od] = await q<{ r: { product_id: string; name: string; unit_price: number; discount: number; quantity: number; taxable: boolean; offer?: CartLine["offer"] }[] }[]>`
+    select public.app_offers(${merchantId}, ${q.json(lines.map((l) => ({ product_id: l.productId, name: l.name, unit_price: Number(l.price), discount: Number(l.discount), quantity: l.quantity, taxable: l.taxable })) as never)}) as r`;
+  lines.splice(0, lines.length, ...od!.r.map((l) => ({ productId: l.product_id, name: l.name, price: BigInt(l.unit_price), discount: BigInt(l.discount), quantity: l.quantity, taxable: l.taxable, ...(l.offer ? { offer: l.offer } : {}) })));
   // The same SQL rule the one-step payment uses (`app_tax`), so a checkout and a direct payment can never disagree on the tax.
   const [t] = await q<{ r: { lines: { tax: number; tax_rate: number; tax_included: boolean }[]; sales_tax: number; total: number } }[]>`
     select public.app_tax(${merchantId}, ${q.json(lines.map((l) => ({ unit_price: Number(l.price), discount: Number(l.discount), quantity: l.quantity, taxable: l.taxable })) as never)}) as r`;

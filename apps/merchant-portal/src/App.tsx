@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearCache } from "./cache";
 import { ApiError, createApi, signIn as realSignIn, signUp as realSignUp, verifyEmail as realVerifyEmail, confirmPasswordReset as realConfirmReset, type Account, type Api, type Employer, type Session } from "./api";
 import { usePageTitle } from "./title";
+import { Offers } from "./views/Offers";
 import { Catalog } from "./views/Catalog";
 import { StaffHome } from "./views/StaffHome";
 import { Tips } from "./views/Tips";
@@ -25,13 +26,14 @@ const KEY = "nuclear.merchant.session";
 const readToken = (): string | null => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
 const writeToken = (t: string | null) => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch { /* storage unavailable */ } };
 
-export type Page = "overview" | "transactions" | "orders" | "catalog" | "terminals" | "orbs" | "staff" | "tips" | "tables" | "tabs" | "reports" | "refunds" | "profile";
+export type Page = "overview" | "transactions" | "orders" | "catalog" | "offers" | "terminals" | "orbs" | "staff" | "tips" | "tables" | "tabs" | "reports" | "refunds" | "profile";
 /** Pages in the navigation, in order. Each page has its own address. */
 export const NAV: { page: Page; label: string; path: string }[] = [
   { page: "overview", label: "Overview", path: "/" },
   { page: "transactions", label: "Transactions", path: "/transactions" },
   { page: "orders", label: "Orders", path: "/orders" },
   { page: "catalog", label: "Catalog", path: "/catalog" },
+  { page: "offers", label: "Offers", path: "/offers" },
   { page: "terminals", label: "Terminals", path: "/terminals" },
   { page: "orbs", label: "Orbs", path: "/orbs" },
   { page: "staff", label: "Staff", path: "/staff" },
@@ -46,6 +48,7 @@ const NAV_ICONS: Record<string, string> = {
   transactions: "M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4",
   orders: "M6 3h12v18l-3-2-3 2-3-2-3 2V3z M9 8h6M9 12h6",
   catalog: "M4 4h16v16H4z M4 10h16M10 10v10",
+  offers: "M20 12l-8 8-9-9V3h8z M7.5 7.5h.01",
   terminals: "M4 4h16v12H4z M8 21h8M12 16v5",
   orbs: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
   staff: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M18 4a4 4 0 0 1 0 7M22 21v-2a4 4 0 0 0-3-4",
@@ -162,6 +165,7 @@ export function App({
         {page === "transactions" && <Transactions api={api} onError={onError} />}
         {page === "orders" && <Orders api={api} onError={onError} />}
         {page === "catalog" && <Catalog api={api} onError={onError} />}
+        {page === "offers" && <Offers api={api} onError={onError} />}
         {page === "terminals" && <Terminals api={api} onError={onError} />}
         {page === "orbs" && <Orbs api={api} onError={onError} />}
         {page === "staff" && <Staff api={api} onError={onError} />}

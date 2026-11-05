@@ -20,6 +20,7 @@ import { RULES, byAccount, rateLimit } from "../lib/throttle";
 import { abaOk, ACCOUNT_BANK_COLS, ACCOUNT_BANK_FROM, bankChoices, bankView, ensureRouting, lookupRouting, refreshBank, type AccountBank } from "../lib/banks";
 import type { Sql } from "../db";
 import { businessTabsRoutes } from "./businessTabs";
+import { businessOffersRoutes } from "./businessOffers";
 import { releaseHoldsOfMerchant } from "../lib/tabs";
 
 /**
@@ -516,3 +517,4 @@ business.post("/checkouts/:id/cancel", async (c) => {
 
 // Tables and tabs (docs/TABS.md): the merchant's tables with their QR / NFC links, and the staff actions on open tabs.
 business.route("/", businessTabsRoutes);
+business.route("/", businessOffersRoutes);

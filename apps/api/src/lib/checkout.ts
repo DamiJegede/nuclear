@@ -20,6 +20,8 @@ export type ItemSnapshot = {
   tax_rate?: number;
   tax_included?: boolean;
   tax?: number;
+  /** The offer that priced this line (docs/OFFERS.md); absent on a full-price line. */
+  offer?: { id: string; name: string; percent_off: number };
 };
 
 export type CheckoutRow = {
@@ -52,6 +54,7 @@ export type ItemRow = {
   unit_price: bigint;
   discount: bigint;
   quantity: number;
+  offer: { id: string; name: string; percent_off: number } | null;
   /** Units returned by completed item refunds. */
   refunded_quantity: number;
   /** Units reserved by pending item refunds. */
@@ -74,6 +77,7 @@ export const snapshotOf = (lines: CartLine[]): ItemSnapshot[] =>
     tax_rate: l.taxRate ?? 0,
     tax_included: l.taxIncluded ?? false,
     tax: l.tax ?? 0,
+    ...(l.offer ? { offer: l.offer } : {}),
   }));
 
 export async function insertCheckout(
@@ -142,6 +146,7 @@ const toItems = (c: CheckoutRow, counts: Counts | undefined): ItemRow[] =>
     unit_price: BigInt(it.unit_price),
     discount: BigInt(it.discount),
     quantity: it.quantity,
+    offer: it.offer ?? null,
     refunded_quantity: counts?.get(it.id)?.done ?? 0,
     refund_pending_quantity: counts?.get(it.id)?.pending ?? 0,
   }));
@@ -179,6 +184,7 @@ export const itemJson = (it: ItemRow) => ({
   discount: n(it.discount),
   net_price: n(it.unit_price - it.discount),
   quantity: it.quantity,
+  offer: it.offer,
   refunded_quantity: it.refunded_quantity,
   pending_refund_quantity: it.refund_pending_quantity,
   refundable_quantity: it.quantity - it.refunded_quantity - it.refund_pending_quantity,

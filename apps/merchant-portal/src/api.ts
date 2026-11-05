@@ -95,6 +95,11 @@ export type Profile = { legal_name: string; display_name: string; tax_id_last4: 
 export type ProfileInput = { legal_name: string; display_name: string; tax_id?: string; address?: string | null; city?: string | null; state?: string | null; post_code?: string | null; country?: string | null; website?: string | null };
 export type PayoutBank = { id: string; last4: string; status: string; created_at: string; institution: Institution | null };
 export type Payout = { id: string; kind: "payout" | "collection"; amount: number; status: string; status_code: string | null; timestamp: string; completed_at: string | null; bank_last4: string | null; source?: "nightly" | "close_out"; rail?: "instant" | "ach" };
+export type Offer = {
+  id: string; name: string; description: string; buy_product_id: string; buy_product_name: string; buy_qty: number;
+  get_product_id: string; get_product_name: string; get_qty: number; percent_off: number; same_product: boolean; active: boolean; created_at: string;
+};
+export type OfferInput = { name?: string; buy_product_id: string; buy_qty: number; get_product_id: string | null; get_qty: number; percent_off: number; active?: boolean };
 export type Category = { id: string; name: string; active: boolean; products: number; created_at: string };
 export type Product = {
   id: string; category_id: string | null; name: string; currency: string; price: number; discount: number; effective_price: number; photo: string | null;
@@ -190,6 +195,10 @@ export function createApi(token: string, base: string = API_URL) {
     transactions: (kind: TxKind = "all", cursor?: string, range: DayRange = {}) =>
       request<TxPage>("GET", `/v1/business/transactions${qs({ kind, from: range.from, to: range.to, cursor })}`),
     report: (period: ReportPeriod) => request<Report>("GET", `/v1/business/report?period=${period}`),
+    offers: async () => (await request<{ offers: Offer[] }>("GET", "/v1/business/offers")).offers,
+    createOffer: async (input: OfferInput) => (await request<{ offer: Offer }>("POST", "/v1/business/offers", input)).offer,
+    updateOffer: async (oid: string, patch: Partial<OfferInput>) => (await request<{ offer: Offer }>("PATCH", `/v1/business/offers/${id(oid)}`, patch)).offer,
+    deleteOffer: (oid: string) => request<null>("DELETE", `/v1/business/offers/${id(oid)}`),
     tables: async () => (await request<{ tables: VenueTable[] }>("GET", "/v1/business/tables")).tables,
     createTable: async (input: { name: string; served_by?: string | null }) => (await request<{ table: VenueTable }>("POST", "/v1/business/tables", input)).table,
     updateTable: async (tid: string, patch: Partial<{ name: string; active: boolean; served_by: string | null }>) => (await request<{ table: VenueTable }>("PATCH", `/v1/business/tables/${id(tid)}`, patch)).table,
@@ -219,7 +228,7 @@ export function createApi(token: string, base: string = API_URL) {
     createCategory: async (name: string) => (await request<{ category: Category }>("POST", "/v1/business/categories", { name })).category,
     updateCategory: async (cid: string, patch: Partial<{ name: string; active: boolean }>) => (await request<{ category: Category }>("PATCH", `/v1/business/categories/${id(cid)}`, patch)).category,
     deleteCategory: (cid: string) => request<null>("DELETE", `/v1/business/categories/${id(cid)}`),
-    products: (filter: { category_id?: string; q?: string; cursor?: string } = {}) => request<{ products: Product[]; next_cursor: string | null; total: number }>("GET", `/v1/business/products${qs(filter)}`),
+    products: (filter: { category_id?: string; q?: string; cursor?: string; limit?: number } = {}) => request<{ products: Product[]; next_cursor: string | null; total: number }>("GET", `/v1/business/products${qs(filter)}`),
     createProduct: async (input: Partial<ProductInput> & { name: string; price: number }) => (await request<{ product: Product }>("POST", "/v1/business/products", input)).product,
     updateProduct: async (pid: string, patch: Partial<ProductInput>) => (await request<{ product: Product }>("PATCH", `/v1/business/products/${id(pid)}`, patch)).product,
     deleteProduct: (pid: string) => request<null>("DELETE", `/v1/business/products/${id(pid)}`),
